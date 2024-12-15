@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/data/side_menu_data.dart';
 import 'package:my_flutter_app/const/constant.dart';
+import 'package:my_flutter_app/screens/product_form_screen.dart';
 
 class SideMenuWidget extends StatefulWidget {
   const SideMenuWidget({super.key});
@@ -10,6 +11,27 @@ class SideMenuWidget extends StatefulWidget {
 }
 
 class _SideMenuWidgetState extends State<SideMenuWidget> {
+  void _handleMenuAction(String? value) async {
+    if (value == null) return;
+
+    switch (value) {
+      case 'add_product':
+        final result = await showDialog(
+          context: context,
+          builder: (context) => const ProductFormScreen(),
+        );
+        if (result == true) {
+          // Refresh the product list
+          setState(() {});
+        }
+        break;
+      case 'view_all_products':
+        // Refresh the main screen to show products
+        setState(() {});
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -71,7 +93,7 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
       context: context,
       position: position,
       items: _getMenuOptions(title),
-    );
+    ).then(_handleMenuAction);
   }
 
   List<PopupMenuEntry<String>> _getMenuOptions(String title) {
