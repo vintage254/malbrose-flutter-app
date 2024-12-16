@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/data/side_menu_data.dart';
-import 'package:my_flutter_app/const/constant.dart';
+import 'package:my_flutter_app/screens/main_screen.dart';
 import 'package:my_flutter_app/screens/product_form_screen.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
+import 'package:my_flutter_app/screens/user_management_screen.dart';
+import 'package:my_flutter_app/screens/home_screen.dart';
+import 'package:my_flutter_app/services/auth_service.dart';
 
 class SideMenuWidget extends StatefulWidget {
   final VoidCallback? onProductsUpdated;
@@ -17,185 +20,87 @@ class SideMenuWidget extends StatefulWidget {
 }
 
 class _SideMenuWidgetState extends State<SideMenuWidget> {
-  List<Widget> _buildMenuItems() {
-    return [
-      _buildPopupMenuButton(
-        'Products',
-        [
-          const PopupMenuItem(
-            value: 'add_product',
-            child: Text('Add Product', style: TextStyle(fontSize: 12)),
-          ),
-          const PopupMenuItem(
-            value: 'view_all_products',
-            child: Text('View All Products', style: TextStyle(fontSize: 12)),
-          ),
-        ],
-      ),
-      _buildPopupMenuButton(
-        'Orders',
-        [
-          const PopupMenuItem(
-            value: 'place_order',
-            child: Text('Place Order', style: TextStyle(fontSize: 12)),
-          ),
-          const PopupMenuItem(
-            value: 'view_orders',
-            child: Text('View Orders', style: TextStyle(fontSize: 12)),
-          ),
-        ],
-      ),
-    ];
-  }
-
-  void _handleMenuAction(String? value) async {
-    if (value == null) return;
-
-    switch (value) {
-      case 'add_product':
-        final result = await showDialog(
-          context: context,
-          builder: (context) => const ProductFormScreen(),
-        );
-        if (result == true) {
-          widget.onProductsUpdated?.call();
-        }
-        break;
-      case 'view_all_products':
-        widget.onProductsUpdated?.call();
-        break;
-      case 'place_order':
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const OrderScreen(),
-          ),
-        );
-        break;
-      case 'view_orders':
-        // We'll implement this later
-        break;
-    }
-  }
-
-  Widget _buildPopupMenuButton(String title, List<PopupMenuItem<String>> items) {
-    return PopupMenuButton<String>(
-      itemBuilder: (context) => items,
-      onSelected: _handleMenuAction,
-    );
-  }
+  final menuData = SideMenuData();
+  int _selectedIndex = 0;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(defaultPadding),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            const Color.fromARGB(255, 230, 227, 220).withAlpha(179),
-            const Color.fromARGB(255, 230, 192, 80),
-          ],
-        ),
-      ),
-      child: ListView.builder(
-        itemCount: SideMenuData().menu.length,
-        itemBuilder: (context, index) {
-          final menuItem = SideMenuData().menu[index];
-          final GlobalKey menuItemKey = GlobalKey();
+    final currentUser = AuthService.instance.currentUser;
+    
+    return Card(
+      child: ListView(
+        children: [
+          DrawerHeader(
+            child: Image.asset('assets/images/logo.png'),
+          ),
+          ...List.generate(
+            menuData.menu.length,
+            (index) {
+              final menu = menuData.menu[index];
+              
+              // Skip admin-only items for non-admin users
+              if (!currentUser!.isAdmin && 
+                  (menu.title == 'user management' || menu.title == 'Activity Logs')) {
+                return const SizedBox.shrink();
+              }
 
-          return GestureDetector(
-            onTap: () {
-              _showPopupMenu(context, menuItem.title, menuItemKey);
+              return ListTile(
+                selected: _selectedIndex == index,
+                selectedTileColor: Colors.blue.withOpacity(0.1),
+                leading: Icon(menu.icon),
+                title: Text(
+                  menu.title,
+                  style: const TextStyle(fontSize: 14),
+                ),
+                onTap: () {
+                  setState(() => _selectedIndex = index);
+                  
+                  // Handle navigation based on menu title
+                  switch (menu.title.toLowerCase()) {
+                    case 'dashboard':
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (context) => const MainScreen()),
+                      );
+                      break;
+                    case 'user management':
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const UserManagementScreen()),
+                      );
+                      break;
+                    case 'product management':
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const ProductFormScreen()),
+                      );
+                      break;
+                    case 'orders':
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const OrderScreen()),
+                      );
+                      break;
+                  }
+                },
+              );
             },
-            child: ListTile(
-              key: menuItemKey,
-              leading: Icon(menuItem.icon),
-              title: Text(
-                menuItem.title,
-                style: TextStyle(fontSize: 12),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          );
-        },
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.logout),
+            title: const Text('Logout', style: TextStyle(fontSize: 14)),
+            onTap: () async {
+              await AuthService.instance.logout();
+              if (!context.mounted) return;
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const HomeScreen()),
+                (route) => false,
+              );
+            },
+          ),
+        ],
       ),
     );
-  }
-
-  void _showPopupMenu(
-      BuildContext context, String title, GlobalKey menuItemKey) {
-    final RenderBox overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
-
-    final renderBox = menuItemKey.currentContext?.findRenderObject();
-    if (renderBox == null) return;
-
-    final RenderBox menuItem = renderBox as RenderBox;
-    final Offset menuItemPosition = menuItem.localToGlobal(Offset.zero);
-    final RelativeRect position = RelativeRect.fromLTRB(
-      menuItemPosition.dx,
-      menuItemPosition.dy + menuItem.size.height,
-      overlay.size.width - menuItemPosition.dx,
-      overlay.size.height - menuItemPosition.dy,
-    );
-
-    showMenu(
-      context: context,
-      position: position,
-      items: _getMenuOptions(title),
-    ).then(_handleMenuAction);
-  }
-
-  List<PopupMenuEntry<String>> _getMenuOptions(String title) {
-    switch (title) {
-      case 'user management':
-        return [
-          const PopupMenuItem(
-              value: 'add_user',
-              child: Text('Add User', style: TextStyle(fontSize: 12))),
-          const PopupMenuItem(
-              value: 'manage_user',
-              child: Text('Manage User', style: TextStyle(fontSize: 12))),
-          const PopupMenuItem(
-              value: 'activity_log',
-              child: Text('User Activity Log', style: TextStyle(fontSize: 12))),
-        ];
-      case 'product management':
-        return [
-          const PopupMenuItem(
-              value: 'add_product',
-              child: Text('Add Product', style: TextStyle(fontSize: 12))),
-          const PopupMenuItem(
-              value: 'view_all_products',
-              child: Text('View All Products', style: TextStyle(fontSize: 12))),
-        ];
-      case 'orders':
-        return [
-          const PopupMenuItem(
-              value: 'view_orders',
-              child: Text('View Orders', style: TextStyle(fontSize: 12))),
-        ];
-      case 'Dashboard':
-        return [
-          const PopupMenuItem(
-              value: 'dashboard_info',
-              child:
-                  Text('Go back to Dashboard', style: TextStyle(fontSize: 12))),
-        ];
-      case 'authentication':
-        return [
-          const PopupMenuItem(
-              value: 'sign_in',
-              child: Text('Sign In', style: TextStyle(fontSize: 12))),
-          const PopupMenuItem(
-              value: 'sign_out',
-              child: Text('Sign Out', style: TextStyle(fontSize: 12))),
-        ];
-      default:
-        return [];
-    }
   }
 }
