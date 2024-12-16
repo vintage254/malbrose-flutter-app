@@ -151,16 +151,25 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Expanded(
-              flex: 1,
-              child: SideMenuWidget(),
-            ),
-            Expanded(
-              flex: 5,
+      body: Row(
+        children: [
+          const Expanded(
+            flex: 1,
+            child: SideMenuWidget(),
+          ),
+          Expanded(
+            flex: 5,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.green.shade300.withOpacity(0.7),
+                    Colors.green.shade700,
+                  ],
+                ),
+              ),
               child: Padding(
                 padding: const EdgeInsets.all(defaultPadding),
                 child: Column(
@@ -247,8 +256,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

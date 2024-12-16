@@ -3,6 +3,7 @@ import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/screens/main_screen.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/widgets/app_logo.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -33,7 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Image.asset('assets/logo.png', height: 100), // Add your logo
+                    const AppLogo(size: 100),
                     const SizedBox(height: defaultPadding),
                     const Text(
                       'Malbrose POS System',

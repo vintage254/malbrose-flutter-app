@@ -32,11 +32,7 @@ class DatabaseService {
     final databasepath = join(databaseDirpath, "malbrose_db.db");
 
     // Delete existing database to start fresh
-    try {
-      await deleteDatabase(databasepath);
-    } catch (e) {
-      print('Error deleting database: $e');
-    }
+    await deleteDatabase(databasepath);
 
     return await openDatabase(
       databasepath,
@@ -44,39 +40,29 @@ class DatabaseService {
       onCreate: (Database db, int version) async {
         // Create users table first
         await db.execute('''
-          CREATE TABLE IF NOT EXISTS users (
+          CREATE TABLE users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             full_name TEXT NOT NULL,
             email TEXT NOT NULL,
-            is_admin INTEGER NOT NULL DEFAULT 0,
+            is_admin BOOLEAN NOT NULL DEFAULT 0,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_login DATETIME
+            last_login DATETIME NULL
           )
         ''');
 
-        // Create activity logs table
-        await db.execute('''
-          CREATE TABLE IF NOT EXISTS activity_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            action_type TEXT NOT NULL,
-            details TEXT NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-          )
-        ''');
-
-        // Create default admin
-        final defaultAdmin = User(
-          username: 'admin',
-          password: AuthService.instance.hashPassword('Account@2024'),
-          fullName: 'System Administrator',
-          email: 'derricknjuguna414@gmail.com',
-          isAdmin: true,
-        );
-        await db.insert('users', defaultAdmin.toMap());
+        // Create default admin user
+        final defaultAdmin = {
+          'username': 'admin',
+          'password': AuthService.instance.hashPassword('Account@2024'),
+          'full_name': 'System Administrator',
+          'email': 'admin@malbrose.com',
+          'is_admin': 1,
+          'created_at': DateTime.now().toIso8601String(),
+        };
+        
+        await db.insert('users', defaultAdmin);
 
         // Create other tables...
         // Products table
@@ -185,25 +171,6 @@ class DatabaseService {
             FOREIGN KEY (user_id) REFERENCES users (id)
           )
         ''');
-
-        // Check if admin exists
-        final List<Map<String, dynamic>> adminCheck = await db.query(
-          'users',
-          where: 'username = ?',
-          whereArgs: ['admin'],
-        );
-
-        // Create default admin if not exists
-        if (adminCheck.isEmpty) {
-          final defaultAdmin = User(
-            username: 'admin',
-            password: AuthService.instance.hashPassword('Account@2024'),
-            fullName: 'System Administrator',
-            email: 'derricknjuguna414@gmail.com',
-            isAdmin: true,
-          );
-          await db.insert('users', defaultAdmin.toMap());
-        }
       },
     );
   }
@@ -455,5 +422,30 @@ class DatabaseService {
     
     final List<Map<String, dynamic>> maps = await db.rawQuery(query, args);
     return maps.map((map) => ActivityLog.fromMap(map)).toList();
+  }
+
+  Future<void> _initializeDatabase() async {
+    final db = await database;
+
+    // Check if admin user exists
+    final adminCheck = await db.query(
+      'users',
+      where: 'username = ?',
+      whereArgs: ['admin'],
+    );
+
+    // Create admin user if it doesn't exist
+    if (adminCheck.isEmpty) {
+      final adminUser = User(
+        username: 'admin',
+        password: AuthService.instance.hashPassword('Account@2024'),
+        fullName: 'System Administrator',
+        email: 'admin@malbrose.com',
+        isAdmin: true,
+        createdAt: DateTime.now(),
+      );
+
+      await db.insert('users', adminUser.toMap());
+    }
   }
 }

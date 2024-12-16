@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/product_model.dart';
 import 'package:my_flutter_app/models/order_model.dart';
+import 'package:my_flutter_app/models/cart_item_model.dart';
 import 'package:my_flutter_app/services/database.dart';
+import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
+import 'package:my_flutter_app/widgets/order_cart_panel.dart';
+import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 
 class OrderScreen extends StatefulWidget {
   const OrderScreen({super.key});
@@ -15,8 +19,10 @@ class OrderScreen extends StatefulWidget {
 class _OrderScreenState extends State<OrderScreen> {
   List<Product> _products = [];
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _customerNameController = TextEditingController();
   String _searchQuery = '';
   bool _isLoading = true;
+  List<CartItem> _cartItems = [];
 
   @override
   void initState() {
@@ -53,69 +59,211 @@ class _OrderScreenState extends State<OrderScreen> {
     }).toList();
   }
 
-  void _showOrderReceipt(Product product, int quantity) {
+  void _showOrderReceipt() {
     showDialog(
       context: context,
-      builder: (context) => OrderReceiptDialog(
-        product: product,
-        quantity: quantity,
+      builder: (context) => AlertDialog(
+        title: const Text('Order Receipt'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Malbrose Hardware Store',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: defaultPadding),
+              Text('Date: ${DateTime.now().toString()}'),
+              Text('Customer: ${_customerNameController.text.trim()}'),
+              const Divider(),
+              ..._cartItems.map((item) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: Text(item.product.productName),
+                    ),
+                    Expanded(
+                      child: Text('x${item.quantity}'),
+                    ),
+                    Expanded(
+                      child: Text('\$${item.total.toStringAsFixed(2)}'),
+                    ),
+                  ],
+                ),
+              )),
+              const Divider(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Total:',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    '\$${_cartItems.fold<double>(0, (sum, item) => sum + item.total).toStringAsFixed(2)}',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              // TODO: Implement printing functionality
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Printing will be implemented soon')),
+              );
+            },
+            child: const Text('Print Receipt'),
+          ),
+        ],
       ),
     );
+  }
+
+  Future<void> _exportQuotation() async {
+    try {
+      // TODO: Implement PDF generation and export
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Export functionality coming soon!'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error exporting: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Place Order'),
-        backgroundColor: primaryColor,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(defaultPadding),
-        child: Column(
-          children: [
-            TextField(
-              controller: _searchController,
-              decoration: const InputDecoration(
-                labelText: 'Search Products',
-                prefixIcon: Icon(Icons.search),
+      body: Row(
+        children: [
+          const Expanded(
+            flex: 1,
+            child: SideMenuWidget(),
+          ),
+          Expanded(
+            flex: 3,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.amber.withOpacity(0.7),
+                    Colors.orange.shade900,
+                  ],
+                ),
               ),
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
-            ),
-            const SizedBox(height: defaultPadding),
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : SingleChildScrollView(
-                      scrollDirection: Axis.vertical,
-                      child: DataTable(
-                        columns: const [
-                          DataColumn(label: Text('Product Name')),
-                          DataColumn(label: Text('Available Qty')),
-                          DataColumn(label: Text('Selling Price')),
-                          DataColumn(label: Text('Actions')),
-                        ],
-                        rows: _filteredProducts.map((product) {
-                          return DataRow(
-                            cells: [
-                              DataCell(Text(product.productName)),
-                              DataCell(Text(product.quantity.toString())),
-                              DataCell(Text(product.sellingPrice.toString())),
-                              DataCell(
-                                ElevatedButton(
-                                  onPressed: () => _showOrderDialog(product),
-                                  child: const Text('Make Order'),
-                                ),
-                              ),
-                            ],
-                          );
-                        }).toList(),
-                      ),
+              child: Column(
+                children: [
+                  // Header with export button
+                  Padding(
+                    padding: const EdgeInsets.all(defaultPadding),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Place Order',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: _exportQuotation,
+                          icon: const Icon(Icons.file_download),
+                          label: const Text('Export'),
+                        ),
+                      ],
                     ),
+                  ),
+                  
+                  // Search bar
+                  Padding(
+                    padding: const EdgeInsets.all(defaultPadding),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search products...',
+                        prefixIcon: const Icon(Icons.search),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      onChanged: (value) {
+                        setState(() {
+                          _searchQuery = value;
+                        });
+                      },
+                    ),
+                  ),
+
+                  // Products grid
+                  Expanded(
+                    child: GridView.builder(
+                      padding: const EdgeInsets.all(defaultPadding),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4,
+                        childAspectRatio: 1,
+                        crossAxisSpacing: defaultPadding,
+                        mainAxisSpacing: defaultPadding,
+                      ),
+                      itemCount: _filteredProducts.length,
+                      itemBuilder: (context, index) {
+                        final product = _filteredProducts[index];
+                        return _buildProductCard(product);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: OrderCartPanel(
+              items: _cartItems,
+              onRemoveItem: _removeFromCart,
+              onPlaceOrder: _placeOrder,
+              onClearCart: _clearCart,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductCard(Product product) {
+    return Card(
+      child: InkWell(
+        onTap: () => _addToOrder(product),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.shopping_bag, size: 40),
+            const SizedBox(height: 8),
+            Text(
+              product.productName,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Text(
+              '\$${product.sellingPrice.toStringAsFixed(2)}',
+              style: const TextStyle(color: Colors.green),
             ),
           ],
         ),
@@ -123,7 +271,7 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  void _showOrderDialog(Product product) {
+  void _addToOrder(Product product) {
     final quantityController = TextEditingController();
     showDialog(
       context: context,
@@ -147,47 +295,86 @@ class _OrderScreenState extends State<OrderScreen> {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () async {
+            onPressed: () {
               final quantity = int.tryParse(quantityController.text);
               if (quantity != null && quantity > 0) {
-                try {
-                  final order = Order(
-                    productId: product.id!,
-                    quantity: quantity,
-                    sellingPrice: product.sellingPrice,
-                    buyingPrice: product.buyingPrice,
-                    totalAmount: product.sellingPrice * quantity,
-                    createdBy: 1,
-                    orderDate: DateTime.now(),
-                  );
-                  
-                  await DatabaseService.instance.createOrder(order);
-                  if (!mounted) return;
-                  
-                  Navigator.pop(context); // Close the dialog
-                  _showOrderReceipt(product, quantity);
-                  
-                } catch (e) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Error creating order: $e'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
+                _addToCart(product, quantity);
+                Navigator.pop(context);
               }
             },
-            child: const Text('Confirm'),
+            child: const Text('Add to Cart'),
           ),
         ],
       ),
     );
   }
 
+  void _addToCart(Product product, int quantity) {
+    setState(() {
+      _cartItems.add(CartItem(product: product, quantity: quantity));
+    });
+  }
+
+  void _removeFromCart(int index) {
+    setState(() {
+      _cartItems.removeAt(index);
+    });
+  }
+
+  void _clearCart() {
+    setState(() {
+      _cartItems.clear();
+    });
+  }
+
+  Future<void> _placeOrder() async {
+    try {
+      // Create orders for each item in cart
+      for (final item in _cartItems) {
+        final order = Order(
+          productId: item.product.id!,
+          quantity: item.quantity,
+          sellingPrice: item.product.sellingPrice,
+          buyingPrice: item.product.buyingPrice,
+          totalAmount: item.total,
+          createdBy: AuthService.instance.currentUser?.id ?? 1,
+          orderDate: DateTime.now(),
+          customerName: _customerNameController.text.trim(),
+        );
+        
+        await DatabaseService.instance.createOrder(order);
+      }
+
+      // Show receipt
+      if (!mounted) return;
+      _showOrderReceipt();
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Order placed successfully!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Clear the cart
+      _clearCart();
+
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error placing order: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
+    _customerNameController.dispose();
     super.dispose();
   }
 } 
