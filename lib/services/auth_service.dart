@@ -20,40 +20,46 @@ class AuthService {
   }
 
   Future<User?> login(String username, String password) async {
-    final hashedPassword = hashPassword(password);
-    final user = await DatabaseService.instance.getUserByUsername(username);
-    
-    if (user != null && user.password == hashedPassword) {
-      _currentUser = user;
+    try {
+      final hashedPassword = hashPassword(password);
+      print('Login attempt - Username: $username, Hashed Password: $hashedPassword'); // Debug log
       
-      // Log the login activity
-      await DatabaseService.instance.logActivity(
-        ActivityLog(
-          userId: user.id!,
-          actionType: 'LOGIN',
-          details: 'User logged in',
-        ),
-      );
+      final user = await DatabaseService.instance.getUserByUsername(username);
+      print('Found user: ${user?.toMap()}'); // Debug log
       
-      // Update last login
-      final updatedUser = User(
-        id: user.id,
-        username: user.username,
-        password: user.password,
-        fullName: user.fullName,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        createdAt: user.createdAt,
-        lastLogin: DateTime.now(),
-      );
-      
-      await DatabaseService.instance.updateUser(updatedUser);
-      await _saveSession(user.id!);
-      
-      return user;
+      if (user != null && user.password == hashedPassword) {
+        _currentUser = user;
+        
+        // Update last login time
+        final updatedUser = User(
+          id: user.id,
+          username: user.username,
+          password: user.password,
+          fullName: user.fullName,
+          email: user.email,
+          isAdmin: user.isAdmin,
+          createdAt: user.createdAt,
+          lastLogin: DateTime.now(),
+        );
+        await DatabaseService.instance.updateUser(updatedUser);
+        
+        // Log the login activity
+        await DatabaseService.instance.logActivity(
+          ActivityLog(
+            userId: user.id!,
+            actionType: 'LOGIN',
+            details: 'User logged in successfully',
+          ),
+        );
+        
+        await _saveSession(user.id!);
+        return user;
+      }
+      return null;
+    } catch (e) {
+      print('Login error: $e'); // Debug log
+      rethrow;
     }
-    
-    return null;
   }
 
   Future<void> logout() async {

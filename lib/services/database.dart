@@ -31,10 +31,7 @@ class DatabaseService {
     final databaseDirpath = await getDatabasesPath();
     final databasepath = join(databaseDirpath, "malbrose_db.db");
 
-    // Delete existing database to start fresh
-    await deleteDatabase(databasepath);
-
-    return await openDatabase(
+    final db = await openDatabase(
       databasepath,
       version: 1,
       onCreate: (Database db, int version) async {
@@ -52,7 +49,7 @@ class DatabaseService {
           )
         ''');
 
-        // Create default admin user
+        // Create default admin user on first database creation
         final defaultAdmin = {
           'username': 'admin',
           'password': AuthService.instance.hashPassword('Account@2024'),
@@ -172,7 +169,31 @@ class DatabaseService {
           )
         ''');
       },
+      onOpen: (Database db) async {
+        // Check if admin exists every time database is opened
+        final adminCheck = await db.query(
+          'users',
+          where: 'username = ?',
+          whereArgs: ['admin'],
+        );
+
+        // Create admin user if it doesn't exist
+        if (adminCheck.isEmpty) {
+          final defaultAdmin = {
+            'username': 'admin',
+            'password': AuthService.instance.hashPassword('Account@2024'),
+            'full_name': 'System Administrator',
+            'email': 'admin@malbrose.com',
+            'is_admin': 1,
+            'created_at': DateTime.now().toIso8601String(),
+          };
+          
+          await db.insert('users', defaultAdmin);
+        }
+      },
     );
+
+    return db;
   }
 
   // Product Operations

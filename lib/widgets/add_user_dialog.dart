@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:my_flutter_app/models/user_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/const/constant.dart';
+import 'package:my_flutter_app/services/auth_service.dart';
 
 class AddUserDialog extends StatefulWidget {
   final bool currentUserIsAdmin;
@@ -100,26 +101,29 @@ class _AddUserDialogState extends State<AddUserDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: _handleSubmit,
+          onPressed: _saveUser,
           child: const Text('Save'),
         ),
       ],
     );
   }
 
-  Future<void> _handleSubmit() async {
+  Future<void> _saveUser() async {
     if (_formKey.currentState!.validate()) {
       try {
-        final user = User(
+        // Hash the password before saving
+        final hashedPassword = AuthService.instance.hashPassword(_passwordController.text);
+        
+        final newUser = User(
           username: _usernameController.text,
-          password: _passwordController.text,
+          password: hashedPassword,  // Use the hashed password
           fullName: _fullNameController.text,
           email: _emailController.text,
           isAdmin: _isAdmin,
           createdAt: DateTime.now(),
         );
 
-        final createdUser = await DatabaseService.instance.createUser(user);
+        await DatabaseService.instance.createUser(newUser);
         if (!mounted) return;
         
         Navigator.pop(context, true);
@@ -130,7 +134,12 @@ class _AddUserDialogState extends State<AddUserDialog> {
           ),
         );
       } catch (e) {
-        // ... error handling ...
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error creating user: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
