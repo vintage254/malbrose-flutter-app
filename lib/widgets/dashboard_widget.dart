@@ -6,11 +6,8 @@ import 'package:my_flutter_app/screens/product_form_screen.dart';
 import 'dart:io';
 
 class DashboardWidget extends StatefulWidget {
-  final GlobalKey<DashboardWidgetState> dashboardKey;
-  
   const DashboardWidget({
     super.key,
-    required this.dashboardKey,
   });
 
   @override
@@ -29,6 +26,10 @@ class DashboardWidgetState extends State<DashboardWidget> {
   final ScrollController _verticalController = ScrollController();
   final ScrollController _horizontalController = ScrollController();
 
+  // Add search controller
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
   @override
   void initState() {
     super.initState();
@@ -37,55 +38,106 @@ class DashboardWidgetState extends State<DashboardWidget> {
 
   @override
   void dispose() {
-    _verticalController.dispose();
+    _searchController.dispose();
     _horizontalController.dispose();
+    _verticalController.dispose();
     super.dispose();
   }
 
   Future<void> _loadProducts() async {
     if (!mounted) return;
+    
+    setState(() {
+      _isLoading = true;
+    });
 
     try {
-      setState(() => _isLoading = true);
       final productsData = await DatabaseService.instance.getAllProducts(
         sortColumn: _sortColumn,
         sortAscending: _sortAscending,
       );
       
       if (!mounted) return;
+      
       setState(() {
         _products = productsData.map((map) => Product.fromMap(map)).toList();
+        if (_sortColumn.isNotEmpty) {
+          _sort(_sortColumn, _sortAscending);
+        }
         _isLoading = false;
       });
     } catch (e) {
-      debugPrint('Error loading products: $e');
       if (!mounted) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error loading products: $e')),
       );
     }
   }
 
-  List<Product> get _paginatedProducts {
-    final startIndex = _currentPage * _itemsPerPage;
-    final endIndex = (startIndex + _itemsPerPage) > _products.length 
-        ? _products.length 
-        : startIndex + _itemsPerPage;
-    return _products.sublist(startIndex, endIndex);
+  // Filter products based on search
+  List<Product> get _filteredProducts {
+    if (_searchQuery.isEmpty) return _products;
+    return _products.where((product) {
+      final search = _searchQuery.toLowerCase();
+      return product.productName.toLowerCase().contains(search) ||
+             product.supplier.toLowerCase().contains(search);
+    }).toList();
   }
 
-  void _sort<T>(String column, bool ascending) {
+  // Update pagination to use filtered products
+  List<Product> get _paginatedProducts {
+    final startIndex = _currentPage * _itemsPerPage;
+    final endIndex = (startIndex + _itemsPerPage) > _filteredProducts.length 
+        ? _filteredProducts.length 
+        : startIndex + _itemsPerPage;
+    return _filteredProducts.sublist(startIndex, endIndex);
+  }
+
+  void _sort(String column, bool ascending) {
     setState(() {
       _sortColumn = column;
       _sortAscending = ascending;
-      _loadProducts();
+      _products.sort((a, b) {
+        final aValue = _getSortValue(a, column);
+        final bValue = _getSortValue(b, column);
+        return ascending 
+            ? Comparable.compare(aValue, bValue)
+            : Comparable.compare(bValue, aValue);
+      });
     });
+  }
+
+  dynamic _getSortValue(Product product, String column) {
+    switch (column) {
+      case 'product_name':
+        return product.productName.toLowerCase();
+      case 'supplier':
+        return product.supplier.toLowerCase();
+      case 'quantity':
+        return product.quantity;
+      default:
+        return '';
+    }
+  }
+
+  // Add this method to handle product updates
+  Future<void> _handleProductAction(BuildContext context, {Product? product}) async {
+    final result = await showDialog(
+      context: context,
+      builder: (context) => ProductFormScreen(product: product),
+    );
+    
+    if (result == true) {
+      await _loadProducts(); // Reload products after successful update/add
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final totalPages = (_products.length / _itemsPerPage).ceil();
+    final totalPages = (_filteredProducts.length / _itemsPerPage).ceil();
 
     return Material(
       child: Container(
@@ -103,185 +155,157 @@ class DashboardWidgetState extends State<DashboardWidget> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Flexible(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Flexible(
-                    child: Text(
-                      'Welcome to malbrose hardware and stores pos',
-                      style: Theme.of(context).textTheme.titleMedium,
-                      overflow: TextOverflow.ellipsis,
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search products...',
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
                     ),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value;
+                      });
+                    },
                   ),
-                  const SizedBox(width: 8),
-                  const Icon(Icons.notifications),
-                ],
-              ),
+                ),
+                const SizedBox(width: defaultPadding),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _loadProducts,
+                  tooltip: 'Refresh Products',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add),
+                  onPressed: () => _handleProductAction(context),
+                  tooltip: 'Add Product',
+                ),
+              ],
             ),
             const SizedBox(height: defaultPadding),
             if (_isLoading)
               const Center(child: CircularProgressIndicator())
             else
               Expanded(
-                child: Material(
-                  color: Colors.transparent,
-                  child: Container(
-                    padding: const EdgeInsets.all(defaultPadding),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            DropdownButton<String>(
-                              value: _sortColumn,
-                              items: const [
-                                DropdownMenuItem(
-                                  value: 'product_name',
-                                  child: Text('Product Name'),
+                child: Container(
+                  padding: const EdgeInsets.all(defaultPadding),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    children: [
+                      // Product list with proper scrolling
+                      Expanded(
+                        child: Scrollbar(
+                          controller: _verticalController,
+                          thumbVisibility: true,
+                          child: Scrollbar(
+                            controller: _horizontalController,
+                            thumbVisibility: true,
+                            notificationPredicate: (notification) => notification.depth == 1,
+                            child: SingleChildScrollView(
+                              controller: _verticalController,
+                              child: SingleChildScrollView(
+                                controller: _horizontalController,
+                                scrollDirection: Axis.horizontal,
+                                child: DataTable(
+                                  columnSpacing: 20,
+                                  columns: [
+                                    const DataColumn(
+                                      label: SizedBox(
+                                        width: 60,
+                                        child: Text('Image'),
+                                      ),
+                                    ),
+                                    DataColumn(
+                                      label: const Text('Product Name'),
+                                      onSort: (_, __) => _sort('product_name', !_sortAscending),
+                                    ),
+                                    DataColumn(
+                                      label: const Text('Supplier'),
+                                      onSort: (_, __) => _sort('supplier', !_sortAscending),
+                                    ),
+                                    const DataColumn(label: Text('Buying Price')),
+                                    const DataColumn(label: Text('Selling Price')),
+                                    const DataColumn(label: Text('Quantity')),
+                                    const DataColumn(label: Text('Actions')),
+                                  ],
+                                  rows: _paginatedProducts.map((product) {
+                                    return DataRow(
+                                      cells: [
+                                        DataCell(
+                                          Container(
+                                            width: 60,
+                                            height: 50,
+                                            child: product.image != null
+                                                ? Image.file(
+                                                    File(product.image!),
+                                                    fit: BoxFit.cover,
+                                                  )
+                                                : const Icon(Icons.image_not_supported),
+                                          ),
+                                        ),
+                                        DataCell(Text(product.productName)),
+                                        DataCell(Text(product.supplier)),
+                                        DataCell(
+                                            Text('\$${product.buyingPrice}')),
+                                        DataCell(
+                                            Text('\$${product.sellingPrice}')),
+                                        DataCell(Text('${product.quantity}')),
+                                        DataCell(
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              IconButton(
+                                                icon: const Icon(Icons.edit, size: 20),
+                                                onPressed: () => _handleProductAction(context, product: product),
+                                              ),
+                                              IconButton(
+                                                icon: const Icon(Icons.delete, size: 20),
+                                                onPressed: () => _deleteProduct(product.id!),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  }).toList(),
                                 ),
-                                DropdownMenuItem(
-                                  value: 'supplier',
-                                  child: Text('Supplier'),
-                                ),
-                                DropdownMenuItem(
-                                  value: 'buying_price',
-                                  child: Text('Buying Price'),
-                                ),
-                                DropdownMenuItem(
-                                  value: 'selling_price',
-                                  child: Text('Selling Price'),
-                                ),
-                              ],
-                              onChanged: (value) {
-                                if (value != null) {
-                                  _sort(value, _sortAscending);
-                                }
-                              },
-                            ),
-                            IconButton(
-                              icon: Icon(_sortAscending 
-                                ? Icons.arrow_upward 
-                                : Icons.arrow_downward
                               ),
-                              onPressed: () => _sort(_sortColumn, !_sortAscending),
+                            ),
+                          ),
+                        ),
+                      ),
+                      // Pagination controls
+                      Padding(
+                        padding: const EdgeInsets.only(top: defaultPadding),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.arrow_back),
+                              onPressed: _currentPage > 0
+                                  ? () => setState(() => _currentPage--)
+                                  : null,
+                            ),
+                            Text('${_currentPage + 1} / $totalPages'),
+                            IconButton(
+                              icon: const Icon(Icons.arrow_forward),
+                              onPressed: _currentPage < totalPages - 1
+                                  ? () => setState(() => _currentPage++)
+                                  : null,
                             ),
                           ],
                         ),
-                        const SizedBox(height: defaultPadding / 2),
-                        Expanded(
-                          child: Scrollbar(
-                            controller: _verticalController,
-                            thumbVisibility: true,
-                            trackVisibility: true,
-                            child: SingleChildScrollView(
-                              controller: _verticalController,
-                              scrollDirection: Axis.vertical,
-                              child: Scrollbar(
-                                controller: _horizontalController,
-                                thumbVisibility: true,
-                                trackVisibility: true,
-                                notificationPredicate: (notification) => notification.depth == 1,
-                                child: SingleChildScrollView(
-                                  controller: _horizontalController,
-                                  scrollDirection: Axis.horizontal,
-                                  child: ConstrainedBox(
-                                    constraints: BoxConstraints(
-                                      minWidth: MediaQuery.of(context).size.width - (defaultPadding * 4),
-                                    ),
-                                    child: DataTable(
-                                      horizontalMargin: 20,
-                                      columnSpacing: 20,
-                                      columns: [
-                                        DataColumn(
-                                          label: Container(
-                                            width: 60,
-                                            child: const Text('Image'),
-                                          ),
-                                        ),
-                                        const DataColumn(label: Text('Product Name')),
-                                        const DataColumn(label: Text('Supplier')),
-                                        const DataColumn(label: Text('Buying Price')),
-                                        const DataColumn(label: Text('Selling Price')),
-                                        const DataColumn(label: Text('Quantity')),
-                                        const DataColumn(label: Text('Actions')),
-                                      ],
-                                      rows: _paginatedProducts.map((product) {
-                                        return DataRow(
-                                          cells: [
-                                            DataCell(
-                                              Container(
-                                                width: 60,
-                                                height: 50,
-                                                child: product.image != null
-                                                    ? Image.file(
-                                                        File(product.image!),
-                                                        fit: BoxFit.cover,
-                                                      )
-                                                    : const Icon(Icons.image_not_supported),
-                                              ),
-                                            ),
-                                            DataCell(Text(product.productName)),
-                                            DataCell(Text(product.supplier)),
-                                            DataCell(
-                                                Text('\$${product.buyingPrice}')),
-                                            DataCell(
-                                                Text('\$${product.sellingPrice}')),
-                                            DataCell(Text('${product.quantity}')),
-                                            DataCell(
-                                              Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  IconButton(
-                                                    icon: const Icon(Icons.edit),
-                                                    onPressed: () =>
-                                                        _editProduct(product),
-                                                  ),
-                                                  IconButton(
-                                                    icon: const Icon(Icons.delete),
-                                                    onPressed: () =>
-                                                        _deleteProduct(product.id!),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        );
-                                      }).toList(),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.arrow_back),
-                                onPressed: _currentPage > 0
-                                    ? () => setState(() => _currentPage--)
-                                    : null,
-                              ),
-                              Text('${_currentPage + 1} / $totalPages'),
-                              IconButton(
-                                icon: const Icon(Icons.arrow_forward),
-                                onPressed: _currentPage < totalPages - 1
-                                    ? () => setState(() => _currentPage++)
-                                    : null,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -289,23 +313,6 @@ class DashboardWidgetState extends State<DashboardWidget> {
         ),
       ),
     );
-  }
-
-  void _editProduct(Product product) async {
-    final result = await showDialog(
-      context: context,
-      builder: (context) => ProductFormScreen(product: product),
-    );
-    
-    if (result == true && mounted) {
-      _loadProducts();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Product updated successfully!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    }
   }
 
   Future<void> _deleteProduct(int id) async {
@@ -357,20 +364,6 @@ class DashboardWidgetState extends State<DashboardWidget> {
   }
 
   void refreshProducts() {
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-      });
-      _loadProducts().then((_) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Products updated successfully!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      });
-    }
+    _loadProducts();
   }
 }

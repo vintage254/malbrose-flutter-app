@@ -260,7 +260,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           await DatabaseService.instance.insertProduct(product.toMap());
         }
         if (!mounted) return;
-        Navigator.pop(context, true);  // Return true to indicate success
+        Navigator.pop(context, true);  // Make sure this line is called
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Product saved successfully!'),

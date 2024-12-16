@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:my_flutter_app/widgets/dashboard_widget.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:my_flutter_app/widgets/right_panel_widget.dart';
+import 'package:my_flutter_app/widgets/order_summary_widget.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -13,7 +14,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   final GlobalKey<DashboardWidgetState> _dashboardKey = GlobalKey();
 
-  void refreshDashboard() {
+  void _handleProductsUpdated() {
     _dashboardKey.currentState?.refreshProducts();
   }
 
@@ -22,18 +23,21 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       body: SafeArea(
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              flex: 2,
-              child: SideMenuWidget(onProductsUpdated: refreshDashboard),
+            const Expanded(
+              flex: 1,
+              child: SideMenuWidget(),
             ),
             Expanded(
-              flex: 8,
-              child: DashboardWidget(dashboardKey: _dashboardKey),
+              flex: 3,
+              child: DashboardWidget(
+                key: _dashboardKey,
+              ),
             ),
             const Expanded(
               flex: 2,
-              child: RightPanelWidget(),
+              child: OrderSummaryWidget(),
             ),
           ],
         ),

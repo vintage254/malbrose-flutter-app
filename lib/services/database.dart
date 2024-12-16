@@ -1,5 +1,7 @@
 import 'package:path/path.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:my_flutter_app/models/order_model.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._constructor();
@@ -156,15 +158,15 @@ class DatabaseService {
   }
 
   // Order Operations
-  Future<bool> createOrder(Map<String, dynamic> order) async {
+  Future<int> createOrder(Order order) async {
     final db = await database;
-    await db.transaction((txn) async {
+    return await db.transaction((txn) async {
       // Get current product quantity
       final product = await txn.query(
         tableProducts,
         columns: ['quantity'],
         where: 'id = ?',
-        whereArgs: [order['product_id']],
+        whereArgs: [order.productId],
       );
 
       if (product.isEmpty) {
@@ -172,26 +174,16 @@ class DatabaseService {
       }
 
       final currentQuantity = product.first['quantity'] as int;
-      final orderQuantity = order['quantity'] as int;
-
-      if (currentQuantity < orderQuantity) {
+      
+      if (currentQuantity < order.quantity) {
         throw Exception('Insufficient stock');
       }
 
-      // Update product quantity
-      final newQuantity = currentQuantity - orderQuantity;
-      await txn.update(
-        tableProducts,
-        {'quantity': newQuantity},
-        where: 'id = ?',
-        whereArgs: [order['product_id']],
-      );
+      // Insert the order
+      final orderId = await txn.insert(tableOrders, order.toMap());
 
-      // Create order
-      await txn.insert(tableOrders, order);
+      return orderId;
     });
-
-    return true;
   }
 
   Future<List<Map<String, dynamic>>> getOrdersByStatus(String status) async {

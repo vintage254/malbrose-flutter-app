@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:my_flutter_app/data/side_menu_data.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/screens/product_form_screen.dart';
+import 'package:my_flutter_app/screens/order_screen.dart';
 
 class SideMenuWidget extends StatefulWidget {
-  final VoidCallback onProductsUpdated;
+  final VoidCallback? onProductsUpdated;
   
   const SideMenuWidget({
     super.key,
-    required this.onProductsUpdated,
+    this.onProductsUpdated,
   });
 
   @override
@@ -16,6 +17,37 @@ class SideMenuWidget extends StatefulWidget {
 }
 
 class _SideMenuWidgetState extends State<SideMenuWidget> {
+  List<Widget> _buildMenuItems() {
+    return [
+      _buildPopupMenuButton(
+        'Products',
+        [
+          const PopupMenuItem(
+            value: 'add_product',
+            child: Text('Add Product', style: TextStyle(fontSize: 12)),
+          ),
+          const PopupMenuItem(
+            value: 'view_all_products',
+            child: Text('View All Products', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+      _buildPopupMenuButton(
+        'Orders',
+        [
+          const PopupMenuItem(
+            value: 'place_order',
+            child: Text('Place Order', style: TextStyle(fontSize: 12)),
+          ),
+          const PopupMenuItem(
+            value: 'view_orders',
+            child: Text('View Orders', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    ];
+  }
+
   void _handleMenuAction(String? value) async {
     if (value == null) return;
 
@@ -26,13 +58,31 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
           builder: (context) => const ProductFormScreen(),
         );
         if (result == true) {
-          widget.onProductsUpdated();
+          widget.onProductsUpdated?.call();
         }
         break;
       case 'view_all_products':
-        widget.onProductsUpdated();
+        widget.onProductsUpdated?.call();
+        break;
+      case 'place_order':
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const OrderScreen(),
+          ),
+        );
+        break;
+      case 'view_orders':
+        // We'll implement this later
         break;
     }
+  }
+
+  Widget _buildPopupMenuButton(String title, List<PopupMenuItem<String>> items) {
+    return PopupMenuButton<String>(
+      itemBuilder: (context) => items,
+      onSelected: _handleMenuAction,
+    );
   }
 
   @override
