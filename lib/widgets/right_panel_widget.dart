@@ -40,16 +40,24 @@ class RightPanelWidget extends StatelessWidget {
               ),
             ),
             const SizedBox(height: defaultPadding),
-            _buildSection('Debtors', Icons.arrow_downward, Colors.red),
-            const SizedBox(height: defaultPadding),
-            _buildSection('Creditors', Icons.arrow_upward, Colors.green),
+            _buildInfoCard(
+              'Recent Orders',
+              Icons.shopping_cart,
+              Colors.blue,
+            ),
+            const SizedBox(height: defaultPadding / 2),
+            _buildInfoCard(
+              'Recent Sales',
+              Icons.attach_money,
+              Colors.green,
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSection(String title, IconData icon, Color color) {
+  Widget _buildInfoCard(String title, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(defaultPadding / 2),
       decoration: BoxDecoration(
@@ -57,16 +65,20 @@ class RightPanelWidget extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: color,
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               Icon(icon, color: color, size: 16),

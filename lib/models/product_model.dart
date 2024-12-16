@@ -45,8 +45,8 @@ class Product {
       supplier: map['supplier'],
       receivedDate: DateTime.parse(map['received_date']),
       productName: map['product_name'],
-      buyingPrice: map['buying_price'],
-      sellingPrice: map['selling_price'],
+      buyingPrice: (map['buying_price'] as num).toDouble(),
+      sellingPrice: (map['selling_price'] as num).toDouble(),
       quantity: map['quantity'],
       description: map['description'],
       createdAt:

@@ -123,9 +123,15 @@ class DatabaseService {
     return await db.insert(tableProducts, product);
   }
 
-  Future<List<Map<String, dynamic>>> getAllProducts() async {
+  Future<List<Map<String, dynamic>>> getAllProducts({
+    String sortColumn = 'product_name',
+    bool sortAscending = true,
+  }) async {
     final db = await database;
-    return await db.query(tableProducts);
+    return await db.query(
+      tableProducts,
+      orderBy: '$sortColumn ${sortAscending ? 'ASC' : 'DESC'}',
+    );
   }
 
   Future<Map<String, dynamic>?> getProductById(int id) async {
@@ -270,6 +276,17 @@ class DatabaseService {
       tableProducts,
       where: 'id = ?',
       whereArgs: [id],
+    );
+    return count > 0;
+  }
+
+  Future<bool> updateProduct(Map<String, dynamic> product) async {
+    final db = await database;
+    final count = await db.update(
+      tableProducts,
+      product,
+      where: 'id = ?',
+      whereArgs: [product['id']],
     );
     return count > 0;
   }

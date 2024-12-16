@@ -7,7 +7,9 @@ import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 
 class ProductFormScreen extends StatefulWidget {
-  const ProductFormScreen({super.key});
+  final Product? product;
+
+  const ProductFormScreen({super.key, this.product});
 
   @override
   State<ProductFormScreen> createState() => _ProductFormScreenState();
@@ -24,6 +26,22 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   final DateTime _receivedDate = DateTime.now();
   XFile? _imageFile;
   final ImagePicker _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.product != null) {
+      _supplierController.text = widget.product!.supplier;
+      _productNameController.text = widget.product!.productName;
+      _buyingPriceController.text = widget.product!.buyingPrice.toString();
+      _sellingPriceController.text = widget.product!.sellingPrice.toString();
+      _quantityController.text = widget.product!.quantity.toString();
+      _descriptionController.text = widget.product!.description ?? '';
+      if (widget.product!.image != null) {
+        _imageFile = XFile(widget.product!.image!);
+      }
+    }
+  }
 
   Future<void> _pickImage() async {
     if (!mounted) return;
@@ -210,9 +228,22 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     );
   }
 
-  void _saveProduct() async {
+  Future<void> _saveProduct() async {
     if (_formKey.currentState!.validate()) {
+      _formKey.currentState!.save();
+
+      String? imagePath;
+      if (_imageFile != null) {
+        final appDir = await getApplicationDocumentsDirectory();
+        final fileName = DateTime.now().millisecondsSinceEpoch.toString() + '.jpg';
+        final savedImage = File('${appDir.path}/$fileName');
+        await File(_imageFile!.path).copy(savedImage.path);
+        imagePath = savedImage.path;
+      }
+
       final product = Product(
+        id: widget.product?.id,
+        image: imagePath ?? widget.product?.image,
         supplier: _supplierController.text,
         receivedDate: _receivedDate,
         productName: _productNameController.text,
@@ -220,13 +251,22 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         sellingPrice: double.parse(_sellingPriceController.text),
         quantity: int.parse(_quantityController.text),
         description: _descriptionController.text,
-        image: _imageFile?.path,
       );
 
       try {
-        await DatabaseService.instance.insertProduct(product.toMap());
+        if (widget.product != null) {
+          await DatabaseService.instance.updateProduct(product.toMap());
+        } else {
+          await DatabaseService.instance.insertProduct(product.toMap());
+        }
         if (!mounted) return;
-        Navigator.pop(context, true);
+        Navigator.pop(context, true);  // Return true to indicate success
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Product saved successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
       } catch (e) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(

@@ -4,7 +4,12 @@ import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/screens/product_form_screen.dart';
 
 class SideMenuWidget extends StatefulWidget {
-  const SideMenuWidget({super.key});
+  final VoidCallback onProductsUpdated;
+  
+  const SideMenuWidget({
+    super.key,
+    required this.onProductsUpdated,
+  });
 
   @override
   State<SideMenuWidget> createState() => _SideMenuWidgetState();
@@ -21,13 +26,11 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
           builder: (context) => const ProductFormScreen(),
         );
         if (result == true) {
-          // Refresh the product list
-          setState(() {});
+          widget.onProductsUpdated();
         }
         break;
       case 'view_all_products':
-        // Refresh the main screen to show products
-        setState(() {});
+        widget.onProductsUpdated();
         break;
     }
   }
