@@ -6,4 +6,4 @@ const Color backgroundColor = Color(0xFFB0E0E6); // Light Gray
 const Color selectionColor = Color(0xFF00FFFF); // Bright Cyan
 const Color cardBackgroundColor = Color(0xFFFFE5B4); // Ivory/Off-White
 
-const defaultPadding = 20.0;
+const double defaultPadding = 16.0;

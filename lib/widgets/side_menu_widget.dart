@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/data/side_menu_data.dart';
 import 'package:my_flutter_app/screens/main_screen.dart';
 import 'package:my_flutter_app/screens/product_form_screen.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
+import 'package:my_flutter_app/screens/sales_screen.dart';
 import 'package:my_flutter_app/screens/user_management_screen.dart';
 import 'package:my_flutter_app/screens/home_screen.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
@@ -34,14 +36,14 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.amber.withOpacity(0.7),  // More transparent at top
-            Colors.orange.shade900,         // Darker orange at bottom
+            Colors.amber.withOpacity(0.7),
+            Colors.orange.shade900,
           ],
         ),
       ),
       child: Card(
-        color: Colors.transparent, // Make card transparent to show gradient
-        elevation: 0, // Remove shadow
+        color: Colors.transparent,
+        elevation: 0,
         child: ListView(
           children: [
             DrawerHeader(
@@ -93,6 +95,12 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (context) => const OrderScreen()),
+                        );
+                        break;
+                      case 'sales':
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const SalesScreen()),
                         );
                         break;
                     }

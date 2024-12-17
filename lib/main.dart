@@ -1,47 +1,38 @@
 import 'package:flutter/material.dart';
-import 'package:my_flutter_app/const/constant.dart';
-import 'package:my_flutter_app/screens/main_screen.dart';
-import 'package:my_flutter_app/screens/login_screen.dart';
 import 'package:my_flutter_app/screens/home_screen.dart';
-import 'package:my_flutter_app/services/database.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'dart:io';
-import 'package:my_flutter_app/services/auth_service.dart';
-import 'package:my_flutter_app/models/user_model.dart';
+import 'package:my_flutter_app/screens/login_screen.dart';
+import 'package:my_flutter_app/screens/dashboard_screen.dart';
+import 'package:my_flutter_app/screens/order_screen.dart';
+import 'package:my_flutter_app/screens/sales_screen.dart';
+import 'package:my_flutter_app/screens/product_screen.dart';
+import 'package:my_flutter_app/screens/user_management_screen.dart';
+import 'package:my_flutter_app/screens/activity_log_screen.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  if (Platform.isWindows || Platform.isLinux) {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-  }
-
-  await DatabaseService.instance.database;
-  
-  // Check for existing session
-  final user = await AuthService.instance.restoreSession();
-  
-  runApp(MyApp(initialUser: user));
+void main() {
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  final User? initialUser;
-  
-  const MyApp({
-    super.key,
-    this.initialUser,
-  });
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Malbrose POS system',
+      title: 'Malbrose POS',
       theme: ThemeData(
-        scaffoldBackgroundColor: backgroundColor,
-        brightness: Brightness.light,
+        primarySwatch: Colors.amber,
       ),
-      home: const HomeScreen(),
+      initialRoute: '/',
+      routes: {
+        '/': (context) => const HomeScreen(),
+        '/login': (context) => const LoginScreen(),
+        '/dashboard': (context) => const DashboardScreen(),
+        '/orders': (context) => const OrderScreen(),
+        '/sales': (context) => const SalesScreen(),
+        '/products': (context) => const ProductScreen(),
+        '/users': (context) => const UserManagementScreen(),
+        '/activity-log': (context) => const ActivityLogScreen(),
+      },
     );
   }
 }

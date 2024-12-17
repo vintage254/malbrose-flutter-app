@@ -1,12 +1,13 @@
+import 'package:flutter/material.dart';
 import 'package:my_flutter_app/models/menu_model.dart';
-import 'package:my_flutter_app/assets/icons.dart';
 
 class SideMenuData {
-  final menu = const <MenuModel>[
-    MenuModel(icon: AppIcons.home, title: 'Dashboard'),
-    MenuModel(icon: AppIcons.user, title: 'user management'),
-    MenuModel(icon: AppIcons.product, title: 'product management'),
-    MenuModel(icon: AppIcons.orders, title: 'orders'),
-    MenuModel(icon: AppIcons.auth, title: 'authentication'),
+  final List<MenuModel> menu = [
+    const MenuModel(icon: Icons.dashboard, title: 'Dashboard'),
+    const MenuModel(icon: Icons.shopping_cart, title: 'Orders'),
+    const MenuModel(icon: Icons.point_of_sale, title: 'Sales'),
+    const MenuModel(icon: Icons.inventory, title: 'Product Management'),
+    const MenuModel(icon: Icons.people, title: 'User Management'),
+    const MenuModel(icon: Icons.history, title: 'Activity Logs'),
   ];
 }
