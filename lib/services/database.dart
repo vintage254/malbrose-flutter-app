@@ -33,7 +33,7 @@ class DatabaseService {
 
     final db = await openDatabase(
       databasepath,
-      version: 1,
+      version: 3,
       onCreate: (Database db, int version) async {
         // Create users table first
         await db.execute('''
@@ -49,10 +49,10 @@ class DatabaseService {
           )
         ''');
 
-        // Create default admin user on first database creation
+        // Create default admin user with correct password hash
         final defaultAdmin = {
           'username': 'admin',
-          'password': AuthService.instance.hashPassword('Account@2024'),
+          'password': 'd3fc50c8f714cebd16d6c827826df01205bf519529f9d34775293cf9b70a420e',
           'full_name': 'System Administrator',
           'email': 'admin@malbrose.com',
           'is_admin': 1,
@@ -168,6 +168,15 @@ class DatabaseService {
             FOREIGN KEY (user_id) REFERENCES users (id)
           )
         ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        // Update admin password if upgrading
+        await db.update(
+          'users',
+          {'password': 'd3fc50c8f714cebd16d6c827826df01205bf519529f9d34775293cf9b70a420e'},
+          where: 'username = ?',
+          whereArgs: ['admin']
+        );
       },
       onOpen: (Database db) async {
         // Check if admin exists every time database is opened

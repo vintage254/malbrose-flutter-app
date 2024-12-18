@@ -12,7 +12,6 @@ class AuthService {
   User? _currentUser;
   User? get currentUser => _currentUser;
 
-  // Make the method public by removing underscore
   String hashPassword(String password) {
     final bytes = utf8.encode(password);
     final hash = sha256.convert(bytes);
@@ -22,42 +21,45 @@ class AuthService {
   Future<User?> login(String username, String password) async {
     try {
       final hashedPassword = hashPassword(password);
-      print('Login attempt - Username: $username, Hashed Password: $hashedPassword'); // Debug log
+      
+      print('Login attempt:');
+      print('Username: $username');
+      print('Input Password Hash: $hashedPassword');
       
       final user = await DatabaseService.instance.getUserByUsername(username);
-      print('Found user: ${user?.toMap()}'); // Debug log
       
-      if (user != null && user.password == hashedPassword) {
-        _currentUser = user;
+      if (user != null) {
+        print('Found user with password hash: ${user.password}');
         
-        // Update last login time
-        final updatedUser = User(
-          id: user.id,
-          username: user.username,
-          password: user.password,
-          fullName: user.fullName,
-          email: user.email,
-          isAdmin: user.isAdmin,
-          createdAt: user.createdAt,
-          lastLogin: DateTime.now(),
-        );
-        await DatabaseService.instance.updateUser(updatedUser);
-        
-        // Log the login activity
-        await DatabaseService.instance.logActivity(
-          ActivityLog(
-            userId: user.id!,
-            actionType: 'LOGIN',
-            details: 'User logged in successfully',
-          ),
-        );
-        
-        await _saveSession(user.id!);
-        return user;
+        if (user.password == hashedPassword) {
+          _currentUser = user;
+          
+          final updatedUser = User(
+            id: user.id,
+            username: user.username,
+            password: user.password,
+            fullName: user.fullName,
+            email: user.email,
+            isAdmin: user.isAdmin,
+            createdAt: user.createdAt,
+            lastLogin: DateTime.now(),
+          );
+          await DatabaseService.instance.updateUser(updatedUser);
+          
+          await DatabaseService.instance.logActivity(
+            ActivityLog(
+              userId: user.id!,
+              actionType: 'LOGIN',
+              details: 'User logged in successfully',
+            ),
+          );
+          
+          return user;
+        }
       }
       return null;
     } catch (e) {
-      print('Login error: $e'); // Debug log
+      print('Login error: $e');
       rethrow;
     }
   }
