@@ -1,15 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:my_flutter_app/screens/home_screen.dart';
-import 'package:my_flutter_app/screens/login_screen.dart';
+import 'package:provider/provider.dart';
+import 'package:my_flutter_app/services/order_service.dart';
 import 'package:my_flutter_app/screens/dashboard_screen.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
 import 'package:my_flutter_app/screens/sales_screen.dart';
-import 'package:my_flutter_app/screens/product_screen.dart';
+import 'package:my_flutter_app/screens/product_management_screen.dart';
 import 'package:my_flutter_app/screens/user_management_screen.dart';
 import 'package:my_flutter_app/screens/activity_log_screen.dart';
+import 'package:my_flutter_app/screens/home_screen.dart';
+import 'package:my_flutter_app/screens/main_screen.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider<OrderService>.value(
+          value: OrderService.instance,
+        ),
+      ],
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -18,20 +29,20 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Malbrose POS',
+      title: 'Malbrose Hardware Store',
       theme: ThemeData(
-        primarySwatch: Colors.amber,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.orange),
+        useMaterial3: true,
       ),
-      initialRoute: '/',
+      home: const HomeScreen(),
       routes: {
-        '/': (context) => const HomeScreen(),
-        '/login': (context) => const LoginScreen(),
+        '/main': (context) => const MainScreen(),
         '/dashboard': (context) => const DashboardScreen(),
         '/orders': (context) => const OrderScreen(),
         '/sales': (context) => const SalesScreen(),
-        '/products': (context) => const ProductScreen(),
+        '/products': (context) => const ProductManagementScreen(),
         '/users': (context) => const UserManagementScreen(),
-        '/activity-log': (context) => const ActivityLogScreen(),
+        '/activity': (context) => const ActivityLogScreen(),
       },
     );
   }

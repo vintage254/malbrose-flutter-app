@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
+import 'package:my_flutter_app/services/order_service.dart';
+import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 
 class OrderSummaryWidget extends StatelessWidget {
   const OrderSummaryWidget({super.key});
@@ -12,8 +15,8 @@ class OrderSummaryWidget extends StatelessWidget {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.amber.withOpacity(0.7),  // More transparent at top
-            Colors.orange.shade900,         // Darker orange at bottom
+            Colors.amber.withOpacity(0.7),
+            Colors.orange.shade900,
           ],
         ),
       ),
@@ -23,30 +26,83 @@ class OrderSummaryWidget extends StatelessWidget {
         children: [
           Text(
             'Recent Orders',
-            style: Theme.of(context).textTheme.titleLarge,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: defaultPadding),
           Expanded(
-            child: ListView(
-              children: const [
-                // TODO: Add recent orders list here
-                Text('No recent orders'),
-              ],
+            child: Consumer<OrderService>(
+              builder: (context, orderService, child) {
+                if (orderService.recentOrders.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      'No recent orders',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  );
+                }
+                return ListView.builder(
+                  itemCount: orderService.recentOrders.length,
+                  itemBuilder: (context, index) {
+                    final order = orderService.recentOrders[index];
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        leading: Icon(
+                          Icons.receipt_long,
+                          color: order.orderStatus == 'COMPLETED'
+                              ? Colors.green
+                              : Colors.orange,
+                        ),
+                        title: Text('Order #${order.orderNumber}'),
+                        subtitle: Text(
+                          'Customer: ${order.customerName ?? "N/A"}\n'
+                          'Status: ${order.orderStatus}',
+                        ),
+                        trailing: Text(
+                          'KSH ${order.totalAmount.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        isThreeLine: true,
+                      ),
+                    );
+                  },
+                );
+              },
             ),
           ),
-          const Divider(),
-          // Summary section
+          const Divider(color: Colors.white60),
           const Text(
             'Today\'s Summary',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
+              color: Colors.white,
             ),
           ),
           const SizedBox(height: defaultPadding),
-          _buildSummaryItem('Total Orders', '0'),
-          _buildSummaryItem('Total Sales', '\$0.00'),
-          _buildSummaryItem('Pending Orders', '0'),
+          Consumer<OrderService>(
+            builder: (context, orderService, _) => Column(
+              children: [
+                _buildSummaryItem(
+                  'Total Orders',
+                  orderService.totalOrders.toString(),
+                ),
+                _buildSummaryItem(
+                  'Total Sales',
+                  'KSH ${NumberFormat('#,##0.00').format(orderService.totalSales)}',
+                ),
+                _buildSummaryItem(
+                  'Pending Orders',
+                  orderService.pendingOrders.toString(),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -58,11 +114,15 @@ class OrderSummaryWidget extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white),
+          ),
           Text(
             value,
             style: const TextStyle(
               fontWeight: FontWeight.bold,
+              color: Colors.white,
             ),
           ),
         ],

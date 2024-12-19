@@ -1,35 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
-import 'package:my_flutter_app/data/side_menu_data.dart';
-import 'package:my_flutter_app/screens/main_screen.dart';
-import 'package:my_flutter_app/screens/product_form_screen.dart';
-import 'package:my_flutter_app/screens/order_screen.dart';
-import 'package:my_flutter_app/screens/sales_screen.dart';
-import 'package:my_flutter_app/screens/user_management_screen.dart';
-import 'package:my_flutter_app/screens/home_screen.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
-import 'package:my_flutter_app/widgets/app_logo.dart';
+import 'package:my_flutter_app/screens/home_screen.dart';
 
 class SideMenuWidget extends StatefulWidget {
-  final VoidCallback? onProductsUpdated;
-  
-  const SideMenuWidget({
-    super.key,
-    this.onProductsUpdated,
-  });
+  const SideMenuWidget({super.key});
 
   @override
   State<SideMenuWidget> createState() => _SideMenuWidgetState();
 }
 
 class _SideMenuWidgetState extends State<SideMenuWidget> {
-  final menuData = SideMenuData();
-  int _selectedIndex = 0;
+  final menuItems = [
+    {'title': 'Dashboard', 'icon': Icons.dashboard, 'route': '/dashboard'},
+    {'title': 'Orders', 'icon': Icons.shopping_cart, 'route': '/orders'},
+    {'title': 'Sales', 'icon': Icons.point_of_sale, 'route': '/sales'},
+    {'title': 'Products', 'icon': Icons.inventory, 'route': '/products'},
+    {'title': 'Users', 'icon': Icons.people, 'route': '/users'},
+    {'title': 'Activity Log', 'icon': Icons.history, 'route': '/activity'},
+  ];
 
   @override
   Widget build(BuildContext context) {
     final currentUser = AuthService.instance.currentUser;
-    
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -41,88 +35,54 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
           ],
         ),
       ),
-      child: Card(
-        color: Colors.transparent,
-        elevation: 0,
-        child: ListView(
-          children: [
-            DrawerHeader(
-              child: const AppLogo(),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(defaultPadding),
+            child: Text(
+              'Welcome, ${currentUser?.username ?? "User"}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-            ...List.generate(
-              menuData.menu.length,
-              (index) {
-                final menu = menuData.menu[index];
-                
-                // Skip admin-only items for non-admin users
-                if (!currentUser!.isAdmin && 
-                    (menu.title == 'user management' || menu.title == 'Activity Logs')) {
-                  return const SizedBox.shrink();
-                }
-
+          ),
+          const Divider(color: Colors.white60),
+          Expanded(
+            child: ListView.builder(
+              itemCount: menuItems.length,
+              itemBuilder: (context, index) {
+                final item = menuItems[index];
                 return ListTile(
-                  selected: _selectedIndex == index,
-                  selectedTileColor: Colors.blue.withOpacity(0.1),
-                  leading: Icon(menu.icon),
+                  leading: Icon(item['icon'] as IconData, color: Colors.white),
                   title: Text(
-                    menu.title,
-                    style: const TextStyle(fontSize: 14),
+                    item['title'] as String,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
                   ),
                   onTap: () {
-                    setState(() => _selectedIndex = index);
-                    
-                    // Handle navigation based on menu title
-                    switch (menu.title.toLowerCase()) {
-                      case 'dashboard':
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(builder: (context) => const MainScreen()),
-                        );
-                        break;
-                      case 'user management':
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const UserManagementScreen()),
-                        );
-                        break;
-                      case 'product management':
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const ProductFormScreen()),
-                        );
-                        break;
-                      case 'orders':
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const OrderScreen()),
-                        );
-                        break;
-                      case 'sales':
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const SalesScreen()),
-                        );
-                        break;
-                    }
+                    Navigator.pushNamed(context, item['route'] as String);
                   },
                 );
               },
             ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.logout),
-              title: const Text('Logout', style: TextStyle(fontSize: 14)),
-              onTap: () async {
-                await AuthService.instance.logout();
-                if (!context.mounted) return;
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const HomeScreen()),
-                  (route) => false,
-                );
-              },
+          ),
+          const Divider(color: Colors.white60),
+          ListTile(
+            leading: const Icon(Icons.logout, color: Colors.white),
+            title: const Text(
+              'Logout',
+              style: TextStyle(color: Colors.white, fontSize: 14),
             ),
-          ],
-        ),
+            onTap: () async {
+              await AuthService.instance.logout();
+              if (!context.mounted) return;
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const HomeScreen()),
+                (route) => false,
+              );
+            },
+          ),
+        ],
       ),
     );
   }

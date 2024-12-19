@@ -378,6 +378,67 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
+  Future<void> _createOrder() async {
+    if (_cartItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cart is empty')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final orderNumber = DateTime.now().millisecondsSinceEpoch.toString();
+      
+      // Create orders for each cart item
+      for (final item in _cartItems) {
+        final order = Order(
+          orderNumber: orderNumber,
+          productId: item.product.id!,
+          quantity: item.quantity,
+          sellingPrice: item.product.sellingPrice,
+          buyingPrice: item.product.buyingPrice,
+          totalAmount: item.total,
+          createdBy: AuthService.instance.currentUser?.id ?? 1,
+          orderDate: DateTime.now(),
+          customerName: _customerNameController.text.trim(),
+        );
+        
+        await DatabaseService.instance.createOrder(order);
+      }
+
+      // Notify OrderService about the new order
+      OrderService.instance.notifyOrderUpdate();
+
+      // Clear the cart
+      setState(() {
+        _cartItems = [];
+        _customerNameController.clear();
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Order created successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error creating order: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();

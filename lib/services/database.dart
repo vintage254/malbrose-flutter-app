@@ -146,15 +146,35 @@ class DatabaseService {
     return results.isNotEmpty ? results.first : null;
   }
 
-  Future<bool> updateProductQuantity(int productId, int newQuantity) async {
+  Future<bool> updateProductQuantity(int productId, int quantity, {bool subtract = false}) async {
     final db = await database;
-    int count = await db.update(
+    
+    // First get the current quantity
+    final result = await db.query(
+      tableProducts,
+      columns: ['quantity'],
+      where: 'id = ?',
+      whereArgs: [productId],
+    );
+    
+    if (result.isEmpty) {
+      throw Exception('Product not found');
+    }
+    
+    final currentQuantity = result.first['quantity'] as int;
+    final newQuantity = subtract ? currentQuantity - quantity : currentQuantity + quantity;
+    
+    if (newQuantity < 0) {
+      throw Exception('Insufficient stock');
+    }
+    
+    await db.update(
       tableProducts,
       {'quantity': newQuantity},
       where: 'id = ?',
       whereArgs: [productId],
     );
-    return count > 0;
+    return true;
   }
 
   // Order Operations
@@ -413,5 +433,21 @@ class DatabaseService {
       whereArgs: [userId],
     );
     return results.isNotEmpty ? results.first : null;
+  }
+
+  Future<List<Map<String, dynamic>>> getOrdersByDateRange(
+    DateTime startDate,
+    DateTime endDate,
+  ) async {
+    final db = await database;
+    return db.query(
+      tableOrders,
+      where: 'order_date BETWEEN ? AND ?',
+      whereArgs: [
+        startDate.toIso8601String(),
+        endDate.toIso8601String(),
+      ],
+      orderBy: 'order_date DESC',
+    );
   }
 }

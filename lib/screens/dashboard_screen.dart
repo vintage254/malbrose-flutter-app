@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
+import 'package:my_flutter_app/services/order_service.dart';
+import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
+import 'package:my_flutter_app/widgets/dashboard_widget.dart';
+import 'package:my_flutter_app/widgets/order_summary_widget.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -10,28 +15,9 @@ class DashboardScreen extends StatelessWidget {
     return Scaffold(
       body: Row(
         children: [
-          const Expanded(
-            flex: 1,
-            child: SideMenuWidget(),
-          ),
-          Expanded(
-            flex: 4,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.amber.withOpacity(0.7),
-                    Colors.orange.shade900,
-                  ],
-                ),
-              ),
-              child: const Center(
-                child: Text('Dashboard Content'),
-              ),
-            ),
-          ),
+          const Expanded(flex: 1, child: SideMenuWidget()),
+          const Expanded(flex: 3, child: DashboardWidget()),
+          const Expanded(flex: 1, child: OrderSummaryWidget()),
         ],
       ),
     );

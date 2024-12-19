@@ -4,6 +4,7 @@ import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:my_flutter_app/widgets/receipt_panel.dart';
+import 'package:my_flutter_app/services/order_service.dart';
 
 class SalesScreen extends StatefulWidget {
   const SalesScreen({super.key});
@@ -92,6 +93,18 @@ class _SalesScreenState extends State<SalesScreen> {
     try {
       // Update all items in the order at once using the order number
       await DatabaseService.instance.updateOrderStatus(order.orderNumber!, 'COMPLETED');
+      
+      // Update product quantities for all items in the order
+      for (final item in order.items ?? []) {
+        await DatabaseService.instance.updateProductQuantity(
+          item.productId,
+          item.quantity,
+          subtract: true, // subtract the quantity
+        );
+      }
+      
+      // Notify OrderService about the update
+      OrderService.instance.notifyOrderUpdate();
       
       // Refresh the orders list
       await _loadPendingOrders();
