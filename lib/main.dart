@@ -9,6 +9,8 @@ import 'package:my_flutter_app/screens/user_management_screen.dart';
 import 'package:my_flutter_app/screens/activity_log_screen.dart';
 import 'package:my_flutter_app/screens/home_screen.dart';
 import 'package:my_flutter_app/screens/main_screen.dart';
+import 'package:my_flutter_app/screens/creditors_screen.dart';
+import 'package:my_flutter_app/screens/debtors_screen.dart';
 
 void main() {
   runApp(
@@ -43,6 +45,8 @@ class MyApp extends StatelessWidget {
         '/products': (context) => const ProductManagementScreen(),
         '/users': (context) => const UserManagementScreen(),
         '/activity': (context) => const ActivityLogScreen(),
+        '/creditors': (context) => const CreditorsScreen(),
+        '/debtors': (context) => const DebtorsScreen(),
       },
     );
   }

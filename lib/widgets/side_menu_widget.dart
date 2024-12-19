@@ -67,6 +67,20 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
             ),
           ),
           const Divider(color: Colors.white60),
+          _buildMenuItem(
+            context,
+            'Creditors',
+            Icons.account_balance_wallet,
+            () => Navigator.pushNamed(context, '/creditors'),
+          ),
+          
+          _buildMenuItem(
+            context,
+            'Debtors',
+            Icons.money_off,
+            () => Navigator.pushNamed(context, '/debtors'),
+          ),
+          
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.white),
             title: const Text(
@@ -84,6 +98,17 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildMenuItem(BuildContext context, String title, IconData icon, VoidCallback onTap) {
+    return ListTile(
+      leading: Icon(icon, color: Colors.white),
+      title: Text(
+        title,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+      ),
+      onTap: onTap,
     );
   }
 }

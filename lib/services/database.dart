@@ -102,6 +102,32 @@ class DatabaseService {
           )
         ''');
 
+        // Create creditors table
+        await db.execute('''
+          CREATE TABLE $tableCreditors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE,
+            balance REAL,
+            details TEXT,
+            status TEXT,
+            created_at TEXT,
+            last_updated TEXT
+          )
+        ''');
+
+        // Create debtors table
+        await db.execute('''
+          CREATE TABLE $tableDebtors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE,
+            balance REAL,
+            details TEXT,
+            status TEXT,
+            created_at TEXT,
+            last_updated TEXT
+          )
+        ''');
+
         // Create default admin user
         final defaultAdmin = {
           'username': 'admin',
@@ -257,24 +283,44 @@ class DatabaseService {
     return await db.query(tableDebtors);
   }
 
-  Future<bool> updateCreditorBalance(int creditorId, double newBalance) async {
+  Future<bool> updateCreditorBalanceAndStatus(
+    int id,
+    double newBalance,
+    String details,
+    String status,
+  ) async {
     final db = await database;
-    int count = await db.update(
+    final count = await db.update(
       tableCreditors,
-      {'balance': newBalance},
+      {
+        'balance': newBalance,
+        'details': details,
+        'status': status,
+        'last_updated': DateTime.now().toIso8601String(),
+      },
       where: 'id = ?',
-      whereArgs: [creditorId],
+      whereArgs: [id],
     );
     return count > 0;
   }
 
-  Future<bool> updateDebtorBalance(int debtorId, double newBalance) async {
+  Future<bool> updateDebtorBalanceAndStatus(
+    int id,
+    double newBalance,
+    String details,
+    String status,
+  ) async {
     final db = await database;
-    int count = await db.update(
+    final count = await db.update(
       tableDebtors,
-      {'balance': newBalance},
+      {
+        'balance': newBalance,
+        'details': details,
+        'status': status,
+        'last_updated': DateTime.now().toIso8601String(),
+      },
       where: 'id = ?',
-      whereArgs: [debtorId],
+      whereArgs: [id],
     );
     return count > 0;
   }
@@ -449,5 +495,56 @@ class DatabaseService {
       ],
       orderBy: 'order_date DESC',
     );
+  }
+
+  // Add these methods to DatabaseService class
+  Future<int> addCreditor(Map<String, dynamic> creditor) async {
+    final db = await database;
+    return await db.insert(tableCreditors, creditor);
+  }
+
+  Future<int> addDebtor(Map<String, dynamic> debtor) async {
+    final db = await database;
+    return await db.insert(tableDebtors, debtor);
+  }
+
+  Future<List<Map<String, dynamic>>> getCreditorsByStatus(String status) async {
+    final db = await database;
+    return await db.query(
+      tableCreditors,
+      where: 'status = ?',
+      whereArgs: [status],
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getDebtorsByStatus(String status) async {
+    final db = await database;
+    return await db.query(
+      tableDebtors,
+      where: 'status = ?',
+      whereArgs: [status],
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  Future<bool> checkCreditorExists(String name) async {
+    final db = await database;
+    final result = await db.query(
+      tableCreditors,
+      where: 'name = ?',
+      whereArgs: [name],
+    );
+    return result.isNotEmpty;
+  }
+
+  Future<bool> checkDebtorExists(String name) async {
+    final db = await database;
+    final result = await db.query(
+      tableDebtors,
+      where: 'name = ?',
+      whereArgs: [name],
+    );
+    return result.isNotEmpty;
   }
 }
