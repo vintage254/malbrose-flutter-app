@@ -196,15 +196,14 @@ class DatabaseService {
     );
   }
 
-  Future<bool> updateOrderStatus(int orderId, String status) async {
+  Future<void> updateOrderStatus(String orderNumber, String status) async {
     final db = await database;
-    int count = await db.update(
+    await db.update(
       tableOrders,
       {'order_status': status},
-      where: 'id = ?',
-      whereArgs: [orderId],
+      where: 'order_number = ?',
+      whereArgs: [orderNumber],
     );
-    return count > 0;
   }
 
   // User Operations

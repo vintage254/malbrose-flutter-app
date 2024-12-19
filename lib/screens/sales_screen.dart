@@ -29,8 +29,40 @@ class _SalesScreenState extends State<SalesScreen> {
     try {
       final orders = await DatabaseService.instance.getOrdersByStatus('PENDING');
       if (mounted) {
+        // Group orders by order number
+        final Map<String, List<Order>> groupedOrders = {};
+        final List<Order> ordersList = orders.map((o) => Order.fromMap(o)).toList();
+        
+        for (final order in ordersList) {
+          final orderNumber = order.orderNumber ?? '';
+          if (!groupedOrders.containsKey(orderNumber)) {
+            groupedOrders[orderNumber] = [];
+          }
+          groupedOrders[orderNumber]!.add(order);
+        }
+        
+        // Create combined orders
+        final List<Order> combinedOrders = groupedOrders.entries.map((entry) {
+          final orders = entry.value;
+          final firstOrder = orders.first;
+          return Order(
+            id: firstOrder.id,
+            orderNumber: firstOrder.orderNumber,
+            productId: firstOrder.productId,
+            quantity: firstOrder.quantity,
+            sellingPrice: firstOrder.sellingPrice,
+            buyingPrice: firstOrder.buyingPrice,
+            totalAmount: orders.fold(0.0, (sum, order) => sum + order.totalAmount),
+            customerName: firstOrder.customerName,
+            orderStatus: firstOrder.orderStatus,
+            createdBy: firstOrder.createdBy,
+            orderDate: firstOrder.orderDate,
+            items: orders,
+          );
+        }).toList();
+
         setState(() {
-          _pendingOrders = orders.map((o) => Order.fromMap(o)).toList();
+          _pendingOrders = combinedOrders;
           _isLoading = false;
         });
       }
@@ -58,7 +90,10 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Future<void> _processSale(Order order) async {
     try {
-      await DatabaseService.instance.updateOrderStatus(order.id!, 'COMPLETED');
+      // Update all items in the order at once using the order number
+      await DatabaseService.instance.updateOrderStatus(order.orderNumber!, 'COMPLETED');
+      
+      // Refresh the orders list
       await _loadPendingOrders();
       setState(() {
         _selectedOrder = null;
@@ -80,6 +115,35 @@ class _SalesScreenState extends State<SalesScreen> {
         ),
       );
     }
+  }
+
+  Widget _buildOrderListItem(Order order) {
+    return Card(
+      margin: const EdgeInsets.symmetric(
+        horizontal: defaultPadding,
+        vertical: defaultPadding / 2,
+      ),
+      child: ListTile(
+        leading: const Icon(Icons.receipt),
+        title: Text('Order #${order.orderNumber}'),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Customer: ${order.customerName ?? "N/A"}'),
+            Text('Items: ${order.items?.length ?? 1}'),
+          ],
+        ),
+        trailing: Text(
+          'KSH ${order.totalAmount.toStringAsFixed(2)}',
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+          ),
+        ),
+        onTap: () => setState(() => _selectedOrder = order),
+        selected: _selectedOrder?.orderNumber == order.orderNumber,
+      ),
+    );
   }
 
   @override
@@ -156,26 +220,7 @@ class _SalesScreenState extends State<SalesScreen> {
                                 itemCount: _filteredOrders.length,
                                 itemBuilder: (context, index) {
                                   final order = _filteredOrders[index];
-                                  return Card(
-                                    margin: const EdgeInsets.symmetric(
-                                      horizontal: defaultPadding,
-                                      vertical: defaultPadding / 2,
-                                    ),
-                                    child: ListTile(
-                                      leading: const Icon(Icons.receipt),
-                                      title: Text('Order #${order.id}'),
-                                      subtitle: Text('Customer: ${order.customerName ?? "N/A"}'),
-                                      trailing: Text(
-                                        'KSH ${order.totalAmount.toStringAsFixed(2)}',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                      onTap: () => setState(() => _selectedOrder = order),
-                                      selected: _selectedOrder?.id == order.id,
-                                    ),
-                                  );
+                                  return _buildOrderListItem(order);
                                 },
                               ),
                   ),

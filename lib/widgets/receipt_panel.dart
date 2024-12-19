@@ -17,7 +17,7 @@ class ReceiptPanel extends StatelessWidget {
     required this.onProcessSale,
   });
 
-  Future<void> _printReceipt(BuildContext context, Map<String, dynamic> product) async {
+  Future<void> _printReceipt(BuildContext context, List<Map<String, dynamic>> products) async {
     final pdf = pw.Document();
     
     pdf.addPage(
@@ -34,7 +34,7 @@ class ReceiptPanel extends StatelessWidget {
               ),
             ),
             pw.SizedBox(height: 10),
-            pw.Text('Receipt #${order.id}'),
+            pw.Text('Receipt #${order.orderNumber}'),
             pw.Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(order.orderDate)}'),
             pw.Text('Customer: ${order.customerName ?? "N/A"}'),
             pw.Divider(),
@@ -46,9 +46,20 @@ class ReceiptPanel extends StatelessWidget {
               ),
             ),
             pw.SizedBox(height: 10),
-            pw.Text('Product: ${product['product_name']}'),
-            pw.Text('Quantity: ${order.quantity}'),
-            pw.Text('Unit Price: KSH ${order.sellingPrice.toStringAsFixed(2)}'),
+            ...order.items!.asMap().entries.map((entry) {
+              final orderItem = entry.value;
+              final product = products[entry.key];
+              return pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('Product: ${product['product_name']}'),
+                  pw.Text('Quantity: ${orderItem.quantity}'),
+                  pw.Text('Unit Price: KSH ${orderItem.sellingPrice.toStringAsFixed(2)}'),
+                  pw.Text('Subtotal: KSH ${orderItem.totalAmount.toStringAsFixed(2)}'),
+                  pw.SizedBox(height: 5),
+                ],
+              );
+            }).toList(),
             pw.Divider(),
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -63,151 +74,119 @@ class ReceiptPanel extends StatelessWidget {
                 ),
               ],
             ),
-            pw.SizedBox(height: 20),
-            pw.Text(
-              'Thank you for your business!',
-              style: pw.TextStyle(
-                fontSize: 12,
-                fontStyle: pw.FontStyle.italic,
-              ),
-            ),
           ],
         ),
       ),
     );
 
-    try {
-      await Printing.layoutPdf(
-        onLayout: (format) async => pdf.save(),
-        name: 'Receipt_${order.id}',
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error printing receipt: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
+    await Printing.layoutPdf(
+      onLayout: (format) async => pdf.save(),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.amber.withOpacity(0.7),
-            Colors.orange.shade900,
-          ],
-        ),
-      ),
-      padding: const EdgeInsets.all(defaultPadding),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(defaultPadding),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Sales Receipt',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: defaultPadding),
-              Text('Order #${order.id}'),
-              Text('Date: ${order.orderDate.toString()}'),
-              Text('Customer: ${order.customerName ?? "N/A"}'),
-              const Divider(),
-              const Text(
-                'Order Details',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: defaultPadding),
-              Expanded(
-                child: FutureBuilder<Map<String, dynamic>?>(
-                  future: DatabaseService.instance.getProductById(order.productId),
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    final product = snapshot.data!;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Product: ${product['product_name']}'),
-                        Text('Quantity: ${order.quantity}'),
-                        Text('Unit Price: KSH ${order.sellingPrice.toStringAsFixed(2)}'),
-                      ],
-                    );
-                  },
-                ),
-              ),
-              const Divider(),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Total Amount:',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    'KSH ${order.totalAmount.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: defaultPadding),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () => onProcessSale(order),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        padding: const EdgeInsets.all(defaultPadding),
-                      ),
-                      icon: const Icon(Icons.check_circle),
-                      label: const Text(
-                        'Complete Sale',
-                        style: TextStyle(fontSize: 16),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: defaultPadding),
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      final product = await DatabaseService.instance.getProductById(order.productId);
-                      if (context.mounted && product != null) {
-                        await _printReceipt(context, product);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(defaultPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Order Details',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: defaultPadding),
+            Text('Order #${order.orderNumber}'),
+            Text('Customer: ${order.customerName ?? "N/A"}'),
+            Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(order.orderDate)}'),
+            const Divider(),
+            Expanded(
+              child: ListView.builder(
+                itemCount: order.items?.length ?? 0,
+                itemBuilder: (context, index) {
+                  final item = order.items![index];
+                  return FutureBuilder<Map<String, dynamic>?>(
+                    future: DatabaseService.instance.getProductById(item.productId),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) {
+                        return const Center(child: CircularProgressIndicator());
                       }
+                      final product = snapshot.data!;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Product: ${product['product_name']}'),
+                          Text('Quantity: ${item.quantity}'),
+                          Text('Unit Price: KSH ${item.sellingPrice.toStringAsFixed(2)}'),
+                          Text('Subtotal: KSH ${item.totalAmount.toStringAsFixed(2)}'),
+                          const Divider(),
+                        ],
+                      );
                     },
+                  );
+                },
+              ),
+            ),
+            const Divider(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Total Amount:',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  'KSH ${order.totalAmount.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: defaultPadding),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => onProcessSale(order),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
+                      backgroundColor: Colors.green,
                       padding: const EdgeInsets.all(defaultPadding),
                     ),
-                    icon: const Icon(Icons.print),
-                    label: const Text('Print Receipt'),
+                    icon: const Icon(Icons.check_circle),
+                    label: const Text(
+                      'Complete Sale',
+                      style: TextStyle(fontSize: 16),
+                    ),
                   ),
-                ],
-              ),
-            ],
-          ),
+                ),
+                const SizedBox(width: defaultPadding),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    final products = await Future.wait(
+                      order.items!.map((item) => 
+                        DatabaseService.instance.getProductById(item.productId)
+                      )
+                    );
+                    if (context.mounted && products.every((p) => p != null)) {
+                      await _printReceipt(context, products.cast<Map<String, dynamic>>());
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    padding: const EdgeInsets.all(defaultPadding),
+                  ),
+                  icon: const Icon(Icons.print),
+                  label: const Text('Print Receipt'),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

@@ -8,6 +8,7 @@ import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
 import 'package:my_flutter_app/widgets/order_cart_panel.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
+import 'package:my_flutter_app/services/order_service.dart';
 
 class OrderScreen extends StatefulWidget {
   const OrderScreen({super.key});
@@ -59,7 +60,7 @@ class _OrderScreenState extends State<OrderScreen> {
     }).toList();
   }
 
-  void _showOrderReceipt() {
+  void _showOrderReceipt(String orderNumber) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -238,7 +239,7 @@ class _OrderScreenState extends State<OrderScreen> {
             child: OrderCartPanel(
               items: _cartItems,
               onRemoveItem: _removeFromCart,
-              onPlaceOrder: _placeOrder,
+              onPlaceOrder: _handlePlaceOrder,
               onClearCart: _clearCart,
             ),
           ),
@@ -327,11 +328,19 @@ class _OrderScreenState extends State<OrderScreen> {
     });
   }
 
-  Future<void> _placeOrder() async {
+  Future<void> _handlePlaceOrder() async {
+    if (_cartItems.isEmpty) return;
+
     try {
-      // Create orders for each item in cart
+      setState(() => _isLoading = true);
+      
+      // Generate a unique order number
+      final orderNumber = 'ORD${DateTime.now().millisecondsSinceEpoch}';
+      
+      // Create one order for all items
       for (final item in _cartItems) {
         final order = Order(
+          orderNumber: orderNumber,  // Same order number for all items
           productId: item.product.id!,
           quantity: item.quantity,
           sellingPrice: item.product.sellingPrice,
@@ -345,29 +354,27 @@ class _OrderScreenState extends State<OrderScreen> {
         await DatabaseService.instance.createOrder(order);
       }
 
+      // Clear the cart
+      setState(() {
+        _cartItems.clear();
+        _customerNameController.clear();
+      });
+
       // Show receipt
       if (!mounted) return;
-      _showOrderReceipt();
+      _showOrderReceipt(orderNumber);  // Pass the order number
 
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Order placed successfully!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-
-      // Clear the cart
-      _clearCart();
+      OrderService.instance.notifyOrderUpdate();  // Notify listeners about the update
 
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error placing order: $e'),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(content: Text('Error placing order: $e')),
       );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
