@@ -101,39 +101,37 @@ class _AddUserDialogState extends State<AddUserDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: _saveUser,
+          onPressed: _handleSubmit,
           child: const Text('Save'),
         ),
       ],
     );
   }
 
-  Future<void> _saveUser() async {
+  Future<void> _handleSubmit() async {
     if (_formKey.currentState!.validate()) {
       try {
-        // Hash the password before saving
-        final hashedPassword = AuthService.instance.hashPassword(_passwordController.text);
-        
-        final newUser = User(
-          username: _usernameController.text,
-          password: hashedPassword,  // Use the hashed password
-          fullName: _fullNameController.text,
-          email: _emailController.text,
-          isAdmin: _isAdmin,
-          createdAt: DateTime.now(),
-        );
+        final userData = {
+          'username': _usernameController.text.trim(),
+          'password': AuthService.instance.hashPassword(_passwordController.text),
+          'full_name': _fullNameController.text.trim(),
+          'email': _emailController.text.trim(),
+          'is_admin': _isAdmin ? 1 : 0,
+          'created_at': DateTime.now().toIso8601String(),
+        };
 
-        await DatabaseService.instance.createUser(newUser);
-        if (!mounted) return;
-        
-        Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('User created successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        final newUser = await DatabaseService.instance.createUser(userData);
+        if (newUser != null && mounted) {
+          Navigator.pop(context, true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('User created successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error creating user: $e'),

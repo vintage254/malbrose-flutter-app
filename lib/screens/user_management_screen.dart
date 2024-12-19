@@ -27,15 +27,18 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   Future<void> _loadUsers() async {
     try {
-      final users = await DatabaseService.instance.getAllUsers();
+      final usersData = await DatabaseService.instance.getAllUsers();
       if (mounted) {
         setState(() {
-          _users = users;
+          _users = usersData.map((map) => User.fromMap(map)).toList();
           _isLoading = false;
         });
       }
     } catch (e) {
       if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading users: $e')),
         );

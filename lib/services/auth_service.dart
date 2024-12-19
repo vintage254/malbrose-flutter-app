@@ -20,41 +20,24 @@ class AuthService {
 
   Future<User?> login(String username, String password) async {
     try {
-      final hashedPassword = hashPassword(password);
-      
-      print('Login attempt:');
-      print('Username: $username');
-      print('Input Password Hash: $hashedPassword');
-      
-      final user = await DatabaseService.instance.getUserByUsername(username);
-      
-      if (user != null) {
-        print('Found user with password hash: ${user.password}');
+      final userMap = await DatabaseService.instance.getUserByUsername(username);
+      if (userMap != null) {
+        final hashedPassword = hashPassword(password);
+        
+        // Convert Map to User object
+        final user = User.fromMap(userMap);
         
         if (user.password == hashedPassword) {
           _currentUser = user;
           
-          final updatedUser = User(
-            id: user.id,
-            username: user.username,
-            password: user.password,
-            fullName: user.fullName,
-            email: user.email,
-            isAdmin: user.isAdmin,
-            createdAt: user.createdAt,
-            lastLogin: DateTime.now(),
-          );
+          // Update last login time
+          final updatedUser = user.copyWith(lastLogin: DateTime.now());
           await DatabaseService.instance.updateUser(updatedUser);
           
-          await DatabaseService.instance.logActivity(
-            ActivityLog(
-              userId: user.id!,
-              actionType: 'LOGIN',
-              details: 'User logged in successfully',
-            ),
-          );
+          // Save session
+          await _saveSession(user.id!);
           
-          return user;
+          return _currentUser;
         }
       }
       return null;
@@ -85,15 +68,21 @@ class AuthService {
   }
 
   Future<User?> restoreSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    final userId = prefs.getInt('user_id');
-    
-    if (userId != null) {
-      final users = await DatabaseService.instance.getAllUsers();
-      _currentUser = users.firstWhere((user) => user.id == userId);
-      return _currentUser;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('user_id');
+      
+      if (userId != null) {
+        final userMap = await DatabaseService.instance.getUserById(userId);
+        if (userMap != null) {
+          _currentUser = User.fromMap(userMap);
+          return _currentUser;
+        }
+      }
+      return null;
+    } catch (e) {
+      print('Error restoring session: $e');
+      return null;
     }
-    
-    return null;
   }
 } 

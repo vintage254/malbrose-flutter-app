@@ -31,28 +31,81 @@ class DatabaseService {
     final databaseDirpath = await getDatabasesPath();
     final databasepath = join(databaseDirpath, "malbrose_db.db");
 
+    // Delete existing database to force recreation
+    await deleteDatabase(databasepath);
+
     final db = await openDatabase(
       databasepath,
-      version: 3,
+      version: 1,
       onCreate: (Database db, int version) async {
-        // Create users table first
+        // Create users table
         await db.execute('''
           CREATE TABLE users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            full_name TEXT NOT NULL,
-            email TEXT NOT NULL,
-            is_admin BOOLEAN NOT NULL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_login DATETIME NULL
+            username TEXT UNIQUE,
+            password TEXT,
+            full_name TEXT,
+            email TEXT,
+            is_admin INTEGER,
+            created_at TEXT,
+            last_login TEXT
           )
         ''');
 
-        // Create default admin user with correct password hash
+        // Create products table
+        await db.execute('''
+          CREATE TABLE products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            image TEXT,
+            supplier TEXT,
+            received_date TEXT,
+            product_name TEXT,
+            buying_price REAL,
+            selling_price REAL,
+            quantity INTEGER,
+            description TEXT,
+            created_at TEXT
+          )
+        ''');
+
+        // Create orders table
+        await db.execute('''
+          CREATE TABLE orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_number TEXT,
+            product_id INTEGER,
+            quantity INTEGER,
+            selling_price REAL,
+            buying_price REAL,
+            total_amount REAL,
+            customer_name TEXT,
+            payment_status TEXT,
+            payment_method TEXT,
+            order_status TEXT,
+            created_by INTEGER,
+            created_at TEXT,
+            order_date TEXT,
+            FOREIGN KEY (product_id) REFERENCES products (id),
+            FOREIGN KEY (created_by) REFERENCES users (id)
+          )
+        ''');
+
+        // Create activity logs table
+        await db.execute('''
+          CREATE TABLE activity_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action_type TEXT,
+            details TEXT,
+            timestamp TEXT,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+          )
+        ''');
+
+        // Create default admin user
         final defaultAdmin = {
           'username': 'admin',
-          'password': 'd3fc50c8f714cebd16d6c827826df01205bf519529f9d34775293cf9b70a420e',
+          'password': AuthService.instance.hashPassword('Account@2024'),
           'full_name': 'System Administrator',
           'email': 'admin@malbrose.com',
           'is_admin': 1,
@@ -60,145 +113,6 @@ class DatabaseService {
         };
         
         await db.insert('users', defaultAdmin);
-
-        // Create other tables...
-        // Products table
-        await db.execute('''
-          CREATE TABLE products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            image TEXT NULL,
-            supplier TEXT NOT NULL,
-            received_date DATETIME NOT NULL,
-            product_name TEXT NOT NULL,
-            buying_price DECIMAL(10,2) NOT NULL,
-            selling_price DECIMAL(10,2) NOT NULL,
-            quantity INTEGER NOT NULL,
-            description TEXT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-          )
-        ''');
-
-        // Users table
-        await db.execute('''
-          CREATE TABLE IF NOT EXISTS $tableUsers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            full_name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            is_admin INTEGER NOT NULL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_login DATETIME
-          )
-        ''');
-
-        // Creditors table
-        await db.execute('''
-          CREATE TABLE $tableCreditors (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            date_credited DATETIME NOT NULL,
-            amount_credited DECIMAL(10,2) NOT NULL,
-            amount_paid DECIMAL(10,2) DEFAULT 0,
-            balance DECIMAL(10,2) NOT NULL,
-            due_date DATETIME,
-            status TEXT DEFAULT 'PENDING',
-            notes TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-          )
-        ''');
-
-        // Debtors table
-        await db.execute('''
-          CREATE TABLE $tableDebtors (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            date_debited DATETIME NOT NULL,
-            amount_debited DECIMAL(10,2) NOT NULL,
-            amount_received DECIMAL(10,2) DEFAULT 0,
-            balance DECIMAL(10,2) NOT NULL,
-            due_date DATETIME,
-            status TEXT DEFAULT 'PENDING',
-            notes TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-          )
-        ''');
-
-        // Orders table
-        await db.execute('''
-          CREATE TABLE $tableOrders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_number TEXT UNIQUE NOT NULL,
-            product_id INTEGER NOT NULL,
-            quantity INTEGER NOT NULL,
-            selling_price DECIMAL(10,2) NOT NULL,
-            buying_price DECIMAL(10,2) NOT NULL,
-            total_amount DECIMAL(10,2) NOT NULL,
-            customer_name TEXT,
-            payment_status TEXT DEFAULT 'PENDING',
-            payment_method TEXT,
-            order_status TEXT DEFAULT 'PENDING',
-            created_by INTEGER NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (product_id) REFERENCES $tableProducts (id),
-            FOREIGN KEY (created_by) REFERENCES $tableUsers (id)
-          )
-        ''');
-
-        // Add to your existing database creation
-        await db.execute('''
-          CREATE TABLE IF NOT EXISTS user_activity_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            action_type TEXT NOT NULL,
-            action_details TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES $tableUsers (id)
-          )
-        ''');
-
-        // Add to your existing database creation
-        await db.execute('''
-          CREATE TABLE IF NOT EXISTS activity_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            action_type TEXT NOT NULL,
-            details TEXT NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-          )
-        ''');
-      },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        // Update admin password if upgrading
-        await db.update(
-          'users',
-          {'password': 'd3fc50c8f714cebd16d6c827826df01205bf519529f9d34775293cf9b70a420e'},
-          where: 'username = ?',
-          whereArgs: ['admin']
-        );
-      },
-      onOpen: (Database db) async {
-        // Check if admin exists every time database is opened
-        final adminCheck = await db.query(
-          'users',
-          where: 'username = ?',
-          whereArgs: ['admin'],
-        );
-
-        // Create admin user if it doesn't exist
-        if (adminCheck.isEmpty) {
-          final defaultAdmin = {
-            'username': 'admin',
-            'password': AuthService.instance.hashPassword('Account@2024'),
-            'full_name': 'System Administrator',
-            'email': 'admin@malbrose.com',
-            'is_admin': 1,
-            'created_at': DateTime.now().toIso8601String(),
-          };
-          
-          await db.insert('users', defaultAdmin);
-        }
       },
     );
 
@@ -275,9 +189,10 @@ class DatabaseService {
   Future<List<Map<String, dynamic>>> getOrdersByStatus(String status) async {
     final db = await database;
     return await db.query(
-      tableOrders,
+      'orders',
       where: 'order_status = ?',
       whereArgs: [status],
+      orderBy: 'created_at DESC',
     );
   }
 
@@ -303,10 +218,13 @@ class DatabaseService {
     return results.isNotEmpty ? results.first : null;
   }
 
-  Future<User?> createUser(User user) async {
+  Future<User?> createUser(Map<String, dynamic> userData) async {
     final db = await database;
-    final id = await db.insert(tableUsers, user.toMap());
-    return user.copyWith(id: id);
+    final id = await db.insert(tableUsers, userData);
+    if (id != 0) {
+      return User.fromMap({...userData, 'id': id});
+    }
+    return null;
   }
 
   // Creditor/Debtor Operations
@@ -371,17 +289,14 @@ class DatabaseService {
   }
 
   // User operations
-  Future<User?> getUserByUsername(String username) async {
+  Future<Map<String, dynamic>?> getUserByUsername(String username) async {
     final db = await database;
-    final List<Map<String, dynamic>> maps = await db.query(
+    final results = await db.query(
       tableUsers,
       where: 'username = ?',
       whereArgs: [username],
     );
-    if (maps.isNotEmpty) {
-      return User.fromMap(maps.first);
-    }
-    return null;
+    return results.isNotEmpty ? results.first : null;
   }
 
   Future<void> updateUser(User user) async {
@@ -394,10 +309,9 @@ class DatabaseService {
     );
   }
 
-  Future<List<User>> getAllUsers() async {
+  Future<List<Map<String, dynamic>>> getAllUsers() async {
     final db = await database;
-    final List<Map<String, dynamic>> maps = await db.query(tableUsers);
-    return maps.map((map) => User.fromMap(map)).toList();
+    return await db.query(tableUsers);
   }
 
   Future<void> logUserActivity(int userId, String actionType, String details) async {
@@ -477,5 +391,28 @@ class DatabaseService {
 
       await db.insert('users', adminUser.toMap());
     }
+  }
+
+  Future<List<Order>> getRecentOrders() async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'orders',
+      orderBy: 'created_at DESC',
+      limit: 5,
+      groupBy: 'customer_name, created_at',
+    );
+    
+    return maps.map((map) => Order.fromMap(map)).toList();
+  }
+
+  // Add this method to the DatabaseService class
+  Future<Map<String, dynamic>?> getUserById(int userId) async {
+    final db = await database;
+    final results = await db.query(
+      tableUsers,
+      where: 'id = ?',
+      whereArgs: [userId],
+    );
+    return results.isNotEmpty ? results.first : null;
   }
 }

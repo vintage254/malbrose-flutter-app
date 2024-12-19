@@ -23,7 +23,7 @@ class User {
     return {
       'id': id,
       'username': username,
-      'password': password, // TODO: Add password hashing
+      'password': password,
       'full_name': fullName,
       'email': email,
       'is_admin': isAdmin ? 1 : 0,
@@ -34,15 +34,15 @@ class User {
 
   factory User.fromMap(Map<String, dynamic> map) {
     return User(
-      id: map['id'],
-      username: map['username'],
-      password: map['password'],
-      fullName: map['full_name'],
-      email: map['email'],
+      id: map['id'] as int?,
+      username: map['username'] as String,
+      password: map['password'] as String,
+      fullName: map['full_name'] as String,
+      email: map['email'] as String,
       isAdmin: map['is_admin'] == 1,
-      createdAt: DateTime.parse(map['created_at']),
+      createdAt: DateTime.parse(map['created_at'] as String),
       lastLogin: map['last_login'] != null 
-          ? DateTime.parse(map['last_login']) 
+          ? DateTime.parse(map['last_login'] as String)
           : null,
     );
   }
