@@ -11,8 +11,17 @@ import 'package:my_flutter_app/screens/home_screen.dart';
 import 'package:my_flutter_app/screens/main_screen.dart';
 import 'package:my_flutter_app/screens/creditors_screen.dart';
 import 'package:my_flutter_app/screens/debtors_screen.dart';
+import 'package:my_flutter_app/services/database.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // For development only - reset database if needed
+  // await DatabaseService.instance.resetDatabase();
+  
+  // Initialize database and check for admin user
+  await DatabaseService.instance.checkAndCreateAdminUser();
+  
   runApp(
     MultiProvider(
       providers: [

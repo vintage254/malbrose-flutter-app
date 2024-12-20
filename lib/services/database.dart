@@ -34,9 +34,9 @@ class DatabaseService {
     // Delete existing database to force recreation
     await deleteDatabase(databasepath);
 
-    final db = await openDatabase(
+    return await openDatabase(
       databasepath,
-      version: 1,
+      version: 2,
       onCreate: (Database db, int version) async {
         // Create users table
         await db.execute('''
@@ -46,7 +46,7 @@ class DatabaseService {
             password TEXT,
             full_name TEXT,
             email TEXT,
-            is_admin INTEGER,
+            role TEXT NOT NULL DEFAULT 'USER',
             created_at TEXT,
             last_login TEXT
           )
@@ -92,12 +92,12 @@ class DatabaseService {
 
         // Create activity logs table
         await db.execute('''
-          CREATE TABLE activity_logs (
+          CREATE TABLE IF NOT EXISTS activity_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            action_type TEXT,
+            user_id INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
             details TEXT,
-            timestamp TEXT,
+            timestamp TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id)
           )
         ''');
@@ -134,15 +134,13 @@ class DatabaseService {
           'password': AuthService.instance.hashPassword('Account@2024'),
           'full_name': 'System Administrator',
           'email': 'admin@malbrose.com',
-          'is_admin': 1,
+          'role': 'ADMIN',
           'created_at': DateTime.now().toIso8601String(),
         };
         
         await db.insert('users', defaultAdmin);
       },
     );
-
-    return db;
   }
 
   // Product Operations
@@ -264,12 +262,35 @@ class DatabaseService {
   }
 
   Future<User?> createUser(Map<String, dynamic> userData) async {
-    final db = await database;
-    final id = await db.insert(tableUsers, userData);
-    if (id != 0) {
-      return User.fromMap({...userData, 'id': id});
+    try {
+      final db = await database;
+      
+      // Check if username already exists
+      final existingUser = await getUserByUsername(userData['username']);
+      if (existingUser != null) {
+        throw Exception('Username already exists');
+      }
+
+      // Ensure required fields
+      final userToCreate = {
+        'username': userData['username'],
+        'password': AuthService.instance.hashPassword(userData['password']),
+        'full_name': userData['full_name'],
+        'email': userData['email'],
+        'role': userData['role'] ?? 'USER',
+        'created_at': DateTime.now().toIso8601String(),
+      };
+
+      final id = await db.insert(tableUsers, userToCreate);
+      if (id != 0) {
+        print('User created with ID: $id'); // Debug print
+        return User.fromMap({...userToCreate, 'id': id});
+      }
+      return null;
+    } catch (e) {
+      print('Error creating user: $e'); // Debug print
+      rethrow;
     }
-    return null;
   }
 
   // Creditor/Debtor Operations
@@ -397,14 +418,21 @@ class DatabaseService {
     );
   }
 
-  Future<void> logActivity(ActivityLog log) async {
+  Future<void> logActivity(Map<String, dynamic> activity) async {
     final db = await database;
-    await db.insert('activity_logs', log.toMap());
+    await db.insert('activity_logs', {
+      'user_id': activity['user_id'],
+      'action_type': activity['action_type'],
+      'details': activity['details'],
+      'timestamp': activity['timestamp'],
+    });
   }
 
   Future<List<ActivityLog>> getActivityLogs({
     String? userFilter,
     String? actionFilter,
+    String? dateFilter,
+    String? groupBy,
   }) async {
     final db = await database;
     
@@ -425,6 +453,17 @@ class DatabaseService {
     if (actionFilter != null && actionFilter.isNotEmpty) {
       query += ' AND al.action_type LIKE ?';
       args.add('%$actionFilter%');
+    }
+
+    if (dateFilter != null && dateFilter.isNotEmpty) {
+      query += ' AND DATE(al.timestamp) = ?';
+      args.add(dateFilter);
+    }
+    
+    if (groupBy != null) {
+      query += ' GROUP BY ${groupBy == 'day' ? 'DATE(al.timestamp)' : 
+               groupBy == 'month' ? 'strftime("%Y-%m", al.timestamp)' : 
+               'strftime("%Y", al.timestamp)'}';
     }
     
     query += ' ORDER BY al.timestamp DESC';
@@ -450,7 +489,7 @@ class DatabaseService {
         password: AuthService.instance.hashPassword('Account@2024'),
         fullName: 'System Administrator',
         email: 'admin@malbrose.com',
-        isAdmin: true,
+        role: 'ADMIN',
         createdAt: DateTime.now(),
       );
 
@@ -546,5 +585,41 @@ class DatabaseService {
       whereArgs: [name],
     );
     return result.isNotEmpty;
+  }
+
+  Future<void> checkAndCreateAdminUser() async {
+    final db = await database;
+    final adminUser = await getUserByUsername('admin');
+    
+    if (adminUser == null) {
+      print('Creating default admin user'); // Debug print
+      final defaultAdmin = {
+        'username': 'admin',
+        'password': AuthService.instance.hashPassword('Account@2024'),
+        'full_name': 'System Administrator',
+        'email': 'admin@malbrose.com',
+        'role': 'ADMIN',
+        'created_at': DateTime.now().toIso8601String(),
+      };
+      
+      await db.insert(tableUsers, defaultAdmin);
+      print('Admin user created with role: ${defaultAdmin['role']}'); // Debug print
+    } else {
+      print('Existing admin user found with role: ${adminUser['role']}'); // Debug print
+    }
+  }
+
+  Future<void> resetDatabase() async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'malbrose_db.db');
+    
+    // Delete existing database
+    await deleteDatabase(path);
+    
+    // Reinitialize database
+    await database;
+    
+    // Recreate admin user
+    await checkAndCreateAdminUser();
   }
 }

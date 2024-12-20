@@ -129,15 +129,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   Future<void> _toggleAdminStatus(User user) async {
     try {
-      final updatedUser = User(
-        id: user.id,
-        username: user.username,
-        password: user.password,
-        fullName: user.fullName,
-        email: user.email,
-        isAdmin: !user.isAdmin,
-        createdAt: user.createdAt,
-        lastLogin: user.lastLogin,
+      final updatedUser = user.copyWith(
+        role: user.isAdmin ? 'USER' : 'ADMIN',
       );
 
       await DatabaseService.instance.updateUser(updatedUser);
@@ -222,7 +215,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                           Switch(
                                             value: user.isAdmin,
                                             onChanged: currentUser?.isAdmin ?? false
-                                                ? (value) => _toggleAdminStatus(user)
+                                                ? (_) => _toggleAdminStatus(user)
                                                 : null,
                                           ),
                                         ),

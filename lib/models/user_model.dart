@@ -1,10 +1,10 @@
 class User {
   final int? id;
   final String username;
-  final String password; // We should hash this before storing
+  final String password;
   final String fullName;
   final String email;
-  final bool isAdmin;
+  final String? role;
   final DateTime createdAt;
   final DateTime? lastLogin;
 
@@ -14,10 +14,12 @@ class User {
     required this.password,
     required this.fullName,
     required this.email,
-    this.isAdmin = false,
-    DateTime? createdAt,
+    this.role = 'USER',
+    required this.createdAt,
     this.lastLogin,
-  }) : createdAt = createdAt ?? DateTime.now();
+  });
+
+  bool get isAdmin => role == 'ADMIN';
 
   Map<String, dynamic> toMap() {
     return {
@@ -26,7 +28,7 @@ class User {
       'password': password,
       'full_name': fullName,
       'email': email,
-      'is_admin': isAdmin ? 1 : 0,
+      'role': role ?? 'USER',
       'created_at': createdAt.toIso8601String(),
       'last_login': lastLogin?.toIso8601String(),
     };
@@ -34,15 +36,15 @@ class User {
 
   factory User.fromMap(Map<String, dynamic> map) {
     return User(
-      id: map['id'] as int?,
-      username: map['username'] as String,
-      password: map['password'] as String,
-      fullName: map['full_name'] as String,
-      email: map['email'] as String,
-      isAdmin: map['is_admin'] == 1,
-      createdAt: DateTime.parse(map['created_at'] as String),
+      id: map['id'],
+      username: map['username'],
+      password: map['password'],
+      fullName: map['full_name'],
+      email: map['email'],
+      role: map['role'] ?? 'USER',
+      createdAt: DateTime.parse(map['created_at']),
       lastLogin: map['last_login'] != null 
-          ? DateTime.parse(map['last_login'] as String)
+          ? DateTime.parse(map['last_login'])
           : null,
     );
   }
@@ -53,7 +55,7 @@ class User {
     String? password,
     String? fullName,
     String? email,
-    bool? isAdmin,
+    String? role,
     DateTime? createdAt,
     DateTime? lastLogin,
   }) {
@@ -63,7 +65,7 @@ class User {
       password: password ?? this.password,
       fullName: fullName ?? this.fullName,
       email: email ?? this.email,
-      isAdmin: isAdmin ?? this.isAdmin,
+      role: role ?? this.role,
       createdAt: createdAt ?? this.createdAt,
       lastLogin: lastLogin ?? this.lastLogin,
     );

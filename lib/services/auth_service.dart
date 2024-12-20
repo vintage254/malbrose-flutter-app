@@ -21,14 +21,18 @@ class AuthService {
   Future<User?> login(String username, String password) async {
     try {
       final userMap = await DatabaseService.instance.getUserByUsername(username);
+      print('User Map: $userMap');
+      
       if (userMap != null) {
         final hashedPassword = hashPassword(password);
         
         // Convert Map to User object
         final user = User.fromMap(userMap);
+        print('User Object: ${user.toMap()}');
         
         if (user.password == hashedPassword) {
           _currentUser = user;
+          print('Current User Role: ${_currentUser?.role}');
           
           // Update last login time
           final updatedUser = user.copyWith(lastLogin: DateTime.now());
@@ -49,14 +53,21 @@ class AuthService {
 
   Future<void> logout() async {
     if (_currentUser != null) {
-      await DatabaseService.instance.logActivity(
-        ActivityLog(
-          userId: _currentUser!.id!,
-          actionType: 'LOGOUT',
-          details: 'User logged out',
-        ),
-      );
+      try {
+        await DatabaseService.instance.logActivity(
+          {
+            'user_id': _currentUser!.id!,
+            'action_type': 'LOGOUT',
+            'details': 'User logged out',
+            'timestamp': DateTime.now().toIso8601String(),
+          },
+        );
+      } catch (e) {
+        print('Error logging activity: $e');
+        // Continue with logout even if logging fails
+      }
     }
+    
     _currentUser = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('user_id');

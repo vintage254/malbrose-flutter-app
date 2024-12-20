@@ -11,18 +11,38 @@ class SideMenuWidget extends StatefulWidget {
 }
 
 class _SideMenuWidgetState extends State<SideMenuWidget> {
-  final menuItems = [
-    {'title': 'Dashboard', 'icon': Icons.dashboard, 'route': '/dashboard'},
-    {'title': 'Orders', 'icon': Icons.shopping_cart, 'route': '/orders'},
-    {'title': 'Sales', 'icon': Icons.point_of_sale, 'route': '/sales'},
-    {'title': 'Products', 'icon': Icons.inventory, 'route': '/products'},
-    {'title': 'Users', 'icon': Icons.people, 'route': '/users'},
-    {'title': 'Activity Log', 'icon': Icons.history, 'route': '/activity'},
-  ];
+  List<Map<String, dynamic>> _getMenuItems() {
+    final currentUser = AuthService.instance.currentUser;
+    final isAdmin = currentUser?.role == 'ADMIN';
+
+    print('Current User: ${currentUser?.username}');
+    print('User Role: ${currentUser?.role}');
+    print('Is Admin: $isAdmin');
+
+    final List<Map<String, dynamic>> items = [
+      {'title': 'Dashboard', 'icon': Icons.dashboard, 'route': '/dashboard'},
+      {'title': 'Orders', 'icon': Icons.shopping_cart, 'route': '/orders'},
+      {'title': 'Products', 'icon': Icons.inventory, 'route': '/products'},
+      {'title': 'Creditors', 'icon': Icons.account_balance_wallet, 'route': '/creditors'},
+      {'title': 'Debtors', 'icon': Icons.money_off, 'route': '/debtors'},
+    ];
+
+    // Add admin-only menu items
+    if (isAdmin) {
+      items.addAll([
+        {'title': 'Sales', 'icon': Icons.point_of_sale, 'route': '/sales'},
+        {'title': 'Users', 'icon': Icons.people, 'route': '/users'},
+        {'title': 'Activity Log', 'icon': Icons.history, 'route': '/activity'},
+      ]);
+    }
+
+    return items;
+  }
 
   @override
   Widget build(BuildContext context) {
     final currentUser = AuthService.instance.currentUser;
+    final menuItems = _getMenuItems();
 
     return Container(
       decoration: BoxDecoration(
@@ -40,7 +60,7 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
           Padding(
             padding: const EdgeInsets.all(defaultPadding),
             child: Text(
-              'Welcome, ${currentUser?.username ?? "User"}',
+              'Welcome, ${currentUser?.username ?? "Guest"}',
               style: const TextStyle(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
@@ -53,34 +73,16 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
               itemCount: menuItems.length,
               itemBuilder: (context, index) {
                 final item = menuItems[index];
-                return ListTile(
-                  leading: Icon(item['icon'] as IconData, color: Colors.white),
-                  title: Text(
-                    item['title'] as String,
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
-                  ),
-                  onTap: () {
-                    Navigator.pushNamed(context, item['route'] as String);
-                  },
+                return _buildMenuItem(
+                  context,
+                  item['title'] as String,
+                  item['icon'] as IconData,
+                  () => Navigator.pushNamed(context, item['route'] as String),
                 );
               },
             ),
           ),
           const Divider(color: Colors.white60),
-          _buildMenuItem(
-            context,
-            'Creditors',
-            Icons.account_balance_wallet,
-            () => Navigator.pushNamed(context, '/creditors'),
-          ),
-          
-          _buildMenuItem(
-            context,
-            'Debtors',
-            Icons.money_off,
-            () => Navigator.pushNamed(context, '/debtors'),
-          ),
-          
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.white),
             title: const Text(
@@ -88,12 +90,41 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
               style: TextStyle(color: Colors.white, fontSize: 14),
             ),
             onTap: () async {
-              await AuthService.instance.logout();
-              if (!context.mounted) return;
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const HomeScreen()),
-                (route) => false,
-              );
+              try {
+                // Show loading dialog
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+
+                await AuthService.instance.logout();
+                
+                if (!context.mounted) return;
+                
+                // Close loading dialog
+                Navigator.pop(context);
+                
+                // Navigate to home screen
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const HomeScreen()),
+                  (route) => false,
+                );
+              } catch (e) {
+                if (!context.mounted) return;
+                
+                // Close loading dialog if it's showing
+                Navigator.pop(context);
+                
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error logging out: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
             },
           ),
         ],

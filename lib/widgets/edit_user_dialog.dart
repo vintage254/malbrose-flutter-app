@@ -31,86 +31,17 @@ class _EditUserDialogState extends State<EditUserDialog> {
     _isAdmin = widget.user.isAdmin;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Edit User'),
-      content: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Username: ${widget.user.username}', 
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: defaultPadding),
-              TextFormField(
-                controller: _fullNameController,
-                decoration: const InputDecoration(labelText: 'Full Name'),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter full name';
-                  }
-                  return null;
-                },
-              ),
-              TextFormField(
-                controller: _emailController,
-                decoration: const InputDecoration(labelText: 'Email'),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter email';
-                  }
-                  if (!value.contains('@')) {
-                    return 'Please enter a valid email';
-                  }
-                  return null;
-                },
-              ),
-              if (widget.currentUserIsAdmin)
-                CheckboxListTile(
-                  title: const Text('Admin Privileges'),
-                  value: _isAdmin,
-                  onChanged: (value) {
-                    setState(() {
-                      _isAdmin = value ?? false;
-                    });
-                  },
-                ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _saveUser,
-          child: const Text('Save'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _saveUser() async {
+  Future<void> _handleSubmit() async {
     if (_formKey.currentState!.validate()) {
       try {
-        final updatedUser = User(
-          id: widget.user.id,
-          username: widget.user.username,
-          password: widget.user.password,
+        final updatedUser = widget.user.copyWith(
           fullName: _fullNameController.text,
           email: _emailController.text,
-          isAdmin: _isAdmin,
-          createdAt: widget.user.createdAt,
-          lastLogin: widget.user.lastLogin,
+          role: _isAdmin ? 'ADMIN' : 'USER',
         );
 
         await DatabaseService.instance.updateUser(updatedUser);
         if (!mounted) return;
-        
         Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -120,13 +51,68 @@ class _EditUserDialogState extends State<EditUserDialog> {
         );
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error updating user: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('Error updating user: $e')),
         );
       }
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit User'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: _fullNameController,
+              decoration: const InputDecoration(labelText: 'Full Name'),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter full name';
+                }
+                return null;
+              },
+            ),
+            TextFormField(
+              controller: _emailController,
+              decoration: const InputDecoration(labelText: 'Email'),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter email';
+                }
+                if (!value.contains('@')) {
+                  return 'Please enter a valid email';
+                }
+                return null;
+              },
+            ),
+            if (widget.currentUserIsAdmin)
+              SwitchListTile(
+                title: const Text('Admin'),
+                value: _isAdmin,
+                onChanged: (value) {
+                  setState(() {
+                    _isAdmin = value;
+                  });
+                },
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _handleSubmit,
+          child: const Text('Save'),
+        ),
+      ],
+    );
   }
 
   @override
