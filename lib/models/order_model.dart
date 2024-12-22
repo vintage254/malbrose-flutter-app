@@ -1,19 +1,23 @@
 class Order {
   final int? id;
-  String? orderNumber;
+  final String? orderNumber;
   final int productId;
   final int quantity;
   final double sellingPrice;
   final double buyingPrice;
   final double totalAmount;
   final String? customerName;
-  final String? orderStatus;
-  final String? paymentStatus;
-  final String? paymentMethod;
+  final String paymentStatus;
+  String _orderStatus;
   final int createdBy;
+  final DateTime createdAt;
   final DateTime orderDate;
-  final DateTime? createdAt;
-  final List<Order>? items;
+  final List<OrderItem>? items;
+
+  String get orderStatus => _orderStatus;
+  set orderStatus(String value) {
+    _orderStatus = value;
+  }
 
   Order({
     this.id,
@@ -24,14 +28,16 @@ class Order {
     required this.buyingPrice,
     required this.totalAmount,
     this.customerName,
-    this.orderStatus = 'PENDING',
     this.paymentStatus = 'PENDING',
-    this.paymentMethod,
+    String orderStatus = 'PENDING',
     required this.createdBy,
-    required this.orderDate,
-    this.createdAt,
     this.items,
-  });
+    DateTime? createdAt,
+    DateTime? orderDate,
+  }) : 
+    _orderStatus = orderStatus,
+    createdAt = createdAt ?? DateTime.now(),
+    orderDate = orderDate ?? DateTime.now();
 
   Map<String, dynamic> toMap() {
     return {
@@ -44,11 +50,10 @@ class Order {
       'total_amount': totalAmount,
       'customer_name': customerName,
       'payment_status': paymentStatus,
-      'payment_method': paymentMethod,
-      'order_status': orderStatus,
+      'order_status': _orderStatus,
       'created_by': createdBy,
+      'created_at': createdAt.toIso8601String(),
       'order_date': orderDate.toIso8601String(),
-      'created_at': createdAt?.toIso8601String(),
     };
   }
 
@@ -58,16 +63,58 @@ class Order {
       orderNumber: map['order_number'],
       productId: map['product_id'],
       quantity: map['quantity'],
-      sellingPrice: (map['selling_price'] as num).toDouble(),
-      buyingPrice: (map['buying_price'] as num).toDouble(),
-      totalAmount: (map['total_amount'] as num).toDouble(),
+      sellingPrice: map['selling_price']?.toDouble() ?? 0.0,
+      buyingPrice: map['buying_price']?.toDouble() ?? 0.0,
+      totalAmount: map['total_amount']?.toDouble() ?? 0.0,
       customerName: map['customer_name'],
-      paymentStatus: map['payment_status'],
-      paymentMethod: map['payment_method'],
-      orderStatus: map['order_status'],
+      paymentStatus: map['payment_status'] ?? 'PENDING',
+      orderStatus: map['order_status'] ?? 'PENDING',
       createdBy: map['created_by'],
-      orderDate: DateTime.parse(map['order_date'] ?? map['created_at']),
-      createdAt: map['created_at'] != null ? DateTime.parse(map['created_at']) : null,
+      createdAt: DateTime.parse(map['created_at']),
+      orderDate: DateTime.parse(map['order_date']),
+      items: (map['items'] as List<dynamic>?)
+          ?.map((item) => OrderItem.fromMap(item))
+          .toList(),
+    );
+  }
+}
+
+class OrderItem {
+  final int productId;
+  final int quantity;
+  final double price;
+  final double sellingPrice;
+  final double totalAmount;
+  final double total;
+
+  OrderItem({
+    required this.productId,
+    required this.quantity,
+    required this.price,
+    required this.sellingPrice,
+    required this.totalAmount,
+    required this.total,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'product_id': productId,
+      'quantity': quantity,
+      'price': price,
+      'selling_price': sellingPrice,
+      'total_amount': totalAmount,
+      'total': total,
+    };
+  }
+
+  factory OrderItem.fromMap(Map<String, dynamic> map) {
+    return OrderItem(
+      productId: map['product_id'],
+      quantity: map['quantity'],
+      price: map['price'],
+      sellingPrice: map['selling_price'],
+      totalAmount: map['total_amount'],
+      total: map['total'],
     );
   }
 } 

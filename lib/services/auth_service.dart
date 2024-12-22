@@ -41,6 +41,14 @@ class AuthService {
           // Save session
           await _saveSession(user.id!);
           
+          // Add activity log for login
+          await DatabaseService.instance.logActivity({
+            'user_id': user.id!,
+            'action': 'login',
+            'details': 'User logged in successfully',
+            'timestamp': DateTime.now().toIso8601String(),
+          });
+          
           return _currentUser;
         }
       }

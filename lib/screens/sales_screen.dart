@@ -5,6 +5,7 @@ import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:my_flutter_app/widgets/receipt_panel.dart';
 import 'package:my_flutter_app/services/order_service.dart';
+import 'package:my_flutter_app/services/auth_service.dart';
 
 class SalesScreen extends StatefulWidget {
   const SalesScreen({super.key});
@@ -31,34 +32,41 @@ class _SalesScreenState extends State<SalesScreen> {
       final orders = await DatabaseService.instance.getOrdersByStatus('PENDING');
       if (mounted) {
         // Group orders by order number
-        final Map<String, List<Order>> groupedOrders = {};
-        final List<Order> ordersList = orders.map((o) => Order.fromMap(o)).toList();
-        
-        for (final order in ordersList) {
-          final orderNumber = order.orderNumber ?? '';
-          if (!groupedOrders.containsKey(orderNumber)) {
-            groupedOrders[orderNumber] = [];
+        final groupedOrders = <String, List<Map<String, dynamic>>>{};
+        for (var order in orders) {
+          final orderNumber = order['order_number'] as String?;
+          if (orderNumber != null) {
+            groupedOrders.putIfAbsent(orderNumber, () => []).add(order);
           }
-          groupedOrders[orderNumber]!.add(order);
         }
-        
-        // Create combined orders
-        final List<Order> combinedOrders = groupedOrders.entries.map((entry) {
+
+        // Combine orders with the same order number
+        final combinedOrders = groupedOrders.entries.map((entry) {
           final orders = entry.value;
           final firstOrder = orders.first;
+          
           return Order(
-            id: firstOrder.id,
-            orderNumber: firstOrder.orderNumber,
-            productId: firstOrder.productId,
-            quantity: firstOrder.quantity,
-            sellingPrice: firstOrder.sellingPrice,
-            buyingPrice: firstOrder.buyingPrice,
-            totalAmount: orders.fold(0.0, (sum, order) => sum + order.totalAmount),
-            customerName: firstOrder.customerName,
-            orderStatus: firstOrder.orderStatus,
-            createdBy: firstOrder.createdBy,
-            orderDate: firstOrder.orderDate,
-            items: orders,
+            id: firstOrder['id'],
+            orderNumber: firstOrder['order_number'],
+            productId: firstOrder['product_id'],
+            quantity: firstOrder['quantity'],
+            sellingPrice: firstOrder['selling_price'].toDouble(),
+            buyingPrice: firstOrder['buying_price'].toDouble(),
+            totalAmount: firstOrder['total_amount'].toDouble(),
+            customerName: firstOrder['customer_name'],
+            paymentStatus: firstOrder['payment_status'],
+            orderStatus: firstOrder['order_status'],
+            createdBy: firstOrder['created_by'],
+            createdAt: DateTime.parse(firstOrder['created_at']),
+            orderDate: DateTime.parse(firstOrder['order_date']),
+            items: orders.map((o) => OrderItem(
+              productId: o['product_id'],
+              quantity: o['quantity'],
+              price: o['selling_price'].toDouble(),
+              total: o['total_amount'].toDouble(),
+              sellingPrice: o['selling_price'].toDouble(),
+              totalAmount: o['total_amount'].toDouble(),
+            )).toList(),
           );
         }).toList();
 
@@ -68,13 +76,11 @@ class _SalesScreenState extends State<SalesScreen> {
         });
       }
     } catch (e) {
+      print('Error loading pending orders: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading orders: $e')),
-        );
       }
     }
   }
@@ -127,6 +133,25 @@ class _SalesScreenState extends State<SalesScreen> {
           backgroundColor: Colors.red,
         ),
       );
+    }
+  }
+
+  Future<void> _completeSale(Order order) async {
+    try {
+      order.orderStatus = 'COMPLETED';
+      await DatabaseService.instance.updateOrder(order);
+      
+      // Log sale completion
+      await DatabaseService.instance.logActivity({
+        'user_id': AuthService.instance.currentUser!.id!,
+        'action': 'complete_sale',
+        'details': 'Completed sale #${order.orderNumber}, amount: ${order.totalAmount}',
+        'timestamp': DateTime.now().toIso8601String(),
+      });
+      
+      // ... rest of sale completion code ...
+    } catch (e) {
+      print('Error completing sale: $e');
     }
   }
 

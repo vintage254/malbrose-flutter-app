@@ -5,6 +5,7 @@ import 'package:my_flutter_app/services/database.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'package:my_flutter_app/services/auth_service.dart';
 
 class ProductFormScreen extends StatefulWidget {
   final Product? product;
@@ -91,7 +92,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Add New Product',
+                  widget.product == null ? 'Add New Product' : 'Edit Product',
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: defaultPadding),
@@ -229,21 +230,36 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   }
 
   Future<void> _saveProduct() async {
-    if (_formKey.currentState!.validate()) {
-      _formKey.currentState!.save();
+    if (!_formKey.currentState!.validate()) return;
 
       String? imagePath;
       if (_imageFile != null) {
         final appDir = await getApplicationDocumentsDirectory();
-        final fileName = DateTime.now().millisecondsSinceEpoch.toString() + '.jpg';
-        final savedImage = File('${appDir.path}/$fileName');
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final savedImage = File('${appDir.path}/products/$fileName');
+      
+      // Create products directory if it doesn't exist
+      await Directory('${appDir.path}/products').create(recursive: true);
+      
         await File(_imageFile!.path).copy(savedImage.path);
         imagePath = savedImage.path;
       }
 
-      final product = Product(
-        id: widget.product?.id,
-        image: imagePath ?? widget.product?.image,
+    final currentUser = AuthService.instance.currentUser;
+    if (currentUser == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User not logged in')),
+      );
+      return;
+    }
+
+    try {
+      if (widget.product != null) {
+        // Update existing product
+        final updatedProduct = Product(
+          id: widget.product!.id,
+          image: imagePath ?? widget.product!.image,
         supplier: _supplierController.text,
         receivedDate: _receivedDate,
         productName: _productNameController.text,
@@ -251,16 +267,38 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         sellingPrice: double.parse(_sellingPriceController.text),
         quantity: int.parse(_quantityController.text),
         description: _descriptionController.text,
-      );
+          createdBy: widget.product!.createdBy,
+          updatedBy: currentUser.id,
+        );
 
-      try {
-        if (widget.product != null) {
-          await DatabaseService.instance.updateProduct(product.toMap());
+        await DatabaseService.instance.updateProduct(updatedProduct.toMap());
         } else {
-          await DatabaseService.instance.insertProduct(product.toMap());
-        }
+        // Create new product
+        final newProduct = Product(
+          image: imagePath,
+          supplier: _supplierController.text,
+          receivedDate: _receivedDate,
+          productName: _productNameController.text,
+          buyingPrice: double.parse(_buyingPriceController.text),
+          sellingPrice: double.parse(_sellingPriceController.text),
+          quantity: int.parse(_quantityController.text),
+          description: _descriptionController.text,
+          createdBy: currentUser.id,
+        );
+
+        await DatabaseService.instance.insertProduct(newProduct.toMap());
+      }
+
+      // Log the activity
+          await DatabaseService.instance.logActivity({
+        'user_id': currentUser.id,
+        'action': widget.product != null ? 'update_product' : 'create_product',
+        'details': '${widget.product != null ? 'Updated' : 'Created'} product: ${_productNameController.text}',
+            'timestamp': DateTime.now().toIso8601String(),
+          });
+
         if (!mounted) return;
-        Navigator.pop(context, true);  // Make sure this line is called
+        Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Product saved successfully!'),
@@ -272,7 +310,6 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error saving product: $e')),
         );
-      }
     }
   }
 

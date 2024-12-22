@@ -89,7 +89,58 @@ class OrderService extends ChangeNotifier {
     }
   }
 
-  void notifyOrderUpdate() {
-    _loadDailyStats();
+  Future<void> notifyOrderUpdate() async {
+    try {
+      final stats = await DatabaseService.instance.getDailyStats();
+      
+      _totalOrders = stats['total_orders'] as int? ?? 0;
+      _totalSales = (stats['total_sales'] as num?)?.toDouble() ?? 0.0;
+      _pendingOrders = stats['pending_orders'] as int? ?? 0;
+      
+      final recentOrdersData = await DatabaseService.instance.getRecentOrders();
+      _recentOrders = recentOrdersData
+          .map((order) => Order.fromMap(order as Map<String, dynamic>))
+          .toList();
+      
+      notifyListeners();
+    } catch (e) {
+      print('Error updating order stats: $e');
+    }
+  }
+
+  Future<void> createOrder(Order order) async {
+    try {
+      await DatabaseService.instance.addOrder(order);
+      
+      // Log order creation
+      await DatabaseService.instance.logActivity({
+        'user_id': order.createdBy,
+        'action': 'create_order',
+        'details': 'Created order #${order.orderNumber}, total: ${order.totalAmount}',
+        'timestamp': DateTime.now().toIso8601String(),
+      });
+      
+      notifyOrderUpdate();
+    } catch (e) {
+      print('Error creating order: $e');
+    }
+  }
+
+  Future<void> updateOrder(Order order) async {
+    try {
+      await DatabaseService.instance.updateOrder(order);
+      
+      // Log order update
+      await DatabaseService.instance.logActivity({
+        'user_id': order.createdBy,
+        'action': 'update_order',
+        'details': 'Updated order #${order.orderNumber}, status: ${order.orderStatus}',
+        'timestamp': DateTime.now().toIso8601String(),
+      });
+      
+      notifyOrderUpdate();
+    } catch (e) {
+      print('Error updating order: $e');
+    }
   }
 } 

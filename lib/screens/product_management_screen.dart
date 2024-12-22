@@ -42,24 +42,11 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
     }
   }
 
-  void _addNewProduct() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const ProductFormScreen(),
-      ),
-    ).then((value) {
-      if (value == true) {
-        _loadProducts();
-      }
-    });
-  }
-
-  void _editProduct(Product product) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ProductFormScreen(product: product),
+  void _showProductForm([Product? product]) {
+    showDialog(
+      context: context,
+      builder: (context) => ProductFormScreen(
+        product: product,
       ),
     ).then((value) {
       if (value == true) {
@@ -130,14 +117,9 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
                           ),
                         ),
                         const SizedBox(width: defaultPadding),
-                        ElevatedButton.icon(
-                          onPressed: _addNewProduct,
-                          icon: const Icon(Icons.add),
-                          label: const Text('Add Product'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                          ),
+                        FloatingActionButton(
+                          onPressed: () => _showProductForm(),
+                          child: const Icon(Icons.add),
                         ),
                       ],
                     ),
@@ -168,7 +150,7 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
                                         ),
                                         IconButton(
                                           icon: const Icon(Icons.edit),
-                                          onPressed: () => _editProduct(product),
+                                          onPressed: () => _showProductForm(product),
                                         ),
                                       ],
                                     ),

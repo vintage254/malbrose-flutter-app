@@ -54,8 +54,8 @@ class ReceiptPanel extends StatelessWidget {
                 children: [
                   pw.Text('Product: ${product['product_name']}'),
                   pw.Text('Quantity: ${orderItem.quantity}'),
-                  pw.Text('Unit Price: KSH ${orderItem.sellingPrice.toStringAsFixed(2)}'),
-                  pw.Text('Subtotal: KSH ${orderItem.totalAmount.toStringAsFixed(2)}'),
+                  pw.Text('Unit Price: KSH ${orderItem.price.toStringAsFixed(2)}'),
+                  pw.Text('Subtotal: KSH ${orderItem.total.toStringAsFixed(2)}'),
                   pw.SizedBox(height: 5),
                 ],
               );
@@ -118,8 +118,8 @@ class ReceiptPanel extends StatelessWidget {
                         children: [
                           Text('Product: ${product['product_name']}'),
                           Text('Quantity: ${item.quantity}'),
-                          Text('Unit Price: KSH ${item.sellingPrice.toStringAsFixed(2)}'),
-                          Text('Subtotal: KSH ${item.totalAmount.toStringAsFixed(2)}'),
+                          Text('Unit Price: KSH ${item.price.toStringAsFixed(2)}'),
+                          Text('Subtotal: KSH ${item.total.toStringAsFixed(2)}'),
                           const Divider(),
                         ],
                       );

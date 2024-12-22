@@ -57,14 +57,17 @@ class DatabaseService {
           CREATE TABLE products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             image TEXT,
-            supplier TEXT,
-            received_date TEXT,
-            product_name TEXT,
-            buying_price REAL,
-            selling_price REAL,
-            quantity INTEGER,
+            supplier TEXT NOT NULL,
+            received_date TEXT NOT NULL,
+            product_name TEXT NOT NULL,
+            buying_price REAL NOT NULL,
+            selling_price REAL NOT NULL,
+            quantity INTEGER NOT NULL,
             description TEXT,
-            created_at TEXT
+            created_by INTEGER,
+            updated_by INTEGER,
+            FOREIGN KEY (created_by) REFERENCES users (id),
+            FOREIGN KEY (updated_by) REFERENCES users (id)
           )
         ''');
 
@@ -95,12 +98,17 @@ class DatabaseService {
           CREATE TABLE IF NOT EXISTS activity_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            action_type TEXT NOT NULL,
-            details TEXT,
+            action TEXT NOT NULL,
+            details TEXT NOT NULL,
             timestamp TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users (id)
           )
         ''');
+
+        // Create indexes for activity_logs table
+        await db.execute('CREATE INDEX idx_user_id ON activity_logs (user_id)');
+        await db.execute('CREATE INDEX idx_action ON activity_logs (action)');
+        await db.execute('CREATE INDEX idx_timestamp ON activity_logs (timestamp)');
 
         // Create creditors table
         await db.execute('''
@@ -146,6 +154,10 @@ class DatabaseService {
   // Product Operations
   Future<int> insertProduct(Map<String, dynamic> product) async {
     final db = await database;
+    // Ensure created_by is set
+    if (product['created_by'] == null) {
+      product['created_by'] = AuthService.instance.currentUser?.id;
+    }
     return await db.insert(tableProducts, product);
   }
 
@@ -232,12 +244,28 @@ class DatabaseService {
 
   Future<List<Map<String, dynamic>>> getOrdersByStatus(String status) async {
     final db = await database;
-    return await db.query(
-      'orders',
-      where: 'order_status = ?',
-      whereArgs: [status],
-      orderBy: 'created_at DESC',
-    );
+    try {
+      final List<Map<String, dynamic>> orders = await db.query(
+        'orders',
+        where: 'order_status = ?',
+        whereArgs: [status],
+        orderBy: 'created_at DESC',
+      );
+
+      // Ensure all numeric fields are properly converted to double
+      return orders.map((order) => {
+        ...order,
+        'selling_price': (order['selling_price'] ?? 0).toDouble(),
+        'buying_price': (order['buying_price'] ?? 0).toDouble(),
+        'total_amount': (order['total_amount'] ?? 0).toDouble(),
+        'quantity': order['quantity'] ?? 0,
+        'payment_status': order['payment_status'] ?? 'PENDING',
+        'order_status': order['order_status'] ?? 'PENDING',
+      }).toList();
+    } catch (e) {
+      print('Error getting orders by status: $e');
+      return [];
+    }
   }
 
   Future<void> updateOrderStatus(String orderNumber, String status) async {
@@ -363,15 +391,18 @@ class DatabaseService {
     return count > 0;
   }
 
-  Future<bool> updateProduct(Map<String, dynamic> product) async {
+  Future<int> updateProduct(Map<String, dynamic> product) async {
     final db = await database;
-    final count = await db.update(
+    // Ensure updated_by is set
+    if (product['updated_by'] == null) {
+      product['updated_by'] = AuthService.instance.currentUser?.id;
+    }
+    return await db.update(
       tableProducts,
       product,
       where: 'id = ?',
       whereArgs: [product['id']],
     );
-    return count > 0;
   }
 
   // User operations
@@ -420,15 +451,10 @@ class DatabaseService {
 
   Future<void> logActivity(Map<String, dynamic> activity) async {
     final db = await database;
-    await db.insert('activity_logs', {
-      'user_id': activity['user_id'],
-      'action_type': activity['action_type'],
-      'details': activity['details'],
-      'timestamp': activity['timestamp'],
-    });
+    await db.insert('activity_logs', activity);
   }
 
-  Future<List<ActivityLog>> getActivityLogs({
+  Future<List<Map<String, dynamic>>> getActivityLogs({
     String? userFilter,
     String? actionFilter,
     String? dateFilter,
@@ -445,31 +471,24 @@ class DatabaseService {
     
     List<dynamic> args = [];
     
-    if (userFilter != null && userFilter.isNotEmpty) {
+    if (userFilter != null) {
       query += ' AND u.username LIKE ?';
       args.add('%$userFilter%');
     }
     
-    if (actionFilter != null && actionFilter.isNotEmpty) {
-      query += ' AND al.action_type LIKE ?';
-      args.add('%$actionFilter%');
+    if (actionFilter != null) {
+      query += ' AND al.action = ?';
+      args.add(actionFilter);
     }
-
-    if (dateFilter != null && dateFilter.isNotEmpty) {
+    
+    if (dateFilter != null) {
       query += ' AND DATE(al.timestamp) = ?';
       args.add(dateFilter);
     }
     
-    if (groupBy != null) {
-      query += ' GROUP BY ${groupBy == 'day' ? 'DATE(al.timestamp)' : 
-               groupBy == 'month' ? 'strftime("%Y-%m", al.timestamp)' : 
-               'strftime("%Y", al.timestamp)'}';
-    }
-    
     query += ' ORDER BY al.timestamp DESC';
     
-    final List<Map<String, dynamic>> maps = await db.rawQuery(query, args);
-    return maps.map((map) => ActivityLog.fromMap(map)).toList();
+    return await db.rawQuery(query, args);
   }
 
   Future<void> _initializeDatabase() async {
@@ -497,16 +516,37 @@ class DatabaseService {
     }
   }
 
-  Future<List<Order>> getRecentOrders() async {
+  Future<List<Map<String, dynamic>>> getRecentOrders() async {
     final db = await database;
-    final List<Map<String, dynamic>> maps = await db.query(
-      'orders',
+    try {
+      final List<Map<String, dynamic>> orders = await db.query(
+        tableOrders,
       orderBy: 'created_at DESC',
+        groupBy: 'order_number',
       limit: 5,
-      groupBy: 'customer_name, created_at',
-    );
-    
-    return maps.map((map) => Order.fromMap(map)).toList();
+      );
+
+      // Ensure all numeric fields are properly converted
+      return orders.map((order) => {
+        ...order,
+        'id': order['id'],
+        'order_number': order['order_number'],
+        'product_id': order['product_id'],
+        'customer_name': order['customer_name'],
+        'order_date': order['order_date'],
+        'created_at': order['created_at'],
+        'created_by': order['created_by'],
+        'order_status': order['order_status'] ?? 'PENDING',
+        'payment_status': order['payment_status'] ?? 'PENDING',
+        'selling_price': (order['selling_price'] ?? 0).toDouble(),
+        'buying_price': (order['buying_price'] ?? 0).toDouble(),
+        'total_amount': (order['total_amount'] ?? 0).toDouble(),
+        'quantity': order['quantity'] ?? 0,
+      }).toList();
+    } catch (e) {
+      print('Error getting recent orders: $e');
+      return [];
+    }
   }
 
   // Add this method to the DatabaseService class
@@ -539,12 +579,32 @@ class DatabaseService {
   // Add these methods to DatabaseService class
   Future<int> addCreditor(Map<String, dynamic> creditor) async {
     final db = await database;
-    return await db.insert(tableCreditors, creditor);
+    final id = await db.insert(tableCreditors, creditor);
+    
+    // Log creditor creation
+    await logActivity({
+      'user_id': AuthService.instance.currentUser!.id!,
+      'action': 'create_creditor',
+      'details': 'Added creditor: ${creditor['name']}, balance: ${creditor['balance']}',
+      'timestamp': DateTime.now().toIso8601String(),
+    });
+    
+    return id;
   }
 
   Future<int> addDebtor(Map<String, dynamic> debtor) async {
     final db = await database;
-    return await db.insert(tableDebtors, debtor);
+    final id = await db.insert(tableDebtors, debtor);
+    
+    // Log debtor creation
+    await logActivity({
+      'user_id': AuthService.instance.currentUser!.id!,
+      'action': 'create_debtor',
+      'details': 'Added debtor: ${debtor['name']}, balance: ${debtor['balance']}',
+      'timestamp': DateTime.now().toIso8601String(),
+    });
+    
+    return id;
   }
 
   Future<List<Map<String, dynamic>>> getCreditorsByStatus(String status) async {
@@ -621,5 +681,153 @@ class DatabaseService {
     
     // Recreate admin user
     await checkAndCreateAdminUser();
+  }
+
+  // Add these methods to DatabaseService class
+
+  Future<int> addOrder(Order order) async {
+    final db = await database;
+    return await db.insert(tableOrders, order.toMap());
+  }
+
+  Future<void> updateOrder(Order order) async {
+    final db = await database;
+    await db.update(
+      tableOrders,
+      order.toMap(),
+      where: 'id = ?',
+      whereArgs: [order.id],
+    );
+  }
+
+  Future<Map<String, dynamic>> getDailyStats() async {
+    final db = await database;
+    final now = DateTime.now();
+    final startOfDay = DateTime(now.year, now.month, now.day);
+    final endOfDay = startOfDay.add(const Duration(days: 1));
+
+    try {
+      // Get total orders for today
+      final totalOrdersResult = await db.rawQuery('''
+        SELECT COUNT(DISTINCT order_number) as total_orders
+        FROM orders
+        WHERE created_at BETWEEN ? AND ?
+      ''', [startOfDay.toIso8601String(), endOfDay.toIso8601String()]);
+
+      // Get total sales for completed orders today
+      final totalSalesResult = await db.rawQuery('''
+        SELECT SUM(total_amount) as total_sales
+        FROM orders
+        WHERE order_status = 'COMPLETED'
+        AND created_at BETWEEN ? AND ?
+      ''', [startOfDay.toIso8601String(), endOfDay.toIso8601String()]);
+
+      // Get pending orders count
+      final pendingOrdersResult = await db.rawQuery('''
+        SELECT COUNT(DISTINCT order_number) as pending_orders
+        FROM orders
+        WHERE order_status = 'PENDING'
+      ''');
+
+      return {
+        'total_orders': totalOrdersResult.first['total_orders'] ?? 0,
+        'total_sales': totalSalesResult.first['total_sales'] ?? 0,
+        'pending_orders': pendingOrdersResult.first['pending_orders'] ?? 0,
+      };
+    } catch (e) {
+      print('Error getting daily stats: $e');
+      return {
+        'total_orders': 0,
+        'total_sales': 0.0,
+        'pending_orders': 0,
+      };
+    }
+  }
+
+  Future<void> _createTables(Database db) async {
+    // Update the products table creation to include the new columns
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        image TEXT,
+        supplier TEXT NOT NULL,
+        received_date TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        buying_price REAL NOT NULL,
+        selling_price REAL NOT NULL,
+        quantity INTEGER NOT NULL,
+        description TEXT,
+        created_by INTEGER,
+        updated_by INTEGER
+      )
+    ''');
+    // ... rest of your table creation code ...
+  }
+
+  Future<Database> _initDatabase() async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'malbrose_db.db');
+
+    // Delete existing database for fresh start (REMOVE THIS LINE IN PRODUCTION)
+    await deleteDatabase(path);
+
+    return await openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, version) async {
+        // Create products table with all required columns
+        await db.execute('''
+          CREATE TABLE products(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            image TEXT,
+            supplier TEXT NOT NULL,
+            received_date TEXT NOT NULL,
+            product_name TEXT NOT NULL,
+            buying_price REAL NOT NULL,
+            selling_price REAL NOT NULL,
+            quantity INTEGER NOT NULL,
+            description TEXT,
+            created_by INTEGER,
+            updated_by INTEGER
+          )
+        ''');
+
+        // Create other tables...
+        await db.execute('''
+          CREATE TABLE users(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            email TEXT,
+            role TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          )
+        ''');
+
+        await db.execute('''
+          CREATE TABLE activity_logs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            details TEXT,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+          )
+        ''');
+
+        // Create default admin user
+        final defaultAdmin = {
+          'username': 'admin',
+          'password': AuthService.instance.hashPassword('Account@2024'),
+          'full_name': 'System Administrator',
+          'email': 'admin@malbrose.com',
+          'role': 'ADMIN',
+          'created_at': DateTime.now().toIso8601String(),
+        };
+        
+        await db.insert('users', defaultAdmin);
+      },
+    );
   }
 }

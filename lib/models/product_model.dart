@@ -8,7 +8,8 @@ class Product {
   final double sellingPrice;
   final int quantity;
   final String? description;
-  final DateTime? createdAt;
+  final int? createdBy;
+  final int? updatedBy;
 
   Product({
     this.id,
@@ -20,12 +21,13 @@ class Product {
     required this.sellingPrice,
     required this.quantity,
     this.description,
-    this.createdAt,
+    this.createdBy,
+    this.updatedBy,
   });
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
+      if (id != null) 'id': id,
       'image': image,
       'supplier': supplier,
       'received_date': receivedDate.toIso8601String(),
@@ -34,7 +36,8 @@ class Product {
       'selling_price': sellingPrice,
       'quantity': quantity,
       'description': description,
-      'created_at': createdAt?.toIso8601String(),
+      'created_by': createdBy,
+      'updated_by': updatedBy,
     };
   }
 
@@ -45,12 +48,12 @@ class Product {
       supplier: map['supplier'],
       receivedDate: DateTime.parse(map['received_date']),
       productName: map['product_name'],
-      buyingPrice: (map['buying_price'] as num).toDouble(),
-      sellingPrice: (map['selling_price'] as num).toDouble(),
+      buyingPrice: map['buying_price'],
+      sellingPrice: map['selling_price'],
       quantity: map['quantity'],
       description: map['description'],
-      createdAt:
-          map['created_at'] != null ? DateTime.parse(map['created_at']) : null,
+      createdBy: map['created_by'],
+      updatedBy: map['updated_by'],
     );
   }
 }

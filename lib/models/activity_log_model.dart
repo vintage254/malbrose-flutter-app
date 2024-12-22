@@ -1,26 +1,23 @@
 class ActivityLog {
   final int? id;
   final int userId;
-  final String username;
-  final String actionType;
+  final String action;
   final String details;
   final DateTime timestamp;
 
   ActivityLog({
     this.id,
     required this.userId,
-    required this.username,
-    required this.actionType,
+    required this.action,
     required this.details,
-    DateTime? timestamp,
-  }) : timestamp = timestamp ?? DateTime.now();
+    required this.timestamp,
+  });
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'user_id': userId,
-      'username': username,
-      'action_type': actionType,
+      'action': action,
       'details': details,
       'timestamp': timestamp.toIso8601String(),
     };
@@ -30,8 +27,7 @@ class ActivityLog {
     return ActivityLog(
       id: map['id'],
       userId: map['user_id'],
-      username: map['username'],
-      actionType: map['action_type'],
+      action: map['action'],
       details: map['details'],
       timestamp: DateTime.parse(map['timestamp']),
     );
