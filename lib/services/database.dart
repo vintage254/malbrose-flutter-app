@@ -83,13 +83,15 @@ class DatabaseService {
             total_amount REAL,
             customer_name TEXT,
             payment_status TEXT,
-            payment_method TEXT,
             order_status TEXT,
             created_by INTEGER,
+            updated_by INTEGER,
             created_at TEXT,
+            updated_at TEXT,
             order_date TEXT,
             FOREIGN KEY (product_id) REFERENCES products (id),
-            FOREIGN KEY (created_by) REFERENCES users (id)
+            FOREIGN KEY (created_by) REFERENCES users (id),
+            FOREIGN KEY (updated_by) REFERENCES users (id)
           )
         ''');
 
@@ -147,6 +149,11 @@ class DatabaseService {
         };
         
         await db.insert('users', defaultAdmin);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await _updateOrdersTable(db);
+        }
       },
     );
   }
@@ -270,12 +277,33 @@ class DatabaseService {
 
   Future<void> updateOrderStatus(String orderNumber, String status) async {
     final db = await database;
-    await db.update(
-      tableOrders,
-      {'order_status': status},
-      where: 'order_number = ?',
-      whereArgs: [orderNumber],
-    );
+    final currentUser = AuthService.instance.currentUser;
+    if (currentUser == null) throw Exception('No user logged in');
+
+    await db.transaction((txn) async {
+      // Update the order status
+      await txn.update(
+        tableOrders,
+        {
+          'order_status': status,
+          'updated_by': currentUser.id,
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        where: 'order_number = ?',
+        whereArgs: [orderNumber],
+      );
+
+      // Log the activity
+      await txn.insert(
+        'activity_logs',
+        {
+          'user_id': currentUser.id,
+          'action': 'update_order_status',
+          'details': 'Updated order #$orderNumber status to $status',
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+    });
   }
 
   // User Operations
@@ -764,70 +792,42 @@ class DatabaseService {
     // ... rest of your table creation code ...
   }
 
-  Future<Database> _initDatabase() async {
-    final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'malbrose_db.db');
+  Future<void> _updateOrdersTable(Database db) async {
+    // Create a new table with the updated schema
+    await db.execute('''
+      CREATE TABLE new_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_number TEXT,
+        product_id INTEGER,
+        quantity INTEGER,
+        selling_price REAL,
+        buying_price REAL,
+        total_amount REAL,
+        customer_name TEXT,
+        payment_status TEXT,
+        order_status TEXT,
+        created_by INTEGER,
+        updated_by INTEGER,
+        created_at TEXT,
+        updated_at TEXT,
+        order_date TEXT,
+        FOREIGN KEY (product_id) REFERENCES products (id),
+        FOREIGN KEY (created_by) REFERENCES users (id),
+        FOREIGN KEY (updated_by) REFERENCES users (id)
+      )
+    ''');
 
-    // Delete existing database for fresh start (REMOVE THIS LINE IN PRODUCTION)
-    await deleteDatabase(path);
+    // Copy existing data
+    await db.execute('''
+      INSERT INTO new_orders 
+      SELECT 
+        id, order_number, product_id, quantity, selling_price, 
+        buying_price, total_amount, customer_name, payment_status, 
+        order_status, created_by, created_at, NULL, order_date, NULL 
+      FROM orders
+    ''');
 
-    return await openDatabase(
-      path,
-      version: 1,
-      onCreate: (db, version) async {
-        // Create products table with all required columns
-        await db.execute('''
-          CREATE TABLE products(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            image TEXT,
-            supplier TEXT NOT NULL,
-            received_date TEXT NOT NULL,
-            product_name TEXT NOT NULL,
-            buying_price REAL NOT NULL,
-            selling_price REAL NOT NULL,
-            quantity INTEGER NOT NULL,
-            description TEXT,
-            created_by INTEGER,
-            updated_by INTEGER
-          )
-        ''');
-
-        // Create other tables...
-        await db.execute('''
-          CREATE TABLE users(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            full_name TEXT NOT NULL,
-            email TEXT,
-            role TEXT NOT NULL,
-            created_at TEXT NOT NULL
-          )
-        ''');
-
-        await db.execute('''
-          CREATE TABLE activity_logs(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            action TEXT NOT NULL,
-            details TEXT,
-            timestamp TEXT NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-          )
-        ''');
-
-        // Create default admin user
-        final defaultAdmin = {
-          'username': 'admin',
-          'password': AuthService.instance.hashPassword('Account@2024'),
-          'full_name': 'System Administrator',
-          'email': 'admin@malbrose.com',
-          'role': 'ADMIN',
-          'created_at': DateTime.now().toIso8601String(),
-        };
-        
-        await db.insert('users', defaultAdmin);
-      },
-    );
+    await db.execute('DROP TABLE orders');
+    await db.execute('ALTER TABLE new_orders RENAME TO orders');
   }
 }
