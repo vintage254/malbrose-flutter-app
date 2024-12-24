@@ -5,6 +5,7 @@ import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/models/user_model.dart';
 import 'package:my_flutter_app/models/activity_log_model.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/const/constant.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._constructor();
@@ -829,5 +830,43 @@ class DatabaseService {
 
     await db.execute('DROP TABLE orders');
     await db.execute('ALTER TABLE new_orders RENAME TO orders');
+  }
+
+  Future<int> getNextOrderNumber() async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT MAX(CAST(REPLACE(order_number, "ORD", "") AS INTEGER)) as last_number FROM orders'
+    );
+    final lastNumber = result.first['last_number'] as int? ?? 0;
+    return lastNumber + 1;
+  }
+
+  Future<int> getNextSaleNumber() async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT MAX(CAST(REPLACE(sale_number, "SALE", "") AS INTEGER)) as last_number FROM sales'
+    );
+    final lastNumber = result.first['last_number'] as int? ?? 0;
+    return lastNumber + 1;
+  }
+
+  Future<String> generateOrderNumber() async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT MAX(CAST(REPLACE(order_number, ?, "") AS INTEGER)) as last_number FROM orders',
+      [orderPrefix]
+    );
+    final lastNumber = result.first['last_number'] as int? ?? 0;
+    return '$orderPrefix${(lastNumber + 1).toString().padLeft(6, '0')}';
+  }
+
+  Future<String> generateSaleNumber() async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT MAX(CAST(REPLACE(order_number, ?, "") AS INTEGER)) as last_number FROM orders WHERE order_status = "COMPLETED"',
+      [salePrefix]
+    );
+    final lastNumber = result.first['last_number'] as int? ?? 0;
+    return '$salePrefix${(lastNumber + 1).toString().padLeft(6, '0')}';
   }
 }

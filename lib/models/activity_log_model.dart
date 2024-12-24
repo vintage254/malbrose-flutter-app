@@ -1,13 +1,15 @@
 class ActivityLog {
-  final int? id;
+  final int id;
   final int userId;
+  final String userName;
   final String action;
   final String details;
   final DateTime timestamp;
 
   ActivityLog({
-    this.id,
+    required this.id,
     required this.userId,
+    required this.userName,
     required this.action,
     required this.details,
     required this.timestamp,
@@ -17,6 +19,7 @@ class ActivityLog {
     return {
       'id': id,
       'user_id': userId,
+      'user_name': userName,
       'action': action,
       'details': details,
       'timestamp': timestamp.toIso8601String(),
@@ -27,6 +30,7 @@ class ActivityLog {
     return ActivityLog(
       id: map['id'],
       userId: map['user_id'],
+      userName: map['user_name'] ?? 'Unknown',
       action: map['action'],
       details: map['details'],
       timestamp: DateTime.parse(map['timestamp']),

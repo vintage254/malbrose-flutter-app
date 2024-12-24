@@ -24,42 +24,90 @@ class ReceiptPanel extends StatelessWidget {
       pw.Page(
         pageFormat: PdfPageFormat.roll80,
         build: (context) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          crossAxisAlignment: pw.CrossAxisAlignment.center,
           children: [
+            // Header
             pw.Text(
-              'Malbrose Hardware Store',
+              companyName,
               style: pw.TextStyle(
                 fontSize: 18,
                 fontWeight: pw.FontWeight.bold,
               ),
+              textAlign: pw.TextAlign.center,
             ),
-            pw.SizedBox(height: 10),
-            pw.Text('Receipt #${order.orderNumber}'),
-            pw.Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(order.orderDate)}'),
-            pw.Text('Customer: ${order.customerName ?? "N/A"}'),
-            pw.Divider(),
+            pw.SizedBox(height: 5),
+            pw.Text(companyAddress),
+            pw.Text(companyPhone),
+            pw.Text(companyEmail),
+            pw.SizedBox(height: 5),
             pw.Text(
-              'Order Details',
-              style: pw.TextStyle(
-                fontSize: 14,
-                fontWeight: pw.FontWeight.bold,
-              ),
+              companyTagline,
+              style: pw.TextStyle(fontStyle: pw.FontStyle.italic),
             ),
+            pw.Divider(thickness: 2),
+            
+            // Receipt Details
             pw.SizedBox(height: 10),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text('Receipt No:'),
+                pw.Text('${salePrefix}-${order.orderNumber}'),
+              ],
+            ),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text('Date:'),
+                pw.Text(DateFormat('yyyy-MM-dd HH:mm').format(order.orderDate)),
+              ],
+            ),
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text('Customer:'),
+                pw.Text(order.customerName ?? 'Walk-in Customer'),
+              ],
+            ),
+            
+            // Items Header
+            pw.Divider(),
+            pw.Row(
+              children: [
+                pw.Expanded(flex: 3, child: pw.Text('Item')),
+                pw.Expanded(child: pw.Text('Qty')),
+                pw.Expanded(flex: 2, child: pw.Text('Price')),
+                pw.Expanded(flex: 2, child: pw.Text('Total')),
+              ],
+            ),
+            pw.Divider(),
+            
+            // Items
             ...order.items!.asMap().entries.map((entry) {
               final orderItem = entry.value;
               final product = products[entry.key];
-              return pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
+              return pw.Row(
                 children: [
-                  pw.Text('Product: ${product['product_name']}'),
-                  pw.Text('Quantity: ${orderItem.quantity}'),
-                  pw.Text('Unit Price: KSH ${orderItem.price.toStringAsFixed(2)}'),
-                  pw.Text('Subtotal: KSH ${orderItem.total.toStringAsFixed(2)}'),
-                  pw.SizedBox(height: 5),
+                  pw.Expanded(
+                    flex: 3,
+                    child: pw.Text(product['product_name']),
+                  ),
+                  pw.Expanded(
+                    child: pw.Text('${orderItem.quantity}'),
+                  ),
+                  pw.Expanded(
+                    flex: 2,
+                    child: pw.Text('${orderItem.price.toStringAsFixed(2)}'),
+                  ),
+                  pw.Expanded(
+                    flex: 2,
+                    child: pw.Text('${orderItem.total.toStringAsFixed(2)}'),
+                  ),
                 ],
               );
             }).toList(),
+            
+            // Footer
             pw.Divider(),
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -74,13 +122,25 @@ class ReceiptPanel extends StatelessWidget {
                 ),
               ],
             ),
+            pw.SizedBox(height: 20),
+            pw.Text(
+              'Thank you for your business!',
+              style: pw.TextStyle(fontStyle: pw.FontStyle.italic),
+            ),
+            pw.SizedBox(height: 10),
+            pw.Text(
+              'Powered by Malbrose POS',
+              style: pw.TextStyle(fontSize: 8),
+            ),
           ],
         ),
       ),
     );
 
+    // Print the document
     await Printing.layoutPdf(
       onLayout: (format) async => pdf.save(),
+      name: '${salePrefix}-${order.orderNumber}',
     );
   }
 
