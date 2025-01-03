@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/services/order_service.dart';
+import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/screens/order_screen.dart';
+import 'package:my_flutter_app/screens/debtors_screen.dart';
+import 'package:my_flutter_app/screens/creditors_screen.dart';
+import 'package:my_flutter_app/screens/sales_screen.dart';
+import 'package:my_flutter_app/screens/user_management_screen.dart';
+import 'package:my_flutter_app/screens/activity_log_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 
@@ -20,6 +27,9 @@ class DashboardWidgetState extends State<DashboardWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final currentUser = AuthService.instance.currentUser;
+    final isAdmin = currentUser?.isAdmin ?? false;
+
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -73,6 +83,88 @@ class DashboardWidgetState extends State<DashboardWidget> {
                 ],
               ),
             ),
+            const SizedBox(height: defaultPadding * 2),
+            
+            Row(
+              children: [
+                _ActionCard(
+                  title: 'Create Order',
+                  icon: Icons.add_shopping_cart,
+                  color: Colors.blue,
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const OrderScreen()),
+                  ),
+                ),
+                const SizedBox(width: defaultPadding),
+                _ActionCard(
+                  title: 'Create Debtor',
+                  icon: Icons.person_add,
+                  color: Colors.orange,
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const DebtorsScreen()),
+                  ),
+                ),
+                const SizedBox(width: defaultPadding),
+                _ActionCard(
+                  title: 'Create Creditor',
+                  icon: Icons.account_balance_wallet,
+                  color: Colors.green,
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const CreditorsScreen()),
+                  ),
+                ),
+              ],
+            ),
+            
+            if (isAdmin) ...[
+              const SizedBox(height: defaultPadding * 2),
+              const Divider(color: Colors.white54),
+              const Text(
+                'Admin Actions',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: defaultPadding),
+              Row(
+                children: [
+                  _ActionCard(
+                    title: 'Make Sale',
+                    icon: Icons.point_of_sale,
+                    color: Colors.purple,
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SalesScreen()),
+                    ),
+                  ),
+                  const SizedBox(width: defaultPadding),
+                  _ActionCard(
+                    title: 'Manage Users',
+                    icon: Icons.people,
+                    color: Colors.indigo,
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const UserManagementScreen()),
+                    ),
+                  ),
+                  const SizedBox(width: defaultPadding),
+                  _ActionCard(
+                    title: 'Activity Logs',
+                    icon: Icons.history,
+                    color: Colors.teal,
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ActivityLogScreen()),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -125,6 +217,53 @@ class _StatCard extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionCard extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onPressed;
+
+  const _ActionCard({
+    required this.title,
+    required this.icon,
+    required this.color,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Card(
+        child: InkWell(
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.all(defaultPadding),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(icon, color: color, size: 30),
+                    const SizedBox(width: defaultPadding),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

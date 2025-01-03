@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:my_flutter_app/services/order_service.dart';
-import 'package:my_flutter_app/screens/dashboard_screen.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
 import 'package:my_flutter_app/screens/sales_screen.dart';
 import 'package:my_flutter_app/screens/product_management_screen.dart';
@@ -14,13 +14,20 @@ import 'package:my_flutter_app/screens/debtors_screen.dart';
 import 'package:my_flutter_app/services/database.dart';
 
 void main() async {
+  // Initialize FFI
+  sqfliteFfiInit();
+  // Set the databaseFactory to use FFI
+  databaseFactory = databaseFactoryFfi;
+
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // For development only - reset database if needed
-  // await DatabaseService.instance.resetDatabase();
   
   // Initialize database and check for admin user
   await DatabaseService.instance.checkAndCreateAdminUser();
+  
+  // Add required columns if they don't exist
+  await DatabaseService.instance.addUsernameColumnToActivityLogs();
+  await DatabaseService.instance.addUpdatedAtColumnToProducts();
+  await DatabaseService.instance.addStatusColumnToOrders();
   
   runApp(
     MultiProvider(
@@ -48,7 +55,6 @@ class MyApp extends StatelessWidget {
       home: const HomeScreen(),
       routes: {
         '/main': (context) => const MainScreen(),
-        '/dashboard': (context) => const DashboardScreen(),
         '/orders': (context) => const OrderScreen(),
         '/sales': (context) => const SalesScreen(),
         '/products': (context) => const ProductManagementScreen(),

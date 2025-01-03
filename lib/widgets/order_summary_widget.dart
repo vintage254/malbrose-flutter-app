@@ -3,6 +3,7 @@ import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/services/order_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:my_flutter_app/models/order_model.dart';
 
 class OrderSummaryWidget extends StatelessWidget {
   const OrderSummaryWidget({super.key});
@@ -46,7 +47,23 @@ class OrderSummaryWidget extends StatelessWidget {
                 return ListView.builder(
                   itemCount: orderService.recentOrders.length,
                   itemBuilder: (context, index) {
-                    final order = orderService.recentOrders[index];
+                    final orderData = orderService.recentOrders[index];
+                    // Convert Map to Order object using fromMap
+                    final order = Order(
+                      id: orderData['id'],
+                      orderNumber: orderData['order_number'],
+                      productId: orderData['product_id'] ?? 0,
+                      quantity: orderData['quantity'] ?? 0,
+                      sellingPrice: (orderData['selling_price'] as num?)?.toDouble() ?? 0.0,
+                      buyingPrice: (orderData['buying_price'] as num?)?.toDouble() ?? 0.0,
+                      totalAmount: (orderData['total_amount'] as num?)?.toDouble() ?? 0.0,
+                      customerName: orderData['customer_name'],
+                      orderStatus: orderData['status'] ?? 'PENDING',
+                      createdBy: orderData['created_by'] ?? 1,
+                      createdAt: DateTime.parse(orderData['created_at']),
+                      orderDate: DateTime.parse(orderData['order_date']),
+                    );
+
                     return Card(
                       margin: const EdgeInsets.only(bottom: 8),
                       child: ListTile(

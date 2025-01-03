@@ -32,19 +32,20 @@ class _SalesScreenState extends State<SalesScreen> {
       final orders = await DatabaseService.instance.getOrdersByStatus('PENDING');
       if (mounted) {
         // Group orders by order number
-        final groupedOrders = <String, List<Map<String, dynamic>>>{};
+        final Map<String, List<Map<String, dynamic>>> groupedOrders = {};
         for (var order in orders) {
           final orderNumber = order['order_number'] as String?;
           if (orderNumber != null) {
-            groupedOrders.putIfAbsent(orderNumber, () => []).add(order);
+            if (!groupedOrders.containsKey(orderNumber)) {
+              groupedOrders[orderNumber] = [];
+            }
+            groupedOrders[orderNumber]!.add(order);
           }
         }
 
-        // Combine orders with the same order number
-        final combinedOrders = groupedOrders.entries.map((entry) {
-          final orders = entry.value;
-          final firstOrder = orders.first;
-          
+        // Convert grouped orders to Order objects
+        final List<Order> combinedOrders = groupedOrders.entries.map((entry) {
+          final firstOrder = entry.value.first;
           return Order(
             id: firstOrder['id'],
             orderNumber: firstOrder['order_number'],
@@ -54,12 +55,12 @@ class _SalesScreenState extends State<SalesScreen> {
             buyingPrice: firstOrder['buying_price'].toDouble(),
             totalAmount: firstOrder['total_amount'].toDouble(),
             customerName: firstOrder['customer_name'],
-            paymentStatus: firstOrder['payment_status'],
-            orderStatus: firstOrder['order_status'],
+            orderStatus: firstOrder['status'] ?? 'PENDING',
+            paymentStatus: firstOrder['payment_status'] ?? 'PENDING',
             createdBy: firstOrder['created_by'],
             createdAt: DateTime.parse(firstOrder['created_at']),
             orderDate: DateTime.parse(firstOrder['order_date']),
-            items: orders.map((o) => OrderItem(
+            items: entry.value.map((o) => OrderItem(
               productId: o['product_id'],
               quantity: o['quantity'],
               price: o['selling_price'].toDouble(),
@@ -97,17 +98,26 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Future<void> _processSale(Order order) async {
     try {
-      // Update all items in the order at once using the order number
-      await DatabaseService.instance.updateOrderStatus(order.orderNumber!, 'COMPLETED');
+      final db = await DatabaseService.instance.database;
       
-      // Update product quantities for all items in the order
-      for (final item in order.items ?? []) {
-        await DatabaseService.instance.updateProductQuantity(
-          item.productId,
-          item.quantity,
-          subtract: true, // subtract the quantity
+      await db.transaction((txn) async {
+        // Update order status
+        await txn.update(
+          'orders',
+          {'status': 'COMPLETED'},
+          where: 'order_number = ?',
+          whereArgs: [order.orderNumber],
         );
-      }
+        
+        // Update product quantities in the same transaction
+        for (final item in order.items ?? []) {
+          await txn.rawUpdate('''
+            UPDATE products 
+            SET quantity = quantity - ?
+            WHERE id = ?
+          ''', [item.quantity, item.productId]);
+        }
+      });
       
       // Notify OrderService about the update
       OrderService.instance.notifyOrderUpdate();

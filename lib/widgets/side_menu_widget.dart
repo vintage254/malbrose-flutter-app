@@ -20,7 +20,7 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
     print('Is Admin: $isAdmin');
 
     final List<Map<String, dynamic>> items = [
-      {'title': 'Dashboard', 'icon': Icons.dashboard, 'route': '/dashboard'},
+      {'title': 'Dashboard', 'icon': Icons.dashboard, 'route': '/main'},
       {'title': 'Orders', 'icon': Icons.shopping_cart, 'route': '/orders'},
       {'title': 'Products', 'icon': Icons.inventory, 'route': '/products'},
       {'title': 'Creditors', 'icon': Icons.account_balance_wallet, 'route': '/creditors'},

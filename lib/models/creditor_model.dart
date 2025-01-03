@@ -2,18 +2,18 @@ class Creditor {
   final int? id;
   final String name;
   final double balance;
-  final String details;
+  final String? details;
   final String status;
-  final DateTime createdAt;
+  final DateTime? createdAt;
   final DateTime? lastUpdated;
 
   Creditor({
     this.id,
     required this.name,
     required this.balance,
-    required this.details,
-    required this.status,
-    required this.createdAt,
+    this.details,
+    this.status = 'PENDING',
+    this.createdAt,
     this.lastUpdated,
   });
 
@@ -24,22 +24,44 @@ class Creditor {
       'balance': balance,
       'details': details,
       'status': status,
-      'created_at': createdAt.toIso8601String(),
+      'created_at': createdAt?.toIso8601String(),
       'last_updated': lastUpdated?.toIso8601String(),
     };
   }
 
   factory Creditor.fromMap(Map<String, dynamic> map) {
     return Creditor(
-      id: map['id'],
-      name: map['name'],
-      balance: map['balance'],
-      details: map['details'],
-      status: map['status'],
-      createdAt: DateTime.parse(map['created_at']),
-      lastUpdated: map['last_updated'] != null 
-          ? DateTime.parse(map['last_updated'])
+      id: map['id'] as int?,
+      name: map['name'] as String,
+      balance: map['balance'] as double,
+      details: map['details'] as String?,
+      status: map['status'] as String? ?? 'PENDING',
+      createdAt: map['created_at'] != null 
+          ? DateTime.parse(map['created_at'] as String)
           : null,
+      lastUpdated: map['last_updated'] != null 
+          ? DateTime.parse(map['last_updated'] as String)
+          : null,
+    );
+  }
+
+  Creditor copyWith({
+    int? id,
+    String? name,
+    double? balance,
+    String? details,
+    String? status,
+    DateTime? createdAt,
+    DateTime? lastUpdated,
+  }) {
+    return Creditor(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      balance: balance ?? this.balance,
+      details: details ?? this.details,
+      status: status ?? this.status,
+      createdAt: createdAt ?? this.createdAt,
+      lastUpdated: lastUpdated ?? this.lastUpdated,
     );
   }
 } 
