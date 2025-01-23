@@ -76,7 +76,7 @@ class DashboardWidgetState extends State<DashboardWidget> {
                   const SizedBox(width: defaultPadding),
                   _StatCard(
                     title: 'Pending Orders',
-                    value: orderService.pendingOrders.toString(),
+                    value: orderService.pendingOrdersCount.toString(),
                     icon: Icons.pending_actions,
                     color: Colors.orange,
                   ),

@@ -111,7 +111,7 @@ class OrderSummaryWidget extends StatelessWidget {
                 ),
                 _buildSummaryItem(
                   'Pending Orders',
-                  orderService.pendingOrders.toString(),
+                  orderService.pendingOrdersCount.toString(),
                 ),
               ],
             ),

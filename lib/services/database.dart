@@ -338,12 +338,28 @@ class DatabaseService {
 
   Future<void> updateOrder(Order order) async {
     final db = await database;
-    await db.update(
-      tableOrders,
-      order.toMap(),
-      where: 'id = ?',
-      whereArgs: [order.id],
-    );
+    await db.transaction((txn) async {
+      // Update order status
+      await txn.update(
+        tableOrders,
+        {
+          'status': order.orderStatus,
+          'payment_status': order.paymentStatus,
+        },
+        where: 'id = ?',
+        whereArgs: [order.id],
+      );
+
+      // Update order items if needed
+      for (var item in order.items) {
+        await txn.update(
+          tableOrderItems,
+          item.toMap(),
+          where: 'id = ?',
+          whereArgs: [item.id],
+        );
+      }
+    });
   }
 
   Future<List<Map<String, dynamic>>> getOrdersByDateRange(
@@ -600,28 +616,15 @@ class DatabaseService {
     final db = await database;
     return await db.rawQuery('''
       SELECT 
-        o.id,
-        o.order_number,
-        o.customer_name,
-        o.total_amount,
-        o.status,
-        o.payment_status,
-        o.created_by,
-        o.created_at,
-        o.order_date,
+        o.*,
         oi.id as item_id,
         oi.product_id,
         oi.quantity,
         oi.unit_price,
         oi.selling_price,
-        oi.total_amount as item_total,
-        p.product_name,
-        p.buying_price,
-        COALESCE(p.product_name, 'Product not found') as product_name,
-        COALESCE(p.selling_price, oi.selling_price) as current_price
+        oi.total_amount as item_total
       FROM $tableOrders o
       LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
-      LEFT JOIN $tableProducts p ON oi.product_id = p.id
       WHERE o.status = ?
       ORDER BY o.created_at DESC
     ''', [status]);
@@ -784,32 +787,24 @@ class DatabaseService {
   // Add this method to get proper order counts
   Future<Map<String, dynamic>> getDashboardStats() async {
     final db = await database;
-    final now = DateTime.now();
+    final today = DateTime.now().toIso8601String().substring(0, 10);
     
-    // Get today's orders and sales
-    final todayStats = await db.rawQuery('''
-      SELECT 
-        COUNT(DISTINCT o.id) as order_count,
-        SUM(oi.quantity * oi.selling_price) as total_sales
-      FROM orders o
-      LEFT JOIN order_items oi ON o.id = oi.order_id
-      WHERE DATE(o.created_at) = DATE(?)
-    ''', [now.toIso8601String()]);
-
-    // Get total orders and sales
-    final totalStats = await db.rawQuery('''
-      SELECT 
-        COUNT(DISTINCT o.id) as order_count,
-        SUM(oi.quantity * oi.selling_price) as total_sales
-      FROM orders o
-      LEFT JOIN order_items oi ON o.id = oi.order_id
-    ''');
+    final results = await db.rawQuery('''
+      SELECT
+        COUNT(CASE WHEN DATE(created_at) = ? AND status = 'COMPLETED' THEN 1 END) as today_orders,
+        SUM(CASE WHEN DATE(created_at) = ? AND status = 'COMPLETED' THEN total_amount ELSE 0 END) as today_sales,
+        COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as total_orders,
+        SUM(CASE WHEN status = 'COMPLETED' THEN total_amount ELSE 0 END) as total_sales,
+        COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending_orders
+      FROM $tableOrders
+    ''', [today, today]);
 
     return {
-      'today_orders': todayStats.first['order_count'] ?? 0,
-      'today_sales': todayStats.first['total_sales'] ?? 0.0,
-      'total_orders': totalStats.first['order_count'] ?? 0,
-      'total_sales': totalStats.first['total_sales'] ?? 0.0,
+      'today_orders': results.first['today_orders'] ?? 0,
+      'today_sales': results.first['today_sales'] ?? 0.0,
+      'total_orders': results.first['total_orders'] ?? 0,
+      'total_sales': results.first['total_sales'] ?? 0.0,
+      'pending_orders': results.first['pending_orders'] ?? 0,
     };
   }
 
