@@ -46,29 +46,16 @@ class _SalesScreenState extends State<SalesScreen> {
         // Convert grouped orders to Order objects
         final List<Order> combinedOrders = groupedOrders.entries.map((entry) {
           final firstOrder = entry.value.first;
-          return Order(
-            id: firstOrder['id'],
-            orderNumber: firstOrder['order_number'],
-            productId: firstOrder['product_id'],
-            quantity: firstOrder['quantity'],
-            sellingPrice: firstOrder['selling_price'].toDouble(),
-            buyingPrice: firstOrder['buying_price'].toDouble(),
-            totalAmount: firstOrder['total_amount'].toDouble(),
-            customerName: firstOrder['customer_name'],
-            orderStatus: firstOrder['status'] ?? 'PENDING',
-            paymentStatus: firstOrder['payment_status'] ?? 'PENDING',
-            createdBy: firstOrder['created_by'],
-            createdAt: DateTime.parse(firstOrder['created_at']),
-            orderDate: DateTime.parse(firstOrder['order_date']),
-            items: entry.value.map((o) => OrderItem(
-              productId: o['product_id'],
-              quantity: o['quantity'],
-              price: o['selling_price'].toDouble(),
-              total: o['total_amount'].toDouble(),
-              sellingPrice: o['selling_price'].toDouble(),
-              totalAmount: o['total_amount'].toDouble(),
-            )).toList(),
-          );
+          final orderItems = entry.value.map((o) => OrderItem(
+            orderId: o['id'],
+            productId: o['product_id'],
+            quantity: o['quantity'],
+            unitPrice: o['unit_price']?.toDouble() ?? 0.0,
+            sellingPrice: o['selling_price']?.toDouble() ?? 0.0,
+            totalAmount: o['total_amount']?.toDouble() ?? 0.0,
+          )).toList();
+
+          return Order.fromMap(firstOrder, orderItems);
         }).toList();
 
         setState(() {
@@ -101,16 +88,30 @@ class _SalesScreenState extends State<SalesScreen> {
       final db = await DatabaseService.instance.database;
       
       await db.transaction((txn) async {
+        // First create updated order with new status
+        final updatedOrder = Order(
+          id: order.id,
+          orderNumber: order.orderNumber,
+          totalAmount: order.totalAmount,
+          customerName: order.customerName,
+          orderStatus: 'COMPLETED',
+          paymentStatus: order.paymentStatus,
+          createdBy: order.createdBy,
+          createdAt: order.createdAt,
+          orderDate: order.orderDate,
+          items: order.items,
+        );
+
         // Update order status
         await txn.update(
           'orders',
-          {'status': 'COMPLETED'},
+          {'status': updatedOrder.orderStatus},
           where: 'order_number = ?',
-          whereArgs: [order.orderNumber],
+          whereArgs: [updatedOrder.orderNumber],
         );
         
-        // Update product quantities in the same transaction
-        for (final item in order.items ?? []) {
+        // Update product quantities
+        for (final item in updatedOrder.items) {
           await txn.rawUpdate('''
             UPDATE products 
             SET quantity = quantity - ?
@@ -148,18 +149,33 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Future<void> _completeSale(Order order) async {
     try {
-      order.orderStatus = 'COMPLETED';
-      await DatabaseService.instance.updateOrder(order);
+      // Create new order instance with updated status
+      final updatedOrder = Order(
+        id: order.id,
+        orderNumber: order.orderNumber,
+        totalAmount: order.totalAmount,
+        customerName: order.customerName,
+        orderStatus: 'COMPLETED',
+        paymentStatus: order.paymentStatus,
+        createdBy: order.createdBy,
+        createdAt: order.createdAt,
+        orderDate: order.orderDate,
+        items: order.items,
+      );
+
+      await DatabaseService.instance.updateOrder(updatedOrder);
       
       // Log sale completion
       await DatabaseService.instance.logActivity({
         'user_id': AuthService.instance.currentUser!.id!,
         'action': 'complete_sale',
-        'details': 'Completed sale #${order.orderNumber}, amount: ${order.totalAmount}',
+        'details': 'Completed sale #${updatedOrder.orderNumber}, amount: ${updatedOrder.totalAmount}',
         'timestamp': DateTime.now().toIso8601String(),
       });
       
-      // ... rest of sale completion code ...
+      // Refresh orders list
+      await _loadPendingOrders();
+      
     } catch (e) {
       print('Error completing sale: $e');
     }

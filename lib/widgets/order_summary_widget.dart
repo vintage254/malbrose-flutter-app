@@ -49,20 +49,16 @@ class OrderSummaryWidget extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final orderData = orderService.recentOrders[index];
                     // Convert Map to Order object using fromMap
-                    final order = Order(
-                      id: orderData['id'],
-                      orderNumber: orderData['order_number'],
-                      productId: orderData['product_id'] ?? 0,
-                      quantity: orderData['quantity'] ?? 0,
-                      sellingPrice: (orderData['selling_price'] as num?)?.toDouble() ?? 0.0,
-                      buyingPrice: (orderData['buying_price'] as num?)?.toDouble() ?? 0.0,
-                      totalAmount: (orderData['total_amount'] as num?)?.toDouble() ?? 0.0,
-                      customerName: orderData['customer_name'],
-                      orderStatus: orderData['status'] ?? 'PENDING',
-                      createdBy: orderData['created_by'] ?? 1,
-                      createdAt: DateTime.parse(orderData['created_at']),
-                      orderDate: DateTime.parse(orderData['order_date']),
-                    );
+                    final orderItems = orderData['items']?.map<OrderItem>((item) => OrderItem(
+                      orderId: orderData['id'],
+                      productId: item['product_id'],
+                      quantity: item['quantity'],
+                      unitPrice: (item['unit_price'] as num).toDouble(),
+                      sellingPrice: (item['selling_price'] as num).toDouble(),
+                      totalAmount: (item['total_amount'] as num).toDouble(),
+                    )).toList() ?? [];
+
+                    final order = Order.fromMap(orderData, orderItems);
 
                     return Card(
                       margin: const EdgeInsets.only(bottom: 8),

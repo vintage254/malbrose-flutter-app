@@ -4,6 +4,8 @@ import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/models/user_model.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:flutter/foundation.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:convert'; // For utf8 encoding
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
@@ -30,6 +32,10 @@ class DatabaseService {
   static const String actionLogin = 'login';
   static const String actionLogout = 'logout';
 
+  // Add these admin privilege constants at the top of DatabaseService class
+  static const String ROLE_ADMIN = 'ADMIN';
+  static const String PERMISSION_FULL_ACCESS = 'FULL_ACCESS';
+
   DatabaseService._init();
 
   Future<Database> get database async {
@@ -41,17 +47,60 @@ class DatabaseService {
     final databasePath = await getDatabasesPath();
     final path = join(databasePath, 'malbrose_db.db');
 
-    return await openDatabase(
-      path,
-      version: 1,
-      onCreate: _createTables,
-    );
+    print('Database path: $path');
+
+    try {
+      return await openDatabase(
+        path,
+        version: 6, 
+        onCreate: _createTables,
+        onUpgrade: _onUpgrade,
+        readOnly: false,
+      );
+    } catch (e) {
+      print('Database initialization error: $e');
+      // Handle the error appropriately, e.g., rethrow or return a default database
+      throw Exception('Failed to initialize the database: $e');
+    }
   }
 
   Future<void> _createTables(Database db, int version) async {
-    // Create products table
+    // First create users table since it's referenced by others
     await db.execute('''
-      CREATE TABLE $tableProducts (
+      CREATE TABLE IF NOT EXISTS $tableUsers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password TEXT NOT NULL,
+        full_name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_login TEXT,
+        permissions TEXT NOT NULL
+      )
+    ''');
+
+    // Check if admin exists before creating
+    final hasAdmin = await _adminExists(db);
+    
+    if (!hasAdmin) {
+      String plainPassword = 'admin123';
+      String hashedPassword = _hashPassword(plainPassword);
+
+      await db.insert(tableUsers, {
+        'username': 'admin',
+        'password': hashedPassword,
+        'full_name': 'System Administrator',
+        'email': 'admin@example.com',
+        'role': ROLE_ADMIN,
+        'created_at': DateTime.now().toIso8601String(),
+        'permissions': PERMISSION_FULL_ACCESS,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+
+    // Create other tables with IF NOT EXISTS
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableProducts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         image TEXT,
         supplier TEXT NOT NULL,
@@ -64,56 +113,43 @@ class DatabaseService {
         created_by INTEGER,
         updated_by INTEGER,
         updated_at TEXT,
-        FOREIGN KEY (created_by) REFERENCES users (id),
-        FOREIGN KEY (updated_by) REFERENCES users (id)
-      )
-    ''');
-
-    // Create users table
-    await db.execute('''
-      CREATE TABLE $tableUsers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL UNIQUE,
-        password TEXT NOT NULL,
-        full_name TEXT NOT NULL,
-        email TEXT NOT NULL,
-        role TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        last_login TEXT
+        FOREIGN KEY (created_by) REFERENCES $tableUsers (id),
+        FOREIGN KEY (updated_by) REFERENCES $tableUsers (id)
       )
     ''');
 
     // Create orders table
     await db.execute('''
-      CREATE TABLE $tableOrders (
+      CREATE TABLE IF NOT EXISTS $tableOrders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         order_number TEXT NOT NULL UNIQUE,
-        customer_name TEXT NOT NULL,
+        customer_name TEXT,
         total_amount REAL NOT NULL,
-        order_status TEXT NOT NULL,
-        payment_status TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        payment_status TEXT NOT NULL DEFAULT 'PENDING',
         created_by INTEGER NOT NULL,
         created_at TEXT NOT NULL,
-        FOREIGN KEY (created_by) REFERENCES users (id)
+        order_date TEXT NOT NULL,
+        FOREIGN KEY (created_by) REFERENCES $tableUsers (id)
       )
     ''');
 
     // Create activity logs table
     await db.execute('''
-      CREATE TABLE $tableActivityLogs (
+      CREATE TABLE IF NOT EXISTS $tableActivityLogs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         username TEXT NOT NULL,
         action TEXT NOT NULL,
         details TEXT NOT NULL,
         timestamp TEXT NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES users (id)
+        FOREIGN KEY (user_id) REFERENCES $tableUsers (id)
       )
     ''');
 
     // Create creditors table
     await db.execute('''
-      CREATE TABLE $tableCreditors (
+      CREATE TABLE IF NOT EXISTS $tableCreditors (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         balance REAL NOT NULL,
@@ -126,7 +162,7 @@ class DatabaseService {
 
     // Create debtors table
     await db.execute('''
-      CREATE TABLE $tableDebtors (
+      CREATE TABLE IF NOT EXISTS $tableDebtors (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         balance REAL NOT NULL,
@@ -136,6 +172,54 @@ class DatabaseService {
         last_updated TEXT
       )
     ''');
+
+    // Create order_items table with proper relations
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableOrderItems (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity INTEGER NOT NULL,
+        unit_price REAL NOT NULL,
+        selling_price REAL NOT NULL,
+        total_amount REAL NOT NULL,
+        FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES $tableProducts (id),
+        UNIQUE(order_id, product_id)
+      )
+    ''');
+  }
+
+  String _hashPassword(String password) {
+    // Convert the password to bytes
+    var bytes = utf8.encode(password); // Convert to UTF-8
+    var digest = sha256.convert(bytes); // Hash the password
+    return digest.toString(); // Return the hashed password as a string
+  }
+
+  // Migration logic
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    try {
+      // Backup existing data
+      final existingUsers = await db.query(tableUsers);
+      
+      // Create missing tables if needed
+      await _createTables(db, newVersion);
+      
+      // Restore users if needed
+      if (existingUsers.isNotEmpty) {
+        for (var user in existingUsers) {
+          user.remove('id'); // Let SQLite handle auto-increment
+          await db.insert(
+            tableUsers,
+            user,
+            conflictAlgorithm: ConflictAlgorithm.ignore,
+          );
+        }
+      }
+    } catch (e) {
+      print('Error during database upgrade: $e');
+    }
   }
 
   // User related methods
@@ -301,14 +385,25 @@ class DatabaseService {
 
   // Product related methods
   Future<Map<String, dynamic>?> getProductById(int id) async {
-    final db = await database;
-    final results = await db.query(
-      tableProducts,
-      where: 'id = ?',
-      whereArgs: [id],
-      limit: 1,
-    );
-    return results.isNotEmpty ? results.first : null;
+    try {
+      final db = await database;
+      final results = await db.rawQuery('''
+        SELECT 
+          p.*,
+          COALESCE(p.product_name, 'Unknown Product') as product_name,
+          COALESCE(p.selling_price, 0.0) as selling_price,
+          COALESCE(p.buying_price, 0.0) as buying_price,
+          COALESCE(p.quantity, 0) as quantity
+        FROM $tableProducts p
+        WHERE p.id = ?
+        LIMIT 1
+      ''', [id]);
+      
+      return results.isNotEmpty ? results.first : null;
+    } catch (e) {
+      print('Error getting product by id: $e');
+      return null;
+    }
   }
 
   Future<void> updateProduct(Map<String, dynamic> product) async {
@@ -484,8 +579,9 @@ class DatabaseService {
         'password': AuthService.instance.hashPassword('Account@2024'),
         'full_name': 'System Administrator',
         'email': 'admin@example.com',
-        'role': 'ADMIN',
+        'role': ROLE_ADMIN,
         'created_at': DateTime.now().toIso8601String(),
+        'permissions': PERMISSION_FULL_ACCESS,
       });
     }
   }
@@ -503,9 +599,29 @@ class DatabaseService {
   Future<List<Map<String, dynamic>>> getOrdersByStatus(String status) async {
     final db = await database;
     return await db.rawQuery('''
-      SELECT o.*, oi.product_id, oi.quantity, oi.selling_price, oi.total_amount
+      SELECT 
+        o.id,
+        o.order_number,
+        o.customer_name,
+        o.total_amount,
+        o.status,
+        o.payment_status,
+        o.created_by,
+        o.created_at,
+        o.order_date,
+        oi.id as item_id,
+        oi.product_id,
+        oi.quantity,
+        oi.unit_price,
+        oi.selling_price,
+        oi.total_amount as item_total,
+        p.product_name,
+        p.buying_price,
+        COALESCE(p.product_name, 'Product not found') as product_name,
+        COALESCE(p.selling_price, oi.selling_price) as current_price
       FROM $tableOrders o
-      LEFT JOIN order_items oi ON o.id = oi.order_id
+      LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
+      LEFT JOIN $tableProducts p ON oi.product_id = p.id
       WHERE o.status = ?
       ORDER BY o.created_at DESC
     ''', [status]);
@@ -517,29 +633,55 @@ class DatabaseService {
     
     int orderId = 0;
     await db.transaction((txn) async {
-      // Create the order
-      orderId = await txn.insert(tableOrders, order.toMap());
-      
-      // Insert order items
+      // First create the order
+      orderId = await txn.insert(tableOrders, {
+        'order_number': order.orderNumber,
+        'customer_name': order.customerName,
+        'total_amount': order.totalAmount,
+        'status': order.orderStatus ?? 'PENDING',
+        'payment_status': order.paymentStatus ?? 'PENDING',
+        'created_by': currentUser?.id ?? 0,
+        'created_at': DateTime.now().toIso8601String(),
+        'order_date': order.orderDate.toIso8601String(),
+      });
+
+      // Then create the order items
       if (order.items != null) {
         for (var item in order.items!) {
-          await txn.insert(tableOrderItems, {
-            'order_id': orderId,
-            'product_id': item.productId,
-            'quantity': item.quantity,
-            'selling_price': item.sellingPrice,
-            'total_amount': item.totalAmount,
-          });
+          // Get product details first
+          final product = await txn.query(
+            tableProducts,
+            where: 'id = ?',
+            whereArgs: [item.productId],
+            limit: 1,
+          );
+
+          if (product.isNotEmpty) {
+            await txn.insert(tableOrderItems, {
+              'order_id': orderId,
+              'product_id': item.productId,
+              'quantity': item.quantity,
+              'unit_price': product.first['selling_price'],
+              'selling_price': item.sellingPrice,
+              'total_amount': item.totalAmount,
+            });
+
+            // Update product quantity
+            await txn.rawUpdate('''
+              UPDATE $tableProducts 
+              SET quantity = quantity - ?
+              WHERE id = ?
+            ''', [item.quantity, item.productId]);
+          }
         }
       }
 
       // Log the activity
       if (currentUser != null) {
-        final totalItems = order.items?.fold(0, (sum, item) => sum + item.quantity) ?? 0;
         await logActivity({
           'user_id': currentUser.id!,
-          'action': 'create_order',
-          'details': 'Created order #$orderId with $totalItems items. Total: KSH ${order.totalAmount.toStringAsFixed(2)}',
+          'action': actionCreateOrder,
+          'details': 'Created order #${order.orderNumber}',
         });
       }
     });
@@ -745,5 +887,68 @@ class DatabaseService {
       
       await batch.commit(noResult: true);
     });
+  }
+
+  // Add a method to check admin privileges
+  Future<bool> isUserAdmin(int userId) async {
+    final db = await database;
+    final results = await db.query(
+      tableUsers,
+      where: 'id = ? AND role = ?',
+      whereArgs: [userId, ROLE_ADMIN],
+      limit: 1,
+    );
+    return results.isNotEmpty;
+  }
+
+  // Add a method to verify admin permissions
+  Future<bool> hasAdminPrivileges(int userId) async {
+    try {
+      final db = await database;
+      final user = await db.query(
+        tableUsers,
+        columns: ['role', 'permissions'],
+        where: 'id = ? AND role = ? AND permissions = ?',
+        whereArgs: [userId, ROLE_ADMIN, PERMISSION_FULL_ACCESS],
+        limit: 1,
+      );
+      
+      return user.isNotEmpty;
+    } catch (e) {
+      print('Error checking admin privileges: $e');
+      return false;
+    }
+  }
+
+  // Add a method to verify specific admin permissions
+  Future<bool> hasPermission(int userId, String permission) async {
+    try {
+      final db = await database;
+      final user = await db.query(
+        tableUsers,
+        columns: ['permissions'],
+        where: 'id = ? AND role = ?',
+        whereArgs: [userId, ROLE_ADMIN],
+        limit: 1,
+      );
+      
+      if (user.isEmpty) return false;
+      final permissions = user.first['permissions'] as String;
+      return permissions == PERMISSION_FULL_ACCESS || permissions.contains(permission);
+    } catch (e) {
+      print('Error checking permission: $e');
+      return false;
+    }
+  }
+
+  // Add this method to check for existing admin user
+  Future<bool> _adminExists(Database db) async {
+    final result = await db.query(
+      tableUsers,
+      where: 'username = ? AND role = ?',
+      whereArgs: ['admin', ROLE_ADMIN],
+      limit: 1,
+    );
+    return result.isNotEmpty;
   }
 }

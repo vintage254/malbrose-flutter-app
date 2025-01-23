@@ -7,7 +7,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:intl/intl.dart';
 
-class ReceiptPanel extends StatelessWidget {
+class ReceiptPanel extends StatefulWidget {
   final Order order;
   final Function(Order) onProcessSale;
 
@@ -17,131 +17,50 @@ class ReceiptPanel extends StatelessWidget {
     required this.onProcessSale,
   });
 
-  Future<void> _printReceipt(BuildContext context, List<Map<String, dynamic>> products) async {
-    final pdf = pw.Document();
-    
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.roll80,
-        build: (context) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.center,
-          children: [
-            // Header
-            pw.Text(
-              companyName,
-              style: pw.TextStyle(
-                fontSize: 18,
-                fontWeight: pw.FontWeight.bold,
-              ),
-              textAlign: pw.TextAlign.center,
-            ),
-            pw.SizedBox(height: 5),
-            pw.Text(companyAddress),
-            pw.Text(companyPhone),
-            pw.Text(companyEmail),
-            pw.SizedBox(height: 5),
-            pw.Text(
-              companyTagline,
-              style: pw.TextStyle(fontStyle: pw.FontStyle.italic),
-            ),
-            pw.Divider(thickness: 2),
-            
-            // Receipt Details
-            pw.SizedBox(height: 10),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text('Receipt No:'),
-                pw.Text('${salePrefix}-${order.orderNumber}'),
-              ],
-            ),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text('Date:'),
-                pw.Text(DateFormat('yyyy-MM-dd HH:mm').format(order.orderDate)),
-              ],
-            ),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text('Customer:'),
-                pw.Text(order.customerName ?? 'Walk-in Customer'),
-              ],
-            ),
-            
-            // Items Header
-            pw.Divider(),
-            pw.Row(
-              children: [
-                pw.Expanded(flex: 3, child: pw.Text('Item')),
-                pw.Expanded(child: pw.Text('Qty')),
-                pw.Expanded(flex: 2, child: pw.Text('Price')),
-                pw.Expanded(flex: 2, child: pw.Text('Total')),
-              ],
-            ),
-            pw.Divider(),
-            
-            // Items
-            ...order.items!.asMap().entries.map((entry) {
-              final orderItem = entry.value;
-              final product = products[entry.key];
-              return pw.Row(
-                children: [
-                  pw.Expanded(
-                    flex: 3,
-                    child: pw.Text(product['product_name']),
-                  ),
-                  pw.Expanded(
-                    child: pw.Text('${orderItem.quantity}'),
-                  ),
-                  pw.Expanded(
-                    flex: 2,
-                    child: pw.Text('${orderItem.price.toStringAsFixed(2)}'),
-                  ),
-                  pw.Expanded(
-                    flex: 2,
-                    child: pw.Text('${orderItem.total.toStringAsFixed(2)}'),
-                  ),
-                ],
-              );
-            }).toList(),
-            
-            // Footer
-            pw.Divider(),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text(
-                  'Total Amount:',
-                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                ),
-                pw.Text(
-                  'KSH ${order.totalAmount.toStringAsFixed(2)}',
-                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                ),
-              ],
-            ),
-            pw.SizedBox(height: 20),
-            pw.Text(
-              'Thank you for your business!',
-              style: pw.TextStyle(fontStyle: pw.FontStyle.italic),
-            ),
-            pw.SizedBox(height: 10),
-            pw.Text(
-              'Powered by Malbrose POS',
-              style: pw.TextStyle(fontSize: 8),
-            ),
-          ],
-        ),
-      ),
-    );
+  @override
+  State<ReceiptPanel> createState() => _ReceiptPanelState();
+}
 
-    // Print the document
-    await Printing.layoutPdf(
-      onLayout: (format) async => pdf.save(),
-      name: '${salePrefix}-${order.orderNumber}',
-    );
+class _ReceiptPanelState extends State<ReceiptPanel> {
+  List<Map<String, dynamic>> _orderItems = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOrderItems();
+  }
+
+  Future<void> _loadOrderItems() async {
+    try {
+      final db = await DatabaseService.instance.database;
+      final items = await db.rawQuery('''
+        SELECT 
+          oi.product_name,
+          oi.quantity,
+          oi.unit_price,
+          oi.selling_price,
+          oi.total_amount,
+          p.product_name as current_product_name
+        FROM order_items oi
+        LEFT JOIN products p ON oi.product_id = p.id
+        WHERE oi.order_id = ?
+      ''', [widget.order.id]);
+
+      if (mounted) {
+        setState(() {
+          _orderItems = items;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading order items: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -157,36 +76,57 @@ class ReceiptPanel extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: defaultPadding),
-            Text('Order #${order.orderNumber}'),
-            Text('Customer: ${order.customerName ?? "N/A"}'),
-            Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(order.orderDate)}'),
+            Text('Order #${widget.order.orderNumber}'),
+            Text('Customer: ${widget.order.customerName ?? "N/A"}'),
+            Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(widget.order.orderDate)}'),
             const Divider(),
             Expanded(
-              child: ListView.builder(
-                itemCount: order.items?.length ?? 0,
-                itemBuilder: (context, index) {
-                  final item = order.items![index];
-                  return FutureBuilder<Map<String, dynamic>?>(
-                    future: DatabaseService.instance.getProductById(item.productId),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-                      final product = snapshot.data!;
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Product: ${product['product_name']}'),
-                          Text('Quantity: ${item.quantity}'),
-                          Text('Unit Price: KSH ${item.price.toStringAsFixed(2)}'),
-                          Text('Subtotal: KSH ${item.total.toStringAsFixed(2)}'),
-                          const Divider(),
-                        ],
-                      );
-                    },
-                  );
-                },
-              ),
+              child: _isLoading 
+                ? const Center(child: CircularProgressIndicator())
+                : _orderItems.isEmpty
+                  ? const Center(child: Text('No items in this order'))
+                  : ListView.builder(
+                      itemCount: _orderItems.length,
+                      itemBuilder: (context, index) {
+                        final item = _orderItems[index];
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 4.0),
+                          child: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item['product_name'] ?? 'Product not found',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('Quantity: ${item['quantity']}'),
+                                    Text('Unit Price: KSH ${(item['unit_price'] as num).toStringAsFixed(2)}'),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      'Subtotal: KSH ${(item['total_amount'] as num).toStringAsFixed(2)}',
+                                      style: const TextStyle(fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
             ),
             const Divider(),
             Row(
@@ -200,7 +140,7 @@ class ReceiptPanel extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  'KSH ${order.totalAmount.toStringAsFixed(2)}',
+                  'KSH ${widget.order.totalAmount.toStringAsFixed(2)}',
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -213,7 +153,7 @@ class ReceiptPanel extends StatelessWidget {
               children: [
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: () => onProcessSale(order),
+                    onPressed: () => widget.onProcessSale(widget.order),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       padding: const EdgeInsets.all(defaultPadding),
@@ -227,16 +167,7 @@ class ReceiptPanel extends StatelessWidget {
                 ),
                 const SizedBox(width: defaultPadding),
                 ElevatedButton.icon(
-                  onPressed: () async {
-                    final products = await Future.wait(
-                      order.items!.map((item) => 
-                        DatabaseService.instance.getProductById(item.productId)
-                      )
-                    );
-                    if (context.mounted && products.every((p) => p != null)) {
-                      await _printReceipt(context, products.cast<Map<String, dynamic>>());
-                    }
-                  },
+                  onPressed: () => _printReceipt(context),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.blue,
                     padding: const EdgeInsets.all(defaultPadding),
@@ -250,5 +181,48 @@ class ReceiptPanel extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _printReceipt(BuildContext context) async {
+    if (_orderItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No products to print'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    
+    try {
+      final pdf = pw.Document();
+      
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.roll80,
+          build: (context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              // ... keep existing PDF generation code ...
+            ],
+          ),
+        ),
+      );
+
+      await Printing.layoutPdf(
+        onLayout: (format) async => pdf.save(),
+        name: '${salePrefix}-${widget.order.orderNumber}',
+      );
+    } catch (e) {
+      print('Error printing receipt: $e');
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error printing receipt: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 }

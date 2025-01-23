@@ -340,47 +340,39 @@ class _OrderScreenState extends State<OrderScreen> {
       final currentUser = AuthService.instance.currentUser;
       if (currentUser == null) throw Exception('User not logged in');
 
-      // Get database instance once
       final db = await DatabaseService.instance.database;
       
-      // Create batch for multiple inserts
-      final batch = db.batch();
+      await db.transaction((txn) async {
+        // First create the order
+        final orderId = await txn.insert('orders', {
+          'order_number': orderNumber,
+          'customer_name': _customerNameController.text.trim(),
+          'total_amount': _cartItems.fold<double>(0, (sum, item) => sum + item.total),
+          'status': 'PENDING',
+          'payment_status': 'PENDING',
+          'created_by': currentUser.id!,
+          'created_at': now.toIso8601String(),
+          'order_date': now.toIso8601String(),
+        });
 
-      // Prepare all orders in batch
-      for (final item in _cartItems) {
-        final order = Order(
-          orderNumber: orderNumber,
-          productId: item.product.id!,
-          quantity: item.quantity,
-          sellingPrice: item.product.sellingPrice,
-          buyingPrice: item.product.buyingPrice,
-          totalAmount: item.total,
-          createdBy: currentUser.id!,
-          orderDate: now,
-          createdAt: now,
-          paymentStatus: 'PENDING',
-          orderStatus: 'PENDING',
-          customerName: _customerNameController.text.trim(),
-        );
-        
-        // Add order to batch
-        batch.insert(
-          'orders',
-          order.toMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-      }
+        // Then create the order items
+        for (final item in _cartItems) {
+          await txn.insert('order_items', {
+            'order_id': orderId,
+            'product_id': item.product.id!,
+            'quantity': item.quantity,
+            'unit_price': item.product.buyingPrice,
+            'selling_price': item.product.sellingPrice,
+            'total_amount': item.total,
+          });
+        }
+      });
 
-      // Commit all operations at once
-      await batch.commit(noResult: true);
-
-      // Clear the cart and update UI after successful batch
       setState(() {
         _cartItems.clear();
         _customerNameController.clear();
       });
 
-      // Show receipt and notify listeners
       if (!mounted) return;
       _showOrderReceipt(orderNumber);
       OrderService.instance.notifyOrderUpdate();
@@ -389,78 +381,6 @@ class _OrderScreenState extends State<OrderScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error placing order: $e')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  Future<void> _createOrder() async {
-    if (_cartItems.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cart is empty')),
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    try {
-      final currentUser = AuthService.instance.currentUser;
-      if (currentUser == null) throw Exception('User not logged in');
-
-      final orderNumber = 'ORD${DateTime.now().millisecondsSinceEpoch}';
-      final now = DateTime.now();
-
-      // Get database instance once
-      final db = await DatabaseService.instance.database;
-      
-      // Use a single transaction for all orders
-      await db.transaction((txn) async {
-      for (var item in _cartItems) {
-        final order = Order(
-          orderNumber: orderNumber,
-          productId: item.product.id!,
-          quantity: item.quantity,
-          sellingPrice: item.product.sellingPrice,
-          buyingPrice: item.product.buyingPrice,
-          totalAmount: item.total,
-          customerName: _customerNameController.text.trim(),
-          createdBy: currentUser.id!,
-          createdAt: now,
-          orderDate: now,
-          orderStatus: 'PENDING',
-          paymentStatus: 'PENDING',
-        );
-        
-          // Use transaction object for database operations
-          await DatabaseService.instance.createOrderWithTransaction(order, txn);
-        }
-      });
-
-      // Clear cart and notify after successful transaction
-      OrderService.instance.notifyOrderUpdate();
-      setState(() {
-        _cartItems.clear();
-        _customerNameController.clear();
-      });
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Order created successfully'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error creating order: $e'),
-          backgroundColor: Colors.red,
-        ),
       );
     } finally {
       if (mounted) {
