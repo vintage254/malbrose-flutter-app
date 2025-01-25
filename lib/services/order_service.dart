@@ -38,9 +38,8 @@ class OrderService extends ChangeNotifier {
       _totalSales = (stats['total_sales'] as num).toDouble();
       _pendingOrdersCount = stats['pending_orders'] as int;
       
-      // Get recent and pending orders
-      _recentOrders = await DatabaseService.instance.getOrdersByStatus('COMPLETED');
-      _pendingOrders = await DatabaseService.instance.getOrdersByStatus('PENDING');
+      // Use new method to get all recent orders
+      _recentOrders = await DatabaseService.instance.getRecentOrders();
       
       notifyListeners();
     } catch (e) {

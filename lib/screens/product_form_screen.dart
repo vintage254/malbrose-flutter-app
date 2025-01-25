@@ -27,6 +27,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   final DateTime _receivedDate = DateTime.now();
   XFile? _imageFile;
   final ImagePicker _picker = ImagePicker();
+  final _subUnitNameController = TextEditingController();
+  final _subUnitQuantityController = TextEditingController();
+  final _subUnitPriceController = TextEditingController();
+  bool _hasSubUnits = false;
 
   @override
   void initState() {
@@ -38,6 +42,12 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       _sellingPriceController.text = widget.product!.sellingPrice.toString();
       _quantityController.text = widget.product!.quantity.toString();
       _descriptionController.text = widget.product!.description ?? '';
+      _hasSubUnits = widget.product!.hasSubUnits;
+      if (_hasSubUnits) {
+        _subUnitNameController.text = widget.product!.subUnitName ?? '';
+        _subUnitQuantityController.text = widget.product!.subUnitQuantity?.toString() ?? '';
+        _subUnitPriceController.text = widget.product!.subUnitPrice?.toString() ?? '';
+      }
       if (widget.product!.image != null) {
         _imageFile = XFile(widget.product!.image!);
       }
@@ -207,6 +217,66 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                   maxLines: 3,
                 ),
                 const SizedBox(height: defaultPadding),
+                SwitchListTile(
+                  title: const Text('Has Sub Units'),
+                  subtitle: const Text('e.g., Box of nails sold individually'),
+                  value: _hasSubUnits,
+                  onChanged: (bool value) {
+                    setState(() {
+                      _hasSubUnits = value;
+                    });
+                  },
+                ),
+                if (_hasSubUnits) ...[
+                  TextFormField(
+                    controller: _subUnitNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Sub Unit Name',
+                      hintText: 'e.g., piece, nail, packet',
+                    ),
+                    validator: _hasSubUnits ? (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter sub unit name';
+                      }
+                      return null;
+                    } : null,
+                  ),
+                  TextFormField(
+                    controller: _subUnitQuantityController,
+                    decoration: const InputDecoration(
+                      labelText: 'Number of Sub Units',
+                      hintText: 'e.g., 300 nails in a box',
+                    ),
+                    keyboardType: TextInputType.number,
+                    validator: _hasSubUnits ? (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter number of sub units';
+                      }
+                      if (int.tryParse(value) == null || int.parse(value) <= 0) {
+                        return 'Please enter a valid number';
+                      }
+                      return null;
+                    } : null,
+                  ),
+                  TextFormField(
+                    controller: _subUnitPriceController,
+                    decoration: const InputDecoration(
+                      labelText: 'Price per Sub Unit',
+                      hintText: 'e.g., 2 KSH per nail',
+                    ),
+                    keyboardType: TextInputType.number,
+                    validator: _hasSubUnits ? (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter price per sub unit';
+                      }
+                      if (double.tryParse(value) == null || double.parse(value) <= 0) {
+                        return 'Please enter a valid price';
+                      }
+                      return null;
+                    } : null,
+                  ),
+                ],
+                const SizedBox(height: defaultPadding),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
@@ -267,6 +337,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         sellingPrice: double.parse(_sellingPriceController.text),
         quantity: int.parse(_quantityController.text),
         description: _descriptionController.text,
+        hasSubUnits: _hasSubUnits,
+        subUnitName: _subUnitNameController.text,
+        subUnitQuantity: _subUnitQuantityController.text.isEmpty ? null : int.parse(_subUnitQuantityController.text),
+        subUnitPrice: _subUnitPriceController.text.isEmpty ? null : double.parse(_subUnitPriceController.text),
           createdBy: widget.product!.createdBy,
           updatedBy: currentUser.id,
         );
@@ -283,6 +357,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           sellingPrice: double.parse(_sellingPriceController.text),
           quantity: int.parse(_quantityController.text),
           description: _descriptionController.text,
+          hasSubUnits: _hasSubUnits,
+          subUnitName: _subUnitNameController.text,
+          subUnitQuantity: _subUnitQuantityController.text.isEmpty ? null : int.parse(_subUnitQuantityController.text),
+          subUnitPrice: _subUnitPriceController.text.isEmpty ? null : double.parse(_subUnitPriceController.text),
           createdBy: currentUser.id,
         );
 
@@ -321,6 +399,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     _sellingPriceController.dispose();
     _quantityController.dispose();
     _descriptionController.dispose();
+    _subUnitNameController.dispose();
+    _subUnitQuantityController.dispose();
+    _subUnitPriceController.dispose();
     super.dispose();
   }
 }

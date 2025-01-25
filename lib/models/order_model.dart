@@ -61,6 +61,7 @@ class OrderItem {
   final double unitPrice;
   final double sellingPrice;
   final double totalAmount;
+  final String? productName;
 
   OrderItem({
     this.id,
@@ -70,6 +71,7 @@ class OrderItem {
     required this.unitPrice,
     required this.sellingPrice,
     required this.totalAmount,
+    this.productName,
   });
 
   Map<String, dynamic> toMap() {
@@ -93,6 +95,7 @@ class OrderItem {
       unitPrice: (map['unit_price'] as num).toDouble(),
       sellingPrice: (map['selling_price'] as num).toDouble(),
       totalAmount: (map['total_amount'] as num).toDouble(),
+      productName: map['product_name'],
     );
   }
 } 

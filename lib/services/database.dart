@@ -52,7 +52,7 @@ class DatabaseService {
     try {
       return await openDatabase(
         path,
-        version: 6, 
+        version: 9, 
         onCreate: _createTables,
         onUpgrade: _onUpgrade,
         readOnly: false,
@@ -110,6 +110,10 @@ class DatabaseService {
         selling_price REAL NOT NULL,
         quantity INTEGER NOT NULL,
         description TEXT,
+        has_sub_units INTEGER DEFAULT 0,
+        sub_unit_quantity INTEGER,
+        sub_unit_price REAL,
+        sub_unit_name TEXT,
         created_by INTEGER,
         updated_by INTEGER,
         updated_at TEXT,
@@ -216,6 +220,13 @@ class DatabaseService {
             conflictAlgorithm: ConflictAlgorithm.ignore,
           );
         }
+      }
+
+      if (oldVersion < 9) {
+        await db.execute('ALTER TABLE $tableProducts ADD COLUMN has_sub_units INTEGER DEFAULT 0');
+        await db.execute('ALTER TABLE $tableProducts ADD COLUMN sub_unit_quantity INTEGER');
+        await db.execute('ALTER TABLE $tableProducts ADD COLUMN sub_unit_price REAL');
+        await db.execute('ALTER TABLE $tableProducts ADD COLUMN sub_unit_name TEXT');
       }
     } catch (e) {
       print('Error during database upgrade: $e');
@@ -345,6 +356,7 @@ class DatabaseService {
         {
           'status': order.orderStatus,
           'payment_status': order.paymentStatus,
+          'total_amount': order.totalAmount,
         },
         where: 'id = ?',
         whereArgs: [order.id],
@@ -352,12 +364,14 @@ class DatabaseService {
 
       // Update order items if needed
       for (var item in order.items) {
-        await txn.update(
-          tableOrderItems,
-          item.toMap(),
-          where: 'id = ?',
-          whereArgs: [item.id],
-        );
+        if (item.id != null) {
+          await txn.update(
+            tableOrderItems,
+            item.toMap(),
+            where: 'id = ?',
+            whereArgs: [item.id],
+          );
+        }
       }
     });
   }
@@ -380,11 +394,30 @@ class DatabaseService {
 
   Future<List<Map<String, dynamic>>> getRecentOrders() async {
     final db = await database;
-    return await db.query(
-      tableOrders,
-      orderBy: 'created_at DESC',
-      limit: 5,
-    );
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    
+    try {
+      return await db.rawQuery('''
+        SELECT 
+          o.*,
+          oi.id as item_id,
+          oi.product_id,
+          oi.quantity,
+          oi.unit_price,
+          oi.selling_price,
+          oi.total_amount as item_total,
+          p.product_name
+        FROM $tableOrders o
+        LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
+        LEFT JOIN $tableProducts p ON oi.product_id = p.id
+        WHERE o.status IN ('PENDING', 'COMPLETED')
+          AND date(o.created_at) = ?
+        ORDER BY o.created_at DESC
+      ''', [today]);
+    } catch (e) {
+      print('Error fetching recent orders: $e');
+      return [];
+    }
   }
 
   Future<void> updateOrderStatus(String orderNumber, String status) async {
@@ -622,69 +655,30 @@ class DatabaseService {
         oi.quantity,
         oi.unit_price,
         oi.selling_price,
-        oi.total_amount as item_total
+        oi.total_amount as item_total,
+        p.product_name,
+        p.product_name as item_product_name
       FROM $tableOrders o
       LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
+      LEFT JOIN $tableProducts p ON oi.product_id = p.id
       WHERE o.status = ?
-      ORDER BY o.created_at DESC
+      ORDER BY o.created_at DESC, oi.id ASC
     ''', [status]);
   }
 
   Future<int> createOrder(Order order) async {
     final db = await database;
-    final currentUser = AuthService.instance.currentUser;
-    
     int orderId = 0;
+    
     await db.transaction((txn) async {
-      // First create the order
-      orderId = await txn.insert(tableOrders, {
-        'order_number': order.orderNumber,
-        'customer_name': order.customerName,
-        'total_amount': order.totalAmount,
-        'status': order.orderStatus ?? 'PENDING',
-        'payment_status': order.paymentStatus ?? 'PENDING',
-        'created_by': currentUser?.id ?? 0,
-        'created_at': DateTime.now().toIso8601String(),
-        'order_date': order.orderDate.toIso8601String(),
-      });
-
-      // Then create the order items
-      if (order.items != null) {
-        for (var item in order.items!) {
-          // Get product details first
-          final product = await txn.query(
-            tableProducts,
-            where: 'id = ?',
-            whereArgs: [item.productId],
-            limit: 1,
-          );
-
-          if (product.isNotEmpty) {
-            await txn.insert(tableOrderItems, {
-              'order_id': orderId,
-              'product_id': item.productId,
-              'quantity': item.quantity,
-              'unit_price': product.first['selling_price'],
-              'selling_price': item.sellingPrice,
-              'total_amount': item.totalAmount,
-            });
-
-            // Update product quantity
-            await txn.rawUpdate('''
-              UPDATE $tableProducts 
-              SET quantity = quantity - ?
-              WHERE id = ?
-            ''', [item.quantity, item.productId]);
-          }
-        }
-      }
-
-      // Log the activity
-      if (currentUser != null) {
-        await logActivity({
-          'user_id': currentUser.id!,
-          'action': actionCreateOrder,
-          'details': 'Created order #${order.orderNumber}',
+      // Create order
+      orderId = await txn.insert(tableOrders, order.toMap());
+      
+      // Create order items
+      for (var item in order.items) {
+        await txn.insert(tableOrderItems, {
+          ...item.toMap(),
+          'order_id': orderId,
         });
       }
     });
@@ -945,5 +939,30 @@ class DatabaseService {
       limit: 1,
     );
     return result.isNotEmpty;
+  }
+
+  // Update the getOrderItems method
+  Future<List<Map<String, dynamic>>> getOrderItems(int orderId) async {
+    final db = await database;
+    try {
+      return await db.rawQuery('''
+        SELECT 
+          oi.id,
+          oi.order_id,
+          oi.product_id,
+          oi.quantity,
+          oi.unit_price,
+          oi.selling_price,
+          oi.total_amount,
+          p.product_name
+        FROM $tableOrderItems oi
+        LEFT JOIN $tableProducts p ON oi.product_id = p.id
+        WHERE oi.order_id = ?
+        ORDER BY oi.id ASC
+      ''', [orderId]);
+    } catch (e) {
+      print('Error getting order items: $e');
+      return [];
+    }
   }
 }

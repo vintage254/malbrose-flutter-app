@@ -53,6 +53,7 @@ class _SalesScreenState extends State<SalesScreen> {
             unitPrice: o['unit_price']?.toDouble() ?? 0.0,
             sellingPrice: o['selling_price']?.toDouble() ?? 0.0,
             totalAmount: o['total_amount']?.toDouble() ?? 0.0,
+            productName: o['product_name'],
           )).toList();
 
           return Order.fromMap(firstOrder, orderItems);
@@ -194,7 +195,7 @@ class _SalesScreenState extends State<SalesScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Customer: ${order.customerName ?? "N/A"}'),
-            Text('Items: ${order.items?.length ?? 1}'),
+            Text('Items: ${order.items.map((item) => item.productName ?? "Unknown").join(", ")}'),
           ],
         ),
         trailing: Text(

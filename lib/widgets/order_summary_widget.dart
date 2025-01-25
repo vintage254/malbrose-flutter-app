@@ -5,8 +5,28 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 
-class OrderSummaryWidget extends StatelessWidget {
+class OrderSummaryWidget extends StatefulWidget {
   const OrderSummaryWidget({super.key});
+
+  @override
+  State<OrderSummaryWidget> createState() => _OrderSummaryWidgetState();
+}
+
+class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels == _scrollController.position.maxScrollExtent) {
+      // Load more orders if needed
+      // Currently showing all for the day, so no need to load more
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,7 +46,7 @@ class OrderSummaryWidget extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Recent Orders',
+            'Today\'s Orders',
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               color: Colors.white,
               fontWeight: FontWeight.bold,
@@ -39,23 +59,26 @@ class OrderSummaryWidget extends StatelessWidget {
                 if (orderService.recentOrders.isEmpty) {
                   return const Center(
                     child: Text(
-                      'No recent orders',
+                      'No orders today',
                       style: TextStyle(color: Colors.white),
                     ),
                   );
                 }
                 return ListView.builder(
+                  controller: _scrollController,
                   itemCount: orderService.recentOrders.length,
                   itemBuilder: (context, index) {
                     final orderData = orderService.recentOrders[index];
-                    // Convert Map to Order object using fromMap
-                    final orderItems = orderData['items']?.map<OrderItem>((item) => OrderItem(
+                    
+                    // Safely handle order items
+                    final orderItems = (orderData['items'] as List?)?.map((item) => OrderItem(
                       orderId: orderData['id'],
                       productId: item['product_id'],
                       quantity: item['quantity'],
                       unitPrice: (item['unit_price'] as num).toDouble(),
                       sellingPrice: (item['selling_price'] as num).toDouble(),
                       totalAmount: (item['total_amount'] as num).toDouble(),
+                      productName: item['product_name'],
                     )).toList() ?? [];
 
                     final order = Order.fromMap(orderData, orderItems);
@@ -69,7 +92,19 @@ class OrderSummaryWidget extends StatelessWidget {
                               ? Colors.green
                               : Colors.orange,
                         ),
-                        title: Text('Order #${order.orderNumber}'),
+                        title: Row(
+                          children: [
+                            Text('Order #${order.orderNumber}'),
+                            const Spacer(),
+                            Text(
+                              DateFormat('HH:mm').format(order.createdAt),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
                         subtitle: Text(
                           'Customer: ${order.customerName ?? "N/A"}\n'
                           'Status: ${order.orderStatus}',
@@ -119,6 +154,12 @@ class OrderSummaryWidget extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Widget _buildSummaryItem(String label, String value) {

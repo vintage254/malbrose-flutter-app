@@ -33,20 +33,16 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
 
   Future<void> _loadOrderItems() async {
     try {
-      final db = await DatabaseService.instance.database;
-      final items = await db.rawQuery('''
-        SELECT 
-          oi.product_name,
-          oi.quantity,
-          oi.unit_price,
-          oi.selling_price,
-          oi.total_amount,
-          p.product_name as current_product_name
-        FROM order_items oi
-        LEFT JOIN products p ON oi.product_id = p.id
-        WHERE oi.order_id = ?
-      ''', [widget.order.id]);
+      if (widget.order.id == null) {
+        setState(() {
+          _orderItems = [];
+          _isLoading = false;
+        });
+        return;
+      }
 
+      final items = await DatabaseService.instance.getOrderItems(widget.order.id!);
+      
       if (mounted) {
         setState(() {
           _orderItems = items;
@@ -57,6 +53,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       print('Error loading order items: $e');
       if (mounted) {
         setState(() {
+          _orderItems = [];
           _isLoading = false;
         });
       }
