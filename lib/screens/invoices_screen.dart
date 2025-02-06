@@ -20,11 +20,14 @@ class InvoicesScreen extends StatefulWidget {
 }
 
 class _InvoicesScreenState extends State<InvoicesScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  DateTime? _startDate;
+  DateTime? _endDate;
   Customer? _selectedCustomer;
+  List<Map<String, dynamic>> _invoiceData = [];
+  bool _isLoading = false;
   List<Customer> _customers = [];
   List<Invoice> _invoices = [];
-  bool _isLoading = true;
-  final _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -39,7 +42,6 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
       if (mounted) {
         setState(() {
           _customers = customersData.map((map) => Customer.fromMap(map)).toList();
-          _isLoading = false;
         });
       }
     } catch (e) {
@@ -68,6 +70,26 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
     }
   }
 
+  Future<void> _loadInvoiceData() async {
+    if (_selectedCustomer == null) return;
+    
+    setState(() => _isLoading = true);
+    try {
+      final data = await DatabaseService.instance.getCustomerInvoiceData(
+        customerId: _selectedCustomer!.id!,
+        startDate: _startDate,
+        endDate: _endDate,
+      );
+      setState(() => _invoiceData = data);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _generateInvoice() async {
     if (_selectedCustomer == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -91,15 +113,20 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
           orderId: order['id'] as int,
           productId: order['product_id'] as int,
           quantity: order['quantity'] as int,
+          unitPrice: (order['unit_price'] as num).toDouble(),
           sellingPrice: (order['selling_price'] as num).toDouble(),
+          adjustedPrice: (order['adjusted_price'] as num?)?.toDouble() ?? 
+                         (order['selling_price'] as num).toDouble(),
           totalAmount: (order['total_amount'] as num).toDouble(),
           productName: order['product_name'] as String,
+          isSubUnit: (order['is_sub_unit'] as int?) == 1,
+          subUnitName: order['sub_unit_name'] as String?,
         )).toList(),
       );
 
       await DatabaseService.instance.createInvoice(invoice);
       await _loadInvoices();
-
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Invoice generated successfully')),

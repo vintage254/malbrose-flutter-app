@@ -14,6 +14,7 @@ class Product {
   final String? subUnitName;
   final int? createdBy;
   final int? updatedBy;
+  final String? category;
 
   Product({
     this.id,
@@ -31,6 +32,7 @@ class Product {
     this.subUnitName,
     this.createdBy,
     this.updatedBy,
+    this.category,
   });
 
   Map<String, dynamic> toMap() {
@@ -50,26 +52,28 @@ class Product {
       'sub_unit_name': subUnitName,
       'created_by': createdBy,
       'updated_by': updatedBy,
+      'category': category,
     };
   }
 
   factory Product.fromMap(Map<String, dynamic> map) {
     return Product(
-      id: map['id'],
-      image: map['image'],
-      supplier: map['supplier'],
-      receivedDate: DateTime.parse(map['received_date']),
-      productName: map['product_name'],
-      buyingPrice: map['buying_price'],
-      sellingPrice: map['selling_price'],
-      quantity: map['quantity'],
-      description: map['description'],
+      id: map['id'] as int?,
+      image: map['image'] as String?,
+      supplier: map['supplier'] as String,
+      receivedDate: DateTime.parse(map['received_date'] as String),
+      productName: map['product_name'] as String,
+      buyingPrice: (map['buying_price'] as num).toDouble(),
+      sellingPrice: (map['selling_price'] as num).toDouble(),
+      quantity: (map['quantity'] as num).toInt(),
+      description: map['description'] as String?,
       hasSubUnits: map['has_sub_units'] == 1,
-      subUnitQuantity: map['sub_unit_quantity'],
-      subUnitPrice: map['sub_unit_price'],
-      subUnitName: map['sub_unit_name'],
-      createdBy: map['created_by'],
-      updatedBy: map['updated_by'],
+      subUnitQuantity: (map['sub_unit_quantity'] as num?)?.toInt(),
+      subUnitPrice: map['sub_unit_price'] as double?,
+      subUnitName: map['sub_unit_name'] as String?,
+      createdBy: map['created_by'] as int?,
+      updatedBy: map['updated_by'] as int?,
+      category: map['category'] as String?,
     );
   }
 }

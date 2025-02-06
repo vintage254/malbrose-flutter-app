@@ -238,7 +238,8 @@ class _OrderScreenState extends State<OrderScreen> {
           Expanded(
             flex: 2,
             child: OrderCartPanel(
-              items: _cartItems,
+              initialItems: _cartItems,
+              customerName: _customerNameController.text,
               onRemoveItem: _removeFromCart,
               onPlaceOrder: _handlePlaceOrder,
               onClearCart: _clearCart,
@@ -252,7 +253,7 @@ class _OrderScreenState extends State<OrderScreen> {
   Widget _buildProductCard(Product product) {
     return Card(
       child: InkWell(
-        onTap: () => _addToOrder(product),
+        onTap: () => _showOrderDialog(product),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -273,20 +274,69 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
-  void _addToOrder(Product product) {
+  void _showOrderDialog(Product product) {
+    if (product.hasSubUnits) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Select Unit Type'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: Text('Full ${product.productName}'),
+                subtitle: Text('KSH ${product.sellingPrice}'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showQuantityDialog(product, false, product.sellingPrice);
+                },
+              ),
+              if (product.subUnitPrice != null)
+                ListTile(
+                  title: Text('Per ${product.subUnitName ?? "piece"}'),
+                  subtitle: Text('KSH ${product.subUnitPrice}'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showQuantityDialog(product, true, product.subUnitPrice!);
+                  },
+                ),
+            ],
+          ),
+        ),
+      );
+    } else {
+      _showQuantityDialog(product, false, product.sellingPrice);
+    }
+  }
+
+  void _showQuantityDialog(Product product, bool isSubUnit, double defaultPrice) {
     final quantityController = TextEditingController();
+    final priceController = TextEditingController(text: defaultPrice.toString());
+    final maxQuantity = isSubUnit ? 
+        (product.quantity * (product.subUnitQuantity ?? 1)) : 
+        product.quantity;
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Place Order'),
+        title: Text('Add ${product.productName}'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Product: ${product.productName}'),
-            const SizedBox(height: defaultPadding),
             TextField(
               controller: quantityController,
-              decoration: const InputDecoration(labelText: 'Quantity'),
+              decoration: InputDecoration(
+                labelText: 'Quantity (Max: $maxQuantity)',
+                suffix: Text(isSubUnit ? product.subUnitName ?? 'pieces' : 'units'),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            TextField(
+              controller: priceController,
+              decoration: const InputDecoration(
+                labelText: 'Price per unit',
+                prefixText: 'KSH ',
+              ),
               keyboardType: TextInputType.number,
             ),
           ],
@@ -299,8 +349,13 @@ class _OrderScreenState extends State<OrderScreen> {
           ElevatedButton(
             onPressed: () {
               final quantity = int.tryParse(quantityController.text);
-              if (quantity != null && quantity > 0) {
-                _addToCart(product, quantity);
+              final price = double.tryParse(priceController.text);
+              
+              if (quantity != null && quantity > 0 && quantity <= maxQuantity &&
+                  price != null && price > 0) {
+                setState(() {
+                  _addToCart(product, quantity, isSubUnit, isSubUnit ? product.subUnitName : null);
+                });
                 Navigator.pop(context);
               }
             },
@@ -309,12 +364,6 @@ class _OrderScreenState extends State<OrderScreen> {
         ],
       ),
     );
-  }
-
-  void _addToCart(Product product, int quantity) {
-    setState(() {
-      _cartItems.add(CartItem(product: product, quantity: quantity));
-    });
   }
 
   void _removeFromCart(int index) {
@@ -326,6 +375,19 @@ class _OrderScreenState extends State<OrderScreen> {
   void _clearCart() {
     setState(() {
       _cartItems.clear();
+    });
+  }
+
+  void _addToCart(Product product, int quantity, bool isSubUnit, String? selectedSubUnit) {
+    setState(() {
+      _cartItems.add(CartItem(
+        product: product,
+        quantity: quantity,
+        total: quantity * product.sellingPrice,
+        isSubUnit: isSubUnit,
+        subUnitName: selectedSubUnit,
+        subUnitQuantity: isSubUnit ? product.subUnitQuantity : null,
+      ));
     });
   }
 

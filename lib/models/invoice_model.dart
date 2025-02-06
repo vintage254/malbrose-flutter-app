@@ -45,7 +45,11 @@ class Invoice {
           ? DateTime.parse(map['due_date'] as String)
           : null,
       items: map['items'] != null 
-          ? (map['items'] as List).map((item) => OrderItem.fromMap(item as Map<String, dynamic>)).toList()
+          ? List<OrderItem>.from(
+              (map['items'] as List).map((item) => 
+                OrderItem.fromMap(item as Map<String, dynamic>)
+              )
+            )
           : null,
     );
   }

@@ -61,10 +61,23 @@ class InvoicePreviewWidget extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(width: defaultPadding),
-          Text(value),
+          Flexible(
+            flex: 2,
+            child: Text(
+              label, 
+              style: const TextStyle(fontWeight: FontWeight.bold)
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            flex: 3,
+            child: Text(
+              value,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );

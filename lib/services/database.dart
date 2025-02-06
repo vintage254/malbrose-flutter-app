@@ -6,10 +6,13 @@ import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert'; // For utf8 encoding
+import 'package:synchronized/synchronized.dart';
+import 'package:my_flutter_app/models/invoice_model.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
   static Database? _database;
+  final _lock = Lock();
 
   // Table Names
   static const String tableProducts = 'products';
@@ -19,6 +22,8 @@ class DatabaseService {
   static const String tableCreditors = 'creditors';
   static const String tableDebtors = 'debtors';
   static const String tableOrderItems = 'order_items';
+  static const String tableCustomers = 'customers';
+  static const String tableInvoices = 'invoices';
 
   // Add these constants at the top of the DatabaseService class
   static const String actionCreateOrder = 'create_order';
@@ -43,23 +48,53 @@ class DatabaseService {
     return _database!;
   }
 
+  Future<T> withTransaction<T>(Future<T> Function(Transaction txn) action) async {
+    return await _lock.synchronized(() async {
+      final db = await database;
+      return await db.transaction((txn) async {
+        return await action(txn);
+      });
+    });
+  }
+
   Future<Database> _initDatabase() async {
     final databasePath = await getDatabasesPath();
     final path = join(databasePath, 'malbrose_db.db');
 
-    print('Database path: $path');
-
     try {
-      return await openDatabase(
+      // Delete existing database if it's corrupted
+      if (await databaseExists(path)) {
+        try {
+          final db = await openDatabase(path, readOnly: true);
+          await db.close();
+        } catch (e) {
+          print('Database corrupted, recreating...');
+          await deleteDatabase(path);
+        }
+      }
+
+      // Open database with write permissions
+      final db = await openDatabase(
         path,
-        version: 9, 
+        version: 12,
         onCreate: _createTables,
         onUpgrade: _onUpgrade,
         readOnly: false,
+        singleInstance: true, // Ensure single database instance
+        onConfigure: (db) async {
+          await db.execute('PRAGMA journal_mode=WAL');
+          await db.execute('PRAGMA synchronous=NORMAL');
+          await db.execute('PRAGMA busy_timeout=10000');
+        },
       );
+      
+      // Verify write access
+      await db.execute('PRAGMA journal_mode=WAL'); // Enable Write-Ahead Logging
+      await db.execute('PRAGMA foreign_keys=ON');
+      
+      return db;
     } catch (e) {
       print('Database initialization error: $e');
-      // Handle the error appropriately, e.g., rethrow or return a default database
       throw Exception('Failed to initialize the database: $e');
     }
   }
@@ -133,6 +168,7 @@ class DatabaseService {
         payment_status TEXT NOT NULL DEFAULT 'PENDING',
         created_by INTEGER NOT NULL,
         created_at TEXT NOT NULL,
+        updated_at TEXT,
         order_date TEXT NOT NULL,
         FOREIGN KEY (created_by) REFERENCES $tableUsers (id)
       )
@@ -186,10 +222,39 @@ class DatabaseService {
         quantity INTEGER NOT NULL,
         unit_price REAL NOT NULL,
         selling_price REAL NOT NULL,
+        adjusted_price REAL,
         total_amount REAL NOT NULL,
+        is_sub_unit INTEGER DEFAULT 0,
+        sub_unit_name TEXT,
         FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
-        FOREIGN KEY (product_id) REFERENCES $tableProducts (id),
-        UNIQUE(order_id, product_id)
+        FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
+      )
+    ''');
+
+    // Create customers table
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableCustomers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+      )
+    ''');
+
+    // Create invoices table
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableInvoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_number TEXT NOT NULL UNIQUE,
+        customer_id INTEGER NOT NULL,
+        total_amount REAL NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        due_date TEXT,
+        FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
       )
     ''');
   }
@@ -328,16 +393,20 @@ class DatabaseService {
 
   Future<void> logActivity(Map<String, dynamic> activity) async {
     final db = await database;
-    final user = await getUserById(activity['user_id'] as int);
-    if (user != null) {
-      final logEntry = {
-        'user_id': user['id'],
-        'username': user['username'],
-        'action': activity['action'],
-        'details': activity['details'],
-        'timestamp': DateTime.now().toIso8601String(),
-      };
-      await db.insert(tableActivityLogs, logEntry);
+    try {
+      // Get the username for the current user
+      final user = await getUserById(activity['user_id'] as int);
+      if (user == null) {
+        throw Exception('User not found for logging activity');
+      }
+
+      // Add username to the activity log
+      activity['username'] = user['username'] as String;
+      
+      await db.insert(tableActivityLogs, activity);
+    } catch (e) {
+      print('Error logging activity: $e');
+      rethrow;
     }
   }
 
@@ -400,18 +469,23 @@ class DatabaseService {
       return await db.rawQuery('''
         SELECT 
           o.*,
-          oi.id as item_id,
-          oi.product_id,
-          oi.quantity,
-          oi.unit_price,
-          oi.selling_price,
-          oi.total_amount as item_total,
-          p.product_name
+          GROUP_CONCAT(json_object(
+            'product_id', oi.product_id,
+            'quantity', oi.quantity,
+            'unit_price', oi.unit_price,
+            'selling_price', oi.selling_price,
+            'adjusted_price', oi.adjusted_price,
+            'total_amount', oi.total_amount,
+            'product_name', p.product_name,
+            'is_sub_unit', oi.is_sub_unit,
+            'sub_unit_name', oi.sub_unit_name
+          )) as items_json
         FROM $tableOrders o
         LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
         LEFT JOIN $tableProducts p ON oi.product_id = p.id
         WHERE o.status IN ('PENDING', 'COMPLETED')
           AND date(o.created_at) = ?
+        GROUP BY o.order_number
         ORDER BY o.created_at DESC
       ''', [today]);
     } catch (e) {
@@ -484,27 +558,45 @@ class DatabaseService {
     await db.insert(tableProducts, product);
   }
 
-  Future<void> updateProductQuantity(
-    int productId,
-    int quantity,
-    {bool subtract = false}
-  ) async {
+  Future<void> updateProductQuantity(int productId, num quantity, bool isSubUnit, bool isDeducting) async {
     final db = await database;
     await db.transaction((txn) async {
-      final product = await txn.query(
-        'products',
-        where: 'id = ?',
-        whereArgs: [productId],
-        limit: 1,
-      );
+      final product = await getProductById(productId);
+      if (product == null) {
+        throw Exception('Product not found');
+      }
 
-      if (product.isEmpty) throw Exception('Product not found');
+      final currentQuantity = (product['quantity'] as num).toDouble();
+      final subUnitQuantity = (product['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
 
-      final currentQuantity = product.first['quantity'] as int;
-      final newQuantity = subtract ? currentQuantity - quantity : currentQuantity + quantity;
+      // Calculate actual quantity to update based on sub-units
+      double quantityToUpdate;
+      if (isSubUnit) {
+        // Convert sub-units to whole units
+        quantityToUpdate = quantity.toDouble() / subUnitQuantity;
+      } else {
+        quantityToUpdate = quantity.toDouble();
+      }
+
+      // Verify stock availability
+      if (isDeducting) {
+        final availableQuantity = currentQuantity * (isSubUnit ? subUnitQuantity : 1);
+        if (availableQuantity < quantity) {
+          throw Exception(
+            'Insufficient stock for ${product['product_name']}. '
+            'Available: ${(availableQuantity).toStringAsFixed(2)} '
+            '${isSubUnit ? (product['sub_unit_name'] ?? 'pieces') : 'units'}'
+          );
+        }
+      }
+
+      // Update quantity
+      final newQuantity = isDeducting 
+          ? currentQuantity - quantityToUpdate 
+          : currentQuantity + quantityToUpdate;
 
       await txn.update(
-        'products',
+        tableProducts,
         {'quantity': newQuantity},
         where: 'id = ?',
         whereArgs: [productId],
@@ -590,8 +682,9 @@ class DatabaseService {
   }
 
   Future<void> addDebtor(Map<String, dynamic> debtor) async {
-    final db = await database;
-    await db.insert(tableDebtors, debtor);
+    await withTransaction((txn) async {
+      await txn.insert(tableDebtors, debtor);
+    });
   }
 
   // Stats related methods
@@ -656,7 +749,10 @@ class DatabaseService {
         oi.unit_price,
         oi.selling_price,
         oi.total_amount as item_total,
+        oi.is_sub_unit,
+        oi.sub_unit_name,
         p.product_name,
+        p.sub_unit_quantity,
         p.product_name as item_product_name
       FROM $tableOrders o
       LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
@@ -671,15 +767,78 @@ class DatabaseService {
     int orderId = 0;
     
     await db.transaction((txn) async {
-      // Create order
+      // First, validate all items have sufficient stock
+      for (var item in order.items) {
+        final product = await getProductById(item.productId);
+        if (product == null) {
+          throw Exception('Product not found: ${item.productId}');
+        }
+
+        final wholeUnits = (product['quantity'] as num).toDouble();
+        final subUnitsPerUnit = (product['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
+        final totalSubUnitsAvailable = wholeUnits * subUnitsPerUnit;
+
+        if (item.isSubUnit && item.quantity > totalSubUnitsAvailable) {
+          throw Exception(
+            'Insufficient stock for ${product['product_name']}. '
+            'Available: ${totalSubUnitsAvailable.floor()} ${product['sub_unit_name'] ?? 'pieces'}'
+          );
+        }
+      }
+
+      // If all validations pass, create order
       orderId = await txn.insert(tableOrders, order.toMap());
       
-      // Create order items
+      // Create order items and update stock
       for (var item in order.items) {
         await txn.insert(tableOrderItems, {
           ...item.toMap(),
           'order_id': orderId,
         });
+
+        if (item.isSubUnit) {
+          final product = await getProductById(item.productId);
+          if (product != null) {
+            final currentWholeUnits = (product['quantity'] as num).toDouble();
+            final subUnitsPerUnit = (product['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
+            
+            // Calculate how many whole units will be affected
+            int remainingSubUnits = item.quantity;
+            double newWholeUnits = currentWholeUnits;
+            
+            // Sequential deduction
+            while (remainingSubUnits > 0) {
+              if (subUnitsPerUnit <= remainingSubUnits) {
+                // Deduct a whole unit
+                newWholeUnits -= 1;
+                remainingSubUnits -= subUnitsPerUnit.toInt();
+              } else {
+                // Partial unit deduction
+                newWholeUnits -= (remainingSubUnits / subUnitsPerUnit);
+                remainingSubUnits = 0;
+              }
+            }
+
+            // Update product quantity
+            await txn.update(
+              tableProducts,
+              {'quantity': newWholeUnits},
+              where: 'id = ?',
+              whereArgs: [item.productId],
+            );
+          }
+        } else {
+          // Handle regular unit deduction
+          final product = await getProductById(item.productId);
+          if (product != null) {
+            await txn.update(
+              tableProducts,
+              {'quantity': (product['quantity'] as num).toDouble() - item.quantity},
+              where: 'id = ?',
+              whereArgs: [item.productId],
+            );
+          }
+        }
       }
     });
     
@@ -781,25 +940,34 @@ class DatabaseService {
   // Add this method to get proper order counts
   Future<Map<String, dynamic>> getDashboardStats() async {
     final db = await database;
-    final today = DateTime.now().toIso8601String().substring(0, 10);
+    final today = DateTime.now().toIso8601String().split('T')[0];
     
-    final results = await db.rawQuery('''
-      SELECT
-        COUNT(CASE WHEN DATE(created_at) = ? AND status = 'COMPLETED' THEN 1 END) as today_orders,
-        SUM(CASE WHEN DATE(created_at) = ? AND status = 'COMPLETED' THEN total_amount ELSE 0 END) as today_sales,
-        COUNT(CASE WHEN status = 'COMPLETED' THEN 1 END) as total_orders,
-        SUM(CASE WHEN status = 'COMPLETED' THEN total_amount ELSE 0 END) as total_sales,
-        COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending_orders
-      FROM $tableOrders
-    ''', [today, today]);
+    try {
+      final results = await db.rawQuery('''
+        SELECT
+          COUNT(CASE WHEN DATE(created_at) = ? AND status = 'COMPLETED' THEN 1 END) as completed_orders,
+          SUM(CASE WHEN DATE(created_at) = ? AND status = 'COMPLETED' THEN total_amount ELSE 0 END) as total_sales,
+          COUNT(CASE WHEN status = 'PENDING' THEN 1 END) as pending_orders,
+          COUNT(*) as total_orders
+        FROM $tableOrders
+        WHERE DATE(created_at) = ?
+      ''', [today, today, today]);
 
-    return {
-      'today_orders': results.first['today_orders'] ?? 0,
-      'today_sales': results.first['today_sales'] ?? 0.0,
-      'total_orders': results.first['total_orders'] ?? 0,
-      'total_sales': results.first['total_sales'] ?? 0.0,
-      'pending_orders': results.first['pending_orders'] ?? 0,
-    };
+      return {
+        'today_orders': results.first['completed_orders'] ?? 0,
+        'today_sales': results.first['total_sales'] ?? 0.0,
+        'pending_orders': results.first['pending_orders'] ?? 0,
+        'total_orders': results.first['total_orders'] ?? 0,
+      };
+    } catch (e) {
+      print('Error getting dashboard stats: $e');
+      return {
+        'today_orders': 0,
+        'today_sales': 0.0,
+        'pending_orders': 0,
+        'total_orders': 0,
+      };
+    }
   }
 
   Future<List<Map<String, dynamic>>> getPendingOrders() async {
@@ -964,5 +1132,228 @@ class DatabaseService {
       print('Error getting order items: $e');
       return [];
     }
+  }
+
+  Future<void> addUpdatedAtColumnToOrders() async {
+    final db = await database;
+    try {
+      // Check if updated_at column exists
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableOrders)');
+      bool hasUpdatedAtColumn = tableInfo.any((column) => column['name'] == 'updated_at');
+      
+      if (!hasUpdatedAtColumn) {
+        // Add updated_at column with default value
+        await db.execute('''
+          ALTER TABLE $tableOrders 
+          ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        ''');
+      }
+    } catch (e) {
+      print('Error adding updated_at column to orders: $e');
+    }
+  }
+
+  // Add a helper method to get current stock information
+  Future<Map<String, dynamic>> getProductStock(int productId) async {
+    final product = await getProductById(productId);
+    if (product == null) {
+      throw Exception('Product not found');
+    }
+
+    final wholeUnits = (product['quantity'] as num).toDouble();
+    final subUnitsPerUnit = (product['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
+    
+    final completeUnits = wholeUnits.floor();
+    final remainingSubUnits = ((wholeUnits - completeUnits) * subUnitsPerUnit).round();
+
+    return {
+      'whole_units': completeUnits,
+      'remaining_sub_units': remainingSubUnits,
+      'sub_units_per_unit': subUnitsPerUnit.toInt(),
+      'product_name': product['product_name'],
+      'sub_unit_name': product['sub_unit_name'],
+    };
+  }
+
+  Future<List<Map<String, dynamic>>> getCustomerInvoiceData({
+    required int customerId,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT 
+        c.name as customer_name,
+        o.order_number,
+        o.created_at,
+        oi.quantity,
+        oi.unit_price as buying_price,
+        oi.selling_price,
+        oi.total_amount,
+        p.product_name,
+        o.status
+      FROM $tableOrders o
+      JOIN $tableOrderItems oi ON o.id = oi.order_id
+      JOIN $tableProducts p ON oi.product_id = p.id
+      JOIN customers c ON o.customer_name = c.name
+      WHERE o.customer_id = ? 
+      AND o.status = 'COMPLETED'
+      ${startDate != null ? "AND date(o.created_at) >= date(?)" : ""}
+      ${endDate != null ? "AND date(o.created_at) <= date(?)" : ""}
+      ORDER BY o.created_at DESC
+    ''', [
+      customerId,
+      if (startDate != null) startDate.toIso8601String(),
+      if (endDate != null) endDate.toIso8601String(),
+    ]);
+  }
+
+  Future<List<Map<String, dynamic>>> getAllCustomers() async {
+    return await withTransaction((txn) async {
+      return await txn.query('customers');
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getAllInvoices() async {
+    final db = await database;
+    return await db.query('invoices', orderBy: 'created_at DESC');
+  }
+
+  Future<List<Map<String, dynamic>>> getOrdersByCustomerId(int customerId) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT 
+        o.*,
+        oi.id as item_id,
+        oi.product_id,
+        oi.quantity,
+        oi.unit_price,
+        oi.selling_price,
+        oi.adjusted_price,
+        oi.total_amount,
+        oi.is_sub_unit,
+        oi.sub_unit_name,
+        p.product_name,
+        c.name as customer_name
+      FROM $tableOrders o
+      JOIN $tableOrderItems oi ON o.id = oi.order_id
+      JOIN $tableProducts p ON oi.product_id = p.id
+      JOIN $tableCustomers c ON o.customer_name = c.name
+      WHERE c.id = ? AND o.status = 'COMPLETED'
+      ORDER BY o.created_at DESC
+    ''', [customerId]);
+  }
+
+  Future<double> calculateCustomerTotal(int customerId) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT SUM(total_amount) as total
+      FROM $tableOrders o
+      JOIN $tableCustomers c ON o.customer_name = c.name
+      WHERE c.id = ? AND o.status = 'COMPLETED'
+    ''', [customerId]);
+    return (result.first['total'] as num?)?.toDouble() ?? 0.0;
+  }
+
+  Future<void> createInvoice(Invoice invoice) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      // Insert invoice
+      final invoiceId = await txn.insert(tableInvoices, invoice.toMap());
+      
+      // Update orders status
+      if (invoice.items != null) {
+        for (var item in invoice.items!) {
+          await txn.update(
+            tableOrders,
+            {'status': 'INVOICED'},
+            where: 'id = ?',
+            whereArgs: [item.orderId],
+          );
+        }
+      }
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getSalesReport({
+    required DateTime startDate,
+    required DateTime endDate,
+    String? groupBy, // 'day', 'month', or 'year'
+  }) async {
+    final db = await database;
+    
+    String groupByClause = '';
+    String dateFormat = '';
+    
+    switch (groupBy?.toLowerCase()) {
+      case 'month':
+        dateFormat = '%Y-%m';
+        groupByClause = "strftime('%Y-%m', o.created_at)";
+        break;
+      case 'year':
+        dateFormat = '%Y';
+        groupByClause = "strftime('%Y', o.created_at)";
+        break;
+      default: // day
+        dateFormat = '%Y-%m-%d';
+        groupByClause = "date(o.created_at)";
+    }
+
+    try {
+      return await db.rawQuery('''
+        SELECT 
+          $groupByClause as date,
+          p.product_name,
+          SUM(oi.quantity) as total_quantity,
+          oi.unit_price as buying_price,
+          oi.selling_price,
+          SUM(oi.total_amount) as total_sales,
+          SUM(oi.quantity * oi.unit_price) as total_cost,
+          SUM(oi.total_amount - (oi.quantity * oi.unit_price)) as profit,
+          oi.is_sub_unit,
+          oi.sub_unit_name
+        FROM $tableOrders o
+        JOIN $tableOrderItems oi ON o.id = oi.order_id
+        JOIN $tableProducts p ON oi.product_id = p.id
+        WHERE o.status = 'COMPLETED'
+        AND date(o.created_at) BETWEEN date(?) AND date(?)
+        GROUP BY 
+          $groupByClause,
+          p.product_name,
+          oi.unit_price,
+          oi.selling_price,
+          oi.is_sub_unit,
+          oi.sub_unit_name
+        ORDER BY date DESC, p.product_name
+      ''', [
+        startDate.toIso8601String(),
+        endDate.toIso8601String(),
+      ]);
+    } catch (e) {
+      print('Error getting sales report: $e');
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>> getSalesSummary(
+    DateTime startDate,
+    DateTime endDate,
+  ) async {
+    return await withTransaction((txn) async {
+      final result = await txn.rawQuery('''
+        SELECT 
+          COUNT(*) as total_orders,
+          SUM(total_amount) as total_sales,
+          SUM(CASE WHEN payment_status = 'PAID' THEN total_amount ELSE 0 END) as paid_amount,
+          SUM(CASE WHEN payment_status = 'PENDING' THEN total_amount ELSE 0 END) as pending_amount
+        FROM orders 
+        WHERE created_at BETWEEN ? AND ?
+      ''', [
+        startDate.toIso8601String(),
+        endDate.toIso8601String(),
+      ]);
+
+      return result.first;
+    });
   }
 }

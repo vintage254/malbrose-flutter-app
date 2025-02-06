@@ -11,6 +11,8 @@ import 'package:my_flutter_app/screens/home_screen.dart';
 import 'package:my_flutter_app/screens/main_screen.dart';
 import 'package:my_flutter_app/screens/creditors_screen.dart';
 import 'package:my_flutter_app/screens/debtors_screen.dart';
+import 'package:my_flutter_app/screens/invoices_screen.dart';
+import 'package:my_flutter_app/screens/sales_report_screen.dart';
 import 'package:my_flutter_app/services/database.dart';
 
 void main() async {
@@ -62,6 +64,8 @@ class MyApp extends StatelessWidget {
         '/activity': (context) => const ActivityLogScreen(),
         '/creditors': (context) => const CreditorsScreen(),
         '/debtors': (context) => const DebtorsScreen(),
+        '/invoices': (context) => const InvoicesScreen(),
+        '/sales-report': (context) => const SalesReportScreen(),
       },
     );
   }

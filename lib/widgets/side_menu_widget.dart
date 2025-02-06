@@ -25,6 +25,7 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
       {'title': 'Products', 'icon': Icons.inventory, 'route': '/products'},
       {'title': 'Creditors', 'icon': Icons.account_balance_wallet, 'route': '/creditors'},
       {'title': 'Debtors', 'icon': Icons.money_off, 'route': '/debtors'},
+      {'title': 'Invoices', 'icon': Icons.receipt_long, 'route': '/invoices'},
     ];
 
     // Add admin-only menu items
@@ -33,6 +34,7 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
         {'title': 'Sales', 'icon': Icons.point_of_sale, 'route': '/sales'},
         {'title': 'Users', 'icon': Icons.people, 'route': '/users'},
         {'title': 'Activity Log', 'icon': Icons.history, 'route': '/activity'},
+        {'title': 'Sales Reports', 'icon': Icons.bar_chart, 'route': '/sales-report'},
       ]);
     }
 

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/services/database.dart';
@@ -6,6 +7,11 @@ import 'package:intl/intl.dart';
 class OrderService extends ChangeNotifier {
   static final OrderService instance = OrderService._internal();
   OrderService._internal();
+
+  // Add table definitions
+  static const String tableOrders = DatabaseService.tableOrders;
+  static const String tableOrderItems = DatabaseService.tableOrderItems;
+  static const String tableProducts = DatabaseService.tableProducts;
 
   // Private fields for tracking statistics
   int _todayOrders = 0;
@@ -29,22 +35,64 @@ class OrderService extends ChangeNotifier {
 
   Future<void> refreshStats() async {
     try {
-      final stats = await DatabaseService.instance.getDashboardStats();
-      
-      // Update statistics
-      _todayOrders = stats['today_orders'] as int;
-      _todaySales = (stats['today_sales'] as num).toDouble();
-      _totalOrders = stats['total_orders'] as int;
-      _totalSales = (stats['total_sales'] as num).toDouble();
-      _pendingOrdersCount = stats['pending_orders'] as int;
-      
-      // Use new method to get all recent orders
-      _recentOrders = await DatabaseService.instance.getRecentOrders();
+      await DatabaseService.instance.withTransaction((txn) async {
+        final todayStart = DateTime.now().copyWith(
+          hour: 0, 
+          minute: 0, 
+          second: 0, 
+          millisecond: 0
+        );
+        
+        // Get all stats in a single query with proper status filtering
+        final stats = await txn.rawQuery('''
+          SELECT 
+            (SELECT COUNT(*) FROM $tableOrders 
+             WHERE DATE(created_at) = DATE(?) 
+             AND status = 'COMPLETED') as completed_today,
+            (SELECT SUM(total_amount) FROM $tableOrders 
+             WHERE DATE(created_at) = DATE(?) 
+             AND status = 'COMPLETED') as today_sales,
+            (SELECT COUNT(*) FROM $tableOrders 
+             WHERE status = 'PENDING') as pending_count,
+            (SELECT COUNT(*) FROM $tableOrders) as total_orders,
+            (SELECT SUM(total_amount) FROM $tableOrders 
+             WHERE status = 'COMPLETED') as total_sales
+        ''', [
+          todayStart.toIso8601String(),
+          todayStart.toIso8601String(),
+        ]);
+        
+        final result = stats.first;
+        _todayOrders = result['completed_today'] as int? ?? 0;
+        _todaySales = result['today_sales'] as double? ?? 0.0;
+        _pendingOrdersCount = result['pending_count'] as int? ?? 0;
+        _totalOrders = result['total_orders'] as int? ?? 0;
+        _totalSales = result['total_sales'] as double? ?? 0.0;
+
+        // Get recent orders with detailed information
+        _recentOrders = await txn.rawQuery('''
+          SELECT 
+            o.*,
+            GROUP_CONCAT(json_object(
+              'product_id', oi.product_id,
+              'quantity', oi.quantity,
+              'unit_price', oi.unit_price,
+              'selling_price', oi.selling_price,
+              'total_amount', oi.total_amount,
+              'product_name', p.product_name
+            )) as items_json
+          FROM $tableOrders o
+          LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
+          LEFT JOIN $tableProducts p ON oi.product_id = p.id
+          WHERE DATE(o.created_at) = DATE(?)
+          GROUP BY o.id
+          ORDER BY o.created_at DESC
+        ''', [todayStart.toIso8601String()]);
+      });
       
       notifyListeners();
     } catch (e) {
-      print('Error refreshing stats: $e');
-      // Keep existing data on error
+      debugPrint('Error refreshing stats: $e');
     }
   }
 

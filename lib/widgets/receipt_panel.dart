@@ -6,6 +6,8 @@ import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:intl/intl.dart';
+import 'package:my_flutter_app/widgets/order_cart_panel.dart';
+import 'package:my_flutter_app/models/cart_item_model.dart';
 
 class ReceiptPanel extends StatefulWidget {
   final Order order;
@@ -62,122 +64,164 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(defaultPadding),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Order Details',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: defaultPadding),
-            Text('Order #${widget.order.orderNumber}'),
-            Text('Customer: ${widget.order.customerName ?? "N/A"}'),
-            Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(widget.order.orderDate)}'),
-            const Divider(),
-            Expanded(
-              child: _isLoading 
-                ? const Center(child: CircularProgressIndicator())
-                : _orderItems.isEmpty
-                  ? const Center(child: Text('No items in this order'))
-                  : ListView.builder(
-                      itemCount: _orderItems.length,
-                      itemBuilder: (context, index) {
-                        final item = _orderItems[index];
-                        return Card(
-                          margin: const EdgeInsets.symmetric(vertical: 4.0),
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  item['product_name'] ?? 'Product not found',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text('Quantity: ${item['quantity']}'),
-                                    Text('Unit Price: KSH ${(item['unit_price'] as num).toStringAsFixed(2)}'),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      'Subtotal: KSH ${(item['total_amount'] as num).toStringAsFixed(2)}',
-                                      style: const TextStyle(fontWeight: FontWeight.bold),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-            const Divider(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Total Amount:',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                Text(
-                  'KSH ${widget.order.totalAmount.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: defaultPadding),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () => widget.onProcessSale(widget.order),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      padding: const EdgeInsets.all(defaultPadding),
-                    ),
-                    icon: const Icon(Icons.check_circle),
-                    label: const Text(
-                      'Complete Sale',
-                      style: TextStyle(fontSize: 16),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: defaultPadding),
-                ElevatedButton.icon(
-                  onPressed: () => _printReceipt(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    padding: const EdgeInsets.all(defaultPadding),
-                  ),
-                  icon: const Icon(Icons.print),
-                  label: const Text('Print Receipt'),
-                ),
-              ],
-            ),
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.amber.withOpacity(0.7),
+            Colors.orange.shade900,
           ],
         ),
       ),
+      padding: const EdgeInsets.all(defaultPadding),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Order #${widget.order.orderNumber}',
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              if (widget.order.orderStatus == 'PENDING')
+                ElevatedButton.icon(
+                  onPressed: () => _navigateToEdit(context),
+                  icon: const Icon(Icons.edit),
+                  label: const Text('Edit Order'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: defaultPadding),
+          Text('Customer: ${widget.order.customerName ?? "N/A"}'),
+          Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(widget.order.orderDate)}'),
+          const Divider(),
+          Expanded(
+            child: _isLoading 
+              ? const Center(child: CircularProgressIndicator())
+              : _orderItems.isEmpty
+                ? const Center(child: Text('No items in this order'))
+                : ListView.builder(
+                    itemCount: _orderItems.length,
+                    itemBuilder: (context, index) {
+                      final item = _orderItems[index];
+                      return Card(
+                        margin: const EdgeInsets.symmetric(vertical: 4.0),
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item['product_name'] ?? 'Product not found',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Quantity: ${item['quantity']}'),
+                                  Text('Unit Price: KSH ${(item['unit_price'] as num).toStringAsFixed(2)}'),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    'Subtotal: KSH ${(item['total_amount'] as num).toStringAsFixed(2)}',
+                                    style: const TextStyle(fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          const Divider(),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Total Amount:',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Text(
+                'KSH ${widget.order.totalAmount.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Row(
+            children: [
+              if (widget.order.orderStatus == 'PENDING')
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () => widget.onProcessSale(widget.order),
+                    icon: const Icon(Icons.check_circle),
+                    label: const Text('Complete Sale'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => _printReceipt(context),
+                  icon: const Icon(Icons.print),
+                  label: const Text('Print Receipt'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
+  }
+
+  void _navigateToEdit(BuildContext context) {
+    final cartItems = widget.order.items.map((item) => CartItem.fromOrderItem(item)).toList();
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => OrderCartPanel(
+          orderId: widget.order.id!,
+          isEditing: true,
+          initialItems: cartItems,
+          customerName: widget.order.customerName,
+        ),
+      ),
+    ).then((_) {
+      if (mounted) {
+        _loadOrderItems();
+      }
+    });
   }
 
   Future<void> _printReceipt(BuildContext context) async {

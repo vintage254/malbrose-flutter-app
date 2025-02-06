@@ -2,19 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:my_flutter_app/models/cart_item_model.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/services/database.dart';
+import 'package:my_flutter_app/services/order_service.dart';
 
 class OrderCartPanel extends StatefulWidget {
-  final List<CartItem> items;
-  final Function(int) onRemoveItem;
-  final VoidCallback onPlaceOrder;
-  final VoidCallback onClearCart;
-  
+  final List<CartItem>? initialItems;
+  final String? customerName;
+  final int? orderId;
+  final bool isEditing;
+  final Function(int)? onRemoveItem;
+  final VoidCallback? onPlaceOrder;
+  final VoidCallback? onClearCart;
+
   const OrderCartPanel({
     super.key,
-    required this.items,
-    required this.onRemoveItem,
-    required this.onPlaceOrder,
-    required this.onClearCart,
+    this.initialItems,
+    this.customerName,
+    this.orderId,
+    this.isEditing = false,
+    this.onRemoveItem,
+    this.onPlaceOrder,
+    this.onClearCart,
   });
 
   @override
@@ -22,11 +30,98 @@ class OrderCartPanel extends StatefulWidget {
 }
 
 class _OrderCartPanelState extends State<OrderCartPanel> {
-  final _customerNameController = TextEditingController();
-  
-  double get _total => widget.items.fold(
+  late final TextEditingController _customerNameController;
+  List<CartItem> _items = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _customerNameController = TextEditingController(text: widget.customerName);
+    if (widget.initialItems != null) {
+      _items = List.from(widget.initialItems!);
+    }
+  }
+
+  Future<void> _updateOrder() async {
+    try {
+      await DatabaseService.instance.withTransaction((txn) async {
+        // Update order details
+        await txn.update(
+          DatabaseService.tableOrders,
+          {
+            'customer_name': _customerNameController.text,
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: [widget.orderId],
+        );
+
+        // Delete existing order items
+        await txn.delete(
+          DatabaseService.tableOrderItems,
+          where: 'order_id = ?',
+          whereArgs: [widget.orderId],
+        );
+
+        // Insert updated order items
+        for (var item in _items) {
+          await txn.insert(DatabaseService.tableOrderItems, {
+            'order_id': widget.orderId,
+            'product_id': item.product.id,
+            'quantity': item.quantity,
+            'unit_price': item.unitPrice,
+            'selling_price': item.sellingPrice,
+            'total_amount': item.total,
+            'is_sub_unit': item.isSubUnit ? 1 : 0,
+            'sub_unit_name': item.subUnitName,
+            'sub_unit_quantity': item.subUnitQuantity,
+          });
+        }
+
+        // Log the activity
+        await txn.insert(
+          DatabaseService.tableActivityLogs,
+          {
+            'user_id': AuthService.instance.currentUser!.id!,
+            'username': AuthService.instance.currentUser!.username,
+            'action': 'update_order',
+            'details': 'Updated order #${widget.orderId}',
+            'timestamp': DateTime.now().toIso8601String(),
+          },
+        );
+      });
+
+      // Notify order service to refresh stats
+      OrderService.instance.notifyOrderUpdate();
+
+      if (mounted) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      print('Error updating order: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error updating order: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  double get _total => _items.fold(
     0, (sum, item) => sum + item.total
   );
+
+  void _removeItem(int index) {
+    if (widget.onRemoveItem != null) {
+      widget.onRemoveItem!(index);
+      setState(() {
+        _items.removeAt(index);
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -68,13 +163,15 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
           const SizedBox(height: defaultPadding),
           Expanded(
             child: ListView.builder(
-              itemCount: widget.items.length,
+              itemCount: _items.length,
               itemBuilder: (context, index) {
-                final item = widget.items[index];
+                final item = _items[index];
                 return Card(
                   child: ListTile(
                     title: Text(item.product.productName),
-                    subtitle: Text('Quantity: ${item.quantity}'),
+                    subtitle: Text(
+                      'Quantity: ${item.quantity}${item.isSubUnit ? ' ${item.subUnitName ?? 'pieces'}' : ''}',
+                    ),
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -84,7 +181,9 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                         ),
                         IconButton(
                           icon: const Icon(Icons.delete),
-                          onPressed: () => widget.onRemoveItem(index),
+                          onPressed: widget.onRemoveItem != null 
+                            ? () => widget.onRemoveItem!(index)
+                            : null,
                         ),
                       ],
                     ),
@@ -118,7 +217,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: widget.items.isEmpty ? null : widget.onPlaceOrder,
+                  onPressed: _items.isEmpty ? null : widget.onPlaceOrder,
                   icon: const Icon(Icons.receipt_long),
                   label: const Text('Place Order'),
                   style: ElevatedButton.styleFrom(
@@ -129,7 +228,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
               const SizedBox(width: defaultPadding),
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: widget.items.isEmpty ? null : widget.onClearCart,
+                  onPressed: _items.isEmpty ? null : widget.onClearCart,
                   icon: const Icon(Icons.clear_all),
                   label: const Text('Clear'),
                   style: ElevatedButton.styleFrom(

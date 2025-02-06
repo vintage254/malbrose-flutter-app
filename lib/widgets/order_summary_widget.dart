@@ -4,6 +4,7 @@ import 'package:my_flutter_app/services/order_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/models/order_model.dart';
+import 'package:my_flutter_app/widgets/order_cart_panel.dart';
 
 class OrderSummaryWidget extends StatefulWidget {
   const OrderSummaryWidget({super.key});
@@ -30,157 +31,130 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.amber.withOpacity(0.7),
-            Colors.orange.shade900,
-          ],
-        ),
-      ),
-      padding: const EdgeInsets.all(defaultPadding),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Today\'s Orders',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: defaultPadding),
-          Expanded(
-            child: Consumer<OrderService>(
-              builder: (context, orderService, child) {
-                if (orderService.recentOrders.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      'No orders today',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  );
-                }
-                return ListView.builder(
-                  controller: _scrollController,
-                  itemCount: orderService.recentOrders.length,
-                  itemBuilder: (context, index) {
-                    final orderData = orderService.recentOrders[index];
-                    
-                    // Safely handle order items
-                    final orderItems = (orderData['items'] as List?)?.map((item) => OrderItem(
-                      orderId: orderData['id'],
-                      productId: item['product_id'],
-                      quantity: item['quantity'],
-                      unitPrice: (item['unit_price'] as num).toDouble(),
-                      sellingPrice: (item['selling_price'] as num).toDouble(),
-                      totalAmount: (item['total_amount'] as num).toDouble(),
-                      productName: item['product_name'],
-                    )).toList() ?? [];
+    return Consumer<OrderService>(
+      builder: (context, orderService, child) {
+        final recentOrders = orderService.recentOrders;
 
-                    final order = Order.fromMap(orderData, orderItems);
-
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: ListTile(
-                        leading: Icon(
-                          Icons.receipt_long,
-                          color: order.orderStatus == 'COMPLETED'
-                              ? Colors.green
-                              : Colors.orange,
-                        ),
-                        title: Row(
-                          children: [
-                            Text('Order #${order.orderNumber}'),
-                            const Spacer(),
-                            Text(
-                              DateFormat('HH:mm').format(order.createdAt),
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey,
-                              ),
-                            ),
-                          ],
-                        ),
-                        subtitle: Text(
-                          'Customer: ${order.customerName ?? "N/A"}\n'
-                          'Status: ${order.orderStatus}',
-                        ),
-                        trailing: Text(
-                          'KSH ${order.totalAmount.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        isThreeLine: true,
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-          const Divider(color: Colors.white60),
-          const Text(
-            'Today\'s Summary',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: defaultPadding),
-          Consumer<OrderService>(
-            builder: (context, orderService, _) => Column(
-              children: [
-                _buildSummaryItem(
-                  'Total Orders',
-                  orderService.totalOrders.toString(),
-                ),
-                _buildSummaryItem(
-                  'Total Sales',
-                  'KSH ${NumberFormat('#,##0.00').format(orderService.totalSales)}',
-                ),
-                _buildSummaryItem(
-                  'Pending Orders',
-                  orderService.pendingOrdersCount.toString(),
-                ),
+        return Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.amber.withOpacity(0.7),
+                Colors.orange.shade900,
               ],
             ),
           ),
-        ],
-      ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  'Today\'s Orders',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  controller: _scrollController,
+                  itemCount: recentOrders.length,
+                  itemBuilder: (context, index) {
+                    final order = recentOrders[index];
+                    final status = order['status'] as String;
+                    final createdAt = DateTime.parse(order['created_at'] as String);
+                    
+                    return Card(
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 16.0,
+                        vertical: 8.0,
+                      ),
+                      color: _getStatusColor(status),
+                      child: InkWell(
+                        onTap: () => _handleOrderTap(context, order),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Order #${order['order_number']}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  Text(
+                                    DateFormat('HH:mm').format(createdAt),
+                                    style: const TextStyle(color: Colors.white70),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Customer: ${order['customer_name'] ?? 'Walk-in'}',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              Text(
+                                'Total: KSH ${NumberFormat('#,##0.00').format(order['total_amount'])}',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              Text(
+                                'Status: $status',
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toUpperCase()) {
+      case 'COMPLETED':
+        return Colors.green.withOpacity(0.7);
+      case 'PENDING':
+        return Colors.orange.withOpacity(0.7);
+      default:
+        return Colors.grey.withOpacity(0.7);
+    }
+  }
+
+  void _handleOrderTap(BuildContext context, Map<String, dynamic> order) {
+    if (order['status'] == 'PENDING') {
+      // Navigate to OrderCartPanel for editing
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => OrderCartPanel(
+            orderId: order['id'] as int,
+            isEditing: true,
+          ),
+        ),
+      );
+    }
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
-  }
-
-  Widget _buildSummaryItem(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(color: Colors.white),
-          ),
-          Text(
-            value,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
   }
 } 

@@ -50,10 +50,14 @@ class _SalesScreenState extends State<SalesScreen> {
             orderId: o['id'],
             productId: o['product_id'],
             quantity: o['quantity'],
-            unitPrice: o['unit_price']?.toDouble() ?? 0.0,
-            sellingPrice: o['selling_price']?.toDouble() ?? 0.0,
-            totalAmount: o['total_amount']?.toDouble() ?? 0.0,
-            productName: o['product_name'],
+            unitPrice: (o['unit_price'] as num).toDouble(),
+            sellingPrice: (o['selling_price'] as num).toDouble(),
+            adjustedPrice: (o['adjusted_price'] as num?)?.toDouble() ?? 
+                           (o['selling_price'] as num).toDouble(),
+            totalAmount: (o['total_amount'] as num).toDouble(),
+            productName: o['product_name'] ?? 'Unknown Product',
+            isSubUnit: o['is_sub_unit'] == 1,
+            subUnitName: o['sub_unit_name'],
           )).toList();
 
           return Order.fromMap(firstOrder, orderItems);
@@ -86,65 +90,104 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Future<void> _processSale(Order order) async {
     try {
-      final db = await DatabaseService.instance.database;
-      
-      await db.transaction((txn) async {
-        // First create updated order with new status
-        final updatedOrder = Order(
-          id: order.id,
-          orderNumber: order.orderNumber,
-          totalAmount: order.totalAmount,
-          customerName: order.customerName,
-          orderStatus: 'COMPLETED',
-          paymentStatus: order.paymentStatus,
-          createdBy: order.createdBy,
-          createdAt: order.createdAt,
-          orderDate: order.orderDate,
-          items: order.items,
-        );
+      await DatabaseService.instance.withTransaction((txn) async {
+        // First verify all items have sufficient stock
+        for (var item in order.items) {
+          final product = await txn.query(
+            DatabaseService.tableProducts,
+            where: 'id = ?',
+            whereArgs: [item.productId],
+            limit: 1,
+          );
+          
+          if (product.isEmpty) {
+            throw Exception('Product not found: ${item.productId}');
+          }
+
+          final currentQuantity = (product.first['quantity'] as num).toDouble();
+          final subUnitQuantity = (product.first['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
+          
+          final availableQuantity = item.isSubUnit 
+              ? currentQuantity * subUnitQuantity 
+              : currentQuantity;
+
+          if (item.quantity > availableQuantity) {
+            throw Exception(
+              'Insufficient stock for ${product.first['product_name']}. '
+              'Available: ${availableQuantity.toStringAsFixed(2)} '
+              '${item.isSubUnit ? (product.first['sub_unit_name'] ?? 'pieces') : 'units'}'
+            );
+          }
+        }
 
         // Update order status
         await txn.update(
-          'orders',
-          {'status': updatedOrder.orderStatus},
+          DatabaseService.tableOrders,
+          {
+            'status': 'COMPLETED',
+            'payment_status': 'PAID',
+            'updated_at': DateTime.now().toIso8601String(),
+          },
           where: 'order_number = ?',
-          whereArgs: [updatedOrder.orderNumber],
+          whereArgs: [order.orderNumber],
         );
-        
+
         // Update product quantities
-        for (final item in updatedOrder.items) {
-          await txn.rawUpdate('''
-            UPDATE products 
-            SET quantity = quantity - ?
-            WHERE id = ?
-          ''', [item.quantity, item.productId]);
+        for (var item in order.items) {
+          final product = await txn.query(
+            DatabaseService.tableProducts,
+            where: 'id = ?',
+            whereArgs: [item.productId],
+            limit: 1,
+          );
+
+          if (product.isNotEmpty) {
+            final currentQuantity = (product.first['quantity'] as num).toDouble();
+            final newQuantity = item.isSubUnit
+                ? currentQuantity - (item.quantity / (product.first['sub_unit_quantity'] as num).toDouble())
+                : currentQuantity - item.quantity;
+
+            await txn.update(
+              DatabaseService.tableProducts,
+              {'quantity': newQuantity},
+              where: 'id = ?',
+              whereArgs: [item.productId],
+            );
+          }
         }
+
+        // Log the activity within the same transaction
+        await txn.insert(
+          DatabaseService.tableActivityLogs,
+          {
+            'user_id': AuthService.instance.currentUser!.id!,
+            'username': AuthService.instance.currentUser!.username,
+            'action': 'complete_sale',
+            'details': 'Completed sale #${order.orderNumber}, amount: ${order.totalAmount}',
+            'timestamp': DateTime.now().toIso8601String(),
+          },
+        );
       });
+
+      // Notify order service to refresh stats
+      await OrderService.instance.refreshStats();
       
-      // Notify OrderService about the update
-      OrderService.instance.notifyOrderUpdate();
-      
-      // Refresh the orders list
-      await _loadPendingOrders();
-      setState(() {
-        _selectedOrder = null;
-      });
-      
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Sale processed successfully'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      if (mounted) {
+        setState(() {
+          _selectedOrder = null;
+        });
+        await _loadPendingOrders();
+      }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error processing sale: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      print('Error completing sale: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error completing sale: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -195,7 +238,12 @@ class _SalesScreenState extends State<SalesScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Customer: ${order.customerName ?? "N/A"}'),
-            Text('Items: ${order.items.map((item) => item.productName ?? "Unknown").join(", ")}'),
+            Text('Items: ${order.items.map((item) {
+              final unitText = item.isSubUnit ? 
+                  ' (${item.quantity} ${item.subUnitName ?? "pieces"})' : 
+                  ' (${item.quantity} units)';
+              return '${item.productName}$unitText';
+            }).join(", ")}'),
           ],
         ),
         trailing: Text(
