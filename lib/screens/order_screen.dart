@@ -64,67 +64,9 @@ class _OrderScreenState extends State<OrderScreen> {
   void _showOrderReceipt(String orderNumber) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Order Receipt'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Malbrose Hardware Store',
-                  style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: defaultPadding),
-              Text('Date: ${DateTime.now().toString()}'),
-              Text('Customer: ${_customerNameController.text.trim()}'),
-              const Divider(),
-              ..._cartItems.map((item) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      flex: 2,
-                      child: Text(item.product.productName),
-                    ),
-                    Expanded(
-                      child: Text('x${item.quantity}'),
-                    ),
-                    Expanded(
-                      child: Text('\$${item.total.toStringAsFixed(2)}'),
-                    ),
-                  ],
-                ),
-              )),
-              const Divider(),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Total:',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text(
-                    '\$${_cartItems.fold<double>(0, (sum, item) => sum + item.total).toStringAsFixed(2)}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              // TODO: Implement printing functionality
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Printing will be implemented soon')),
-              );
-            },
-            child: const Text('Print Receipt'),
-          ),
-        ],
+      builder: (context) => OrderReceiptDialog(
+        items: _cartItems,
+        customerName: _customerNameController.text.trim(),
       ),
     );
   }
@@ -216,20 +158,22 @@ class _OrderScreenState extends State<OrderScreen> {
 
                   // Products grid
                   Expanded(
-                    child: GridView.builder(
-                      padding: const EdgeInsets.all(defaultPadding),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 4,
-                        childAspectRatio: 1,
-                        crossAxisSpacing: defaultPadding,
-                        mainAxisSpacing: defaultPadding,
-                      ),
-                      itemCount: _filteredProducts.length,
-                      itemBuilder: (context, index) {
-                        final product = _filteredProducts[index];
-                        return _buildProductCard(product);
-                      },
-                    ),
+                    child: _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : GridView.builder(
+                          padding: const EdgeInsets.all(defaultPadding),
+                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 4,
+                            childAspectRatio: 1,
+                            crossAxisSpacing: defaultPadding,
+                            mainAxisSpacing: defaultPadding,
+                          ),
+                          itemCount: _filteredProducts.length,
+                          itemBuilder: (context, index) {
+                            final product = _filteredProducts[index];
+                            return _buildProductCard(product);
+                          },
+                        ),
                   ),
                 ],
               ),
@@ -375,15 +319,17 @@ class _OrderScreenState extends State<OrderScreen> {
   void _clearCart() {
     setState(() {
       _cartItems.clear();
+      _customerNameController.clear();
     });
   }
 
   void _addToCart(Product product, int quantity, bool isSubUnit, String? selectedSubUnit) {
+    final price = isSubUnit ? product.subUnitPrice ?? product.sellingPrice : product.sellingPrice;
     setState(() {
       _cartItems.add(CartItem(
         product: product,
         quantity: quantity,
-        total: quantity * product.sellingPrice,
+        total: quantity * price,
         isSubUnit: isSubUnit,
         subUnitName: selectedSubUnit,
         subUnitQuantity: isSubUnit ? product.subUnitQuantity : null,

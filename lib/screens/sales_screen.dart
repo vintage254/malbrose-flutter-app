@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/order_model.dart';
+import 'package:my_flutter_app/models/product_model.dart';
+import 'package:my_flutter_app/models/cart_item_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:my_flutter_app/widgets/receipt_panel.dart';
 import 'package:my_flutter_app/services/order_service.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/widgets/order_cart_panel.dart';
 
 class SalesScreen extends StatefulWidget {
   const SalesScreen({super.key});
@@ -225,6 +228,198 @@ class _SalesScreenState extends State<SalesScreen> {
     }
   }
 
+  Future<void> _editOrder(Order order) async {
+    try {
+      // Load order items
+      final orderItems = await DatabaseService.instance.getOrderItems(order.id!);
+      
+      // Convert order items to CartItems
+      final cartItems = await Future.wait(orderItems.map((item) async {
+        final productData = await DatabaseService.instance.getProductById(item['product_id'] as int);
+        if (productData == null) return null;
+        
+        final product = Product.fromMap(productData);
+        
+        return CartItem(
+          product: product,
+          quantity: item['quantity'] as int,
+          total: item['total_amount'] as double,
+          isSubUnit: item['is_sub_unit'] == 1,
+          subUnitName: item['sub_unit_name'] as String?,
+          subUnitQuantity: product.subUnitQuantity,
+        );
+      }));
+
+      // Filter out any null items
+      List<CartItem> editableCartItems = cartItems.whereType<CartItem>().toList();
+      
+      if (mounted) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => StatefulBuilder(
+              builder: (context, setState) => Scaffold(
+                appBar: AppBar(
+                  title: Text('Edit Order #${order.orderNumber}'),
+                  backgroundColor: Colors.amber,
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.add),
+                      onPressed: () async {
+                        // Show product selection dialog
+                        await _showProductSelectionDialog(context, (product, quantity, isSubUnit, subUnitName) {
+                          setState(() {
+                            final price = isSubUnit ? product.subUnitPrice ?? product.sellingPrice : product.sellingPrice;
+                            editableCartItems.add(CartItem(
+                              product: product,
+                              quantity: quantity,
+                              total: quantity * price,
+                              isSubUnit: isSubUnit,
+                              subUnitName: subUnitName,
+                              subUnitQuantity: isSubUnit ? product.subUnitQuantity : null,
+                            ));
+                          });
+                        });
+                      },
+                    ),
+                  ],
+                ),
+                body: OrderCartPanel(
+                  orderId: order.id!,
+                  isEditing: true,
+                  initialItems: editableCartItems,
+                  customerName: order.customerName,
+                  onRemoveItem: (index) {
+                    setState(() {
+                      editableCartItems.removeAt(index);
+                    });
+                  },
+                ),
+              ),
+            ),
+          ),
+        ).then((_) {
+          // Refresh the orders list when returning from edit screen
+          _loadPendingOrders();
+        });
+      }
+    } catch (e) {
+      print('Error loading order for edit: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading order: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showProductSelectionDialog(
+    BuildContext context,
+    Function(Product, int, bool, String?) onProductSelected
+  ) async {
+    try {
+      final products = await DatabaseService.instance.getAllProducts();
+      if (!mounted) return;
+
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Add Product'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: products.length,
+              itemBuilder: (context, index) {
+                final product = Product.fromMap(products[index]);
+                return ListTile(
+                  title: Text(product.productName),
+                  subtitle: Text('KSH ${product.sellingPrice.toStringAsFixed(2)}'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showQuantityDialog(context, product, onProductSelected);
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      print('Error loading products: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading products: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showQuantityDialog(
+    BuildContext context,
+    Product product,
+    Function(Product, int, bool, String?) onProductSelected
+  ) async {
+    final quantityController = TextEditingController();
+    bool isSubUnit = false;
+
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text('Add ${product.productName}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (product.hasSubUnits) ...[
+                SwitchListTile(
+                  title: Text('Sell by ${product.subUnitName ?? "pieces"}'),
+                  value: isSubUnit,
+                  onChanged: (value) => setState(() => isSubUnit = value),
+                ),
+              ],
+              TextField(
+                controller: quantityController,
+                decoration: InputDecoration(
+                  labelText: 'Quantity',
+                  suffix: Text(isSubUnit ? product.subUnitName ?? 'pieces' : 'units'),
+                ),
+                keyboardType: TextInputType.number,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final quantity = int.tryParse(quantityController.text);
+                if (quantity != null && quantity > 0) {
+                  onProductSelected(
+                    product,
+                    quantity,
+                    isSubUnit,
+                    isSubUnit ? product.subUnitName : null,
+                  );
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildOrderListItem(Order order) {
     return Card(
       margin: const EdgeInsets.symmetric(
@@ -246,12 +441,21 @@ class _SalesScreenState extends State<SalesScreen> {
             }).join(", ")}'),
           ],
         ),
-        trailing: Text(
-          'KSH ${order.totalAmount.toStringAsFixed(2)}',
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-          ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'KSH ${order.totalAmount.toStringAsFixed(2)}',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.edit),
+              onPressed: () => _editOrder(order),
+            ),
+          ],
         ),
         onTap: () => setState(() => _selectedOrder = order),
         selected: _selectedOrder?.orderNumber == order.orderNumber,

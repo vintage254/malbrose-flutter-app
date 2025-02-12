@@ -14,7 +14,6 @@ class Product {
   final String? subUnitName;
   final int? createdBy;
   final int? updatedBy;
-  final String? category;
 
   Product({
     this.id,
@@ -32,7 +31,6 @@ class Product {
     this.subUnitName,
     this.createdBy,
     this.updatedBy,
-    this.category,
   });
 
   Map<String, dynamic> toMap() {
@@ -52,7 +50,6 @@ class Product {
       'sub_unit_name': subUnitName,
       'created_by': createdBy,
       'updated_by': updatedBy,
-      'category': category,
     };
   }
 
@@ -73,7 +70,6 @@ class Product {
       subUnitName: map['sub_unit_name'] as String?,
       createdBy: map['created_by'] as int?,
       updatedBy: map['updated_by'] as int?,
-      category: map['category'] as String?,
     );
   }
 }

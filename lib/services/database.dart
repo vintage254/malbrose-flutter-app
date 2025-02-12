@@ -226,6 +226,7 @@ class DatabaseService {
         total_amount REAL NOT NULL,
         is_sub_unit INTEGER DEFAULT 0,
         sub_unit_name TEXT,
+        sub_unit_quantity INTEGER,
         FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
       )

@@ -5,6 +5,9 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/widgets/order_cart_panel.dart';
+import 'package:my_flutter_app/models/cart_item_model.dart';
+import 'package:my_flutter_app/services/database.dart';
+import 'package:my_flutter_app/models/product_model.dart';
 
 class OrderSummaryWidget extends StatefulWidget {
   const OrderSummaryWidget({super.key});
@@ -26,6 +29,59 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
     if (_scrollController.position.pixels == _scrollController.position.maxScrollExtent) {
       // Load more orders if needed
       // Currently showing all for the day, so no need to load more
+    }
+  }
+
+  Future<void> _handleOrderTap(BuildContext context, Map<String, dynamic> order) async {
+    if (order['status'] == 'PENDING') {
+      try {
+        // Load order items
+        final orderItems = await DatabaseService.instance.getOrderItems(order['id'] as int);
+        
+        // Convert order items to CartItems
+        final cartItems = await Future.wait(orderItems.map((item) async {
+          // Get the product details
+          final productData = await DatabaseService.instance.getProductById(item['product_id'] as int);
+          if (productData == null) return null;
+          
+          final product = Product.fromMap(productData);
+          
+          return CartItem(
+            product: product,
+            quantity: item['quantity'] as int,
+            total: item['total_amount'] as double,
+            isSubUnit: false, // Set based on your needs
+            subUnitName: null,
+            subUnitQuantity: null,
+          );
+        }));
+
+        // Filter out any null items and navigate
+        final validCartItems = cartItems.whereType<CartItem>().toList();
+        
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => OrderCartPanel(
+                orderId: order['id'] as int,
+                isEditing: true,
+                initialItems: validCartItems,
+                customerName: order['customer_name'] as String?,
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error loading order: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
     }
   }
 
@@ -134,21 +190,6 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
         return Colors.orange.withOpacity(0.7);
       default:
         return Colors.grey.withOpacity(0.7);
-    }
-  }
-
-  void _handleOrderTap(BuildContext context, Map<String, dynamic> order) {
-    if (order['status'] == 'PENDING') {
-      // Navigate to OrderCartPanel for editing
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => OrderCartPanel(
-            orderId: order['id'] as int,
-            isEditing: true,
-          ),
-        ),
-      );
     }
   }
 
