@@ -3,6 +3,7 @@ class ActivityLog {
   final int userId;
   final String username;
   final String action;
+  final String? actionType;
   final String details;
   final DateTime timestamp;
 
@@ -11,6 +12,7 @@ class ActivityLog {
     required this.userId,
     required this.username,
     required this.action,
+    this.actionType,
     required this.details,
     required this.timestamp,
   });
@@ -21,6 +23,7 @@ class ActivityLog {
       userId: map['user_id'] as int,
       username: map['username'] as String,
       action: map['action'] as String,
+      actionType: map['action_type'] as String?,
       details: map['details'] as String,
       timestamp: DateTime.parse(map['timestamp'] as String),
     );
@@ -32,6 +35,7 @@ class ActivityLog {
       'user_id': userId,
       'username': username,
       'action': action,
+      'action_type': actionType ?? action,
       'details': details,
       'timestamp': timestamp.toIso8601String(),
     };

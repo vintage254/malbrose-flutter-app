@@ -62,14 +62,14 @@ class AuthService {
   Future<void> logout() async {
     if (_currentUser != null) {
       try {
-        await DatabaseService.instance.logActivity(
-          {
-            'user_id': _currentUser!.id!,
-            'action_type': 'LOGOUT',
-            'details': 'User logged out',
-            'timestamp': DateTime.now().toIso8601String(),
-          },
-        );
+        await DatabaseService.instance.logActivity({
+          'user_id': _currentUser!.id!,
+          'username': _currentUser!.username,
+          'action': 'LOGOUT',
+          'action_type': 'LOGOUT',
+          'details': 'User logged out',
+          'timestamp': DateTime.now().toIso8601String(),
+        });
       } catch (e) {
         print('Error logging activity: $e');
         // Continue with logout even if logging fails

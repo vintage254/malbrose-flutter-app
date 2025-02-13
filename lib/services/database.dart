@@ -40,6 +40,7 @@ class DatabaseService {
   // Add these admin privilege constants at the top of DatabaseService class
   static const String ROLE_ADMIN = 'ADMIN';
   static const String PERMISSION_FULL_ACCESS = 'FULL_ACCESS';
+  static const String PERMISSION_BASIC = 'BASIC';
 
   DatabaseService._init();
 
@@ -76,11 +77,11 @@ class DatabaseService {
       // Open database with write permissions
       final db = await openDatabase(
         path,
-        version: 12,
+        version: 14,  // Increment version to trigger migration
         onCreate: _createTables,
         onUpgrade: _onUpgrade,
         readOnly: false,
-        singleInstance: true, // Ensure single database instance
+        singleInstance: true,
         onConfigure: (db) async {
           await db.execute('PRAGMA journal_mode=WAL');
           await db.execute('PRAGMA synchronous=NORMAL');
@@ -109,9 +110,9 @@ class DatabaseService {
         full_name TEXT NOT NULL,
         email TEXT NOT NULL,
         role TEXT NOT NULL,
+        permissions TEXT NOT NULL DEFAULT '$PERMISSION_BASIC',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        last_login TEXT,
-        permissions TEXT NOT NULL
+        last_login TEXT
       )
     ''');
 
@@ -128,8 +129,8 @@ class DatabaseService {
         'full_name': 'System Administrator',
         'email': 'admin@example.com',
         'role': ROLE_ADMIN,
-        'created_at': DateTime.now().toIso8601String(),
         'permissions': PERMISSION_FULL_ACCESS,
+        'created_at': DateTime.now().toIso8601String(),
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
 
@@ -181,6 +182,7 @@ class DatabaseService {
         user_id INTEGER NOT NULL,
         username TEXT NOT NULL,
         action TEXT NOT NULL,
+        action_type TEXT,
         details TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         FOREIGN KEY (user_id) REFERENCES $tableUsers (id)
@@ -267,19 +269,109 @@ class DatabaseService {
     return digest.toString(); // Return the hashed password as a string
   }
 
+  // Add migration method for unhashed passwords
+  Future<void> _migrateUnhashedPasswords(Database db) async {
+    try {
+      print('Starting password migration...');
+      // Get all users
+      final users = await db.query(tableUsers);
+      var migratedCount = 0;
+      
+      for (var user in users) {
+        final password = user['password'] as String;
+        
+        // Check if password is already hashed (SHA-256 produces 64 character hex string)
+        if (password.length != 64) {
+          // Hash the password using AuthService to ensure consistency
+          final hashedPassword = AuthService.instance.hashPassword(password);
+          
+          // Update the user's password
+          await db.update(
+            tableUsers,
+            {'password': hashedPassword},
+            where: 'id = ?',
+            whereArgs: [user['id']],
+          );
+          
+          print('Migrated password for user: ${user['username']}');
+          migratedCount++;
+        }
+      }
+      
+      print('Password migration completed. Migrated $migratedCount passwords.');
+    } catch (e) {
+      print('Error during password migration: $e');
+      rethrow;
+    }
+  }
+
+  // Add migration method for activity logs
+  Future<void> _migrateActivityLogs(Database db) async {
+    try {
+      // Check if action_type column exists
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableActivityLogs)');
+      bool hasActionTypeColumn = tableInfo.any((column) => column['name'] == 'action_type');
+      
+      if (!hasActionTypeColumn) {
+        await db.execute('ALTER TABLE $tableActivityLogs ADD COLUMN action_type TEXT');
+      }
+      
+      // Update any existing records to use action as action_type if needed
+      await db.execute('''
+        UPDATE $tableActivityLogs 
+        SET action_type = action 
+        WHERE action_type IS NULL
+      ''');
+    } catch (e) {
+      print('Error during activity logs migration: $e');
+    }
+  }
+
   // Migration logic
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     try {
       // Backup existing data
       final existingUsers = await db.query(tableUsers);
       
+      // Check if permissions column exists
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableUsers)');
+      bool hasPermissionsColumn = tableInfo.any((column) => column['name'] == 'permissions');
+      
+      if (!hasPermissionsColumn) {
+        await db.execute('ALTER TABLE $tableUsers ADD COLUMN permissions TEXT NOT NULL DEFAULT ?', 
+          [PERMISSION_BASIC]);
+          
+        await db.update(
+          tableUsers,
+          {'permissions': PERMISSION_FULL_ACCESS},
+          where: 'role = ?',
+          whereArgs: [ROLE_ADMIN]
+        );
+      }
+
       // Create missing tables if needed
       await _createTables(db, newVersion);
       
+      // Migrate unhashed passwords
+      await _migrateUnhashedPasswords(db);
+      
+      // Migrate activity logs
+      await _migrateActivityLogs(db);
+
       // Restore users if needed
       if (existingUsers.isNotEmpty) {
         for (var user in existingUsers) {
-          user.remove('id'); // Let SQLite handle auto-increment
+          if (!user.containsKey('permissions')) {
+            user['permissions'] = user['role'] == ROLE_ADMIN ? 
+              PERMISSION_FULL_ACCESS : PERMISSION_BASIC;
+          }
+          
+          // Ensure password is hashed
+          if (user['password'].toString().length != 64) {
+            user['password'] = _hashPassword(user['password'] as String);
+          }
+          
+          user.remove('id');
           await db.insert(
             tableUsers,
             user,
@@ -287,33 +379,79 @@ class DatabaseService {
           );
         }
       }
-
-      if (oldVersion < 9) {
-        await db.execute('ALTER TABLE $tableProducts ADD COLUMN has_sub_units INTEGER DEFAULT 0');
-        await db.execute('ALTER TABLE $tableProducts ADD COLUMN sub_unit_quantity INTEGER');
-        await db.execute('ALTER TABLE $tableProducts ADD COLUMN sub_unit_price REAL');
-        await db.execute('ALTER TABLE $tableProducts ADD COLUMN sub_unit_name TEXT');
-      }
     } catch (e) {
       print('Error during database upgrade: $e');
+      rethrow;
     }
   }
 
   // User related methods
   Future<User?> createUser(Map<String, dynamic> userData) async {
-    final db = await database;
-    final id = await db.insert(tableUsers, userData);
-    return id != 0 ? User.fromMap({...userData, 'id': id}) : null;
+    try {
+      // Hash the password before storing
+      if (userData.containsKey('password')) {
+        userData['password'] = AuthService.instance.hashPassword(userData['password']);
+      }
+
+      // Ensure required fields are present
+      if (!userData.containsKey('permissions')) {
+        userData['permissions'] = userData['role'] == ROLE_ADMIN 
+            ? PERMISSION_FULL_ACCESS 
+            : PERMISSION_BASIC;
+      }
+
+      if (!userData.containsKey('created_at')) {
+        userData['created_at'] = DateTime.now().toIso8601String();
+      }
+
+      final db = await database;
+      final id = await db.insert(tableUsers, userData);
+      
+      if (id != 0) {
+        return User.fromMap({...userData, 'id': id});
+      }
+      return null;
+    } catch (e) {
+      print('Error creating user: $e');
+      rethrow;
+    }
   }
 
   Future<void> updateUser(User user) async {
+    // Ensure permissions are maintained during update
     final db = await database;
-    await db.update(
-      tableUsers,
-      user.toMap(),
-      where: 'id = ?',
-      whereArgs: [user.id],
-    );
+    try {
+      final userData = user.toMap();
+      
+      // If password is being updated, ensure it's hashed
+      if (userData.containsKey('password')) {
+        final currentUser = await getUserById(user.id!);
+        if (currentUser != null) {
+          // Only hash if the password has actually changed
+          final currentPassword = currentUser['password'] as String;
+          if (userData['password'] != currentPassword) {
+            userData['password'] = AuthService.instance.hashPassword(userData['password']);
+          }
+        }
+      }
+
+      if (!userData.containsKey('permissions')) {
+        final existingUser = await getUserById(user.id!);
+        if (existingUser != null) {
+          userData['permissions'] = existingUser['permissions'];
+        }
+      }
+
+      await db.update(
+        tableUsers,
+        userData,
+        where: 'id = ?',
+        whereArgs: [user.id],
+      );
+    } catch (e) {
+      print('Error updating user: $e');
+      rethrow;
+    }
   }
 
   Future<void> deleteUser(int userId) async {

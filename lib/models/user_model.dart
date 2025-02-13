@@ -4,7 +4,8 @@ class User {
   final String password;
   final String fullName;
   final String email;
-  final String? role;
+  final String role;
+  final String permissions;
   final DateTime createdAt;
   final DateTime? lastLogin;
 
@@ -15,37 +16,39 @@ class User {
     required this.fullName,
     required this.email,
     this.role = 'USER',
-    required this.createdAt,
+    String? permissions,
+    DateTime? createdAt,
     this.lastLogin,
-  });
+  }) : this.permissions = permissions ?? (role == 'ADMIN' ? 'FULL_ACCESS' : 'BASIC'),
+       this.createdAt = createdAt ?? DateTime.now();
 
   bool get isAdmin => role == 'ADMIN';
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
+      if (id != null) 'id': id,
       'username': username,
       'password': password,
       'full_name': fullName,
       'email': email,
-      'role': role ?? 'USER',
+      'role': role,
+      'permissions': permissions,
       'created_at': createdAt.toIso8601String(),
-      'last_login': lastLogin?.toIso8601String(),
+      if (lastLogin != null) 'last_login': lastLogin!.toIso8601String(),
     };
   }
 
   factory User.fromMap(Map<String, dynamic> map) {
     return User(
-      id: map['id'],
-      username: map['username'],
-      password: map['password'],
-      fullName: map['full_name'],
-      email: map['email'],
-      role: map['role'] ?? 'USER',
-      createdAt: DateTime.parse(map['created_at']),
-      lastLogin: map['last_login'] != null 
-          ? DateTime.parse(map['last_login'])
-          : null,
+      id: map['id'] as int?,
+      username: map['username'] as String,
+      password: map['password'] as String,
+      fullName: map['full_name'] as String,
+      email: map['email'] as String,
+      role: map['role'] as String? ?? 'USER',
+      permissions: map['permissions'] as String? ?? 'BASIC',
+      createdAt: DateTime.parse(map['created_at'] as String),
+      lastLogin: map['last_login'] != null ? DateTime.parse(map['last_login'] as String) : null,
     );
   }
 
@@ -56,6 +59,7 @@ class User {
     String? fullName,
     String? email,
     String? role,
+    String? permissions,
     DateTime? createdAt,
     DateTime? lastLogin,
   }) {
@@ -66,6 +70,7 @@ class User {
       fullName: fullName ?? this.fullName,
       email: email ?? this.email,
       role: role ?? this.role,
+      permissions: permissions ?? this.permissions,
       createdAt: createdAt ?? this.createdAt,
       lastLogin: lastLogin ?? this.lastLogin,
     );
