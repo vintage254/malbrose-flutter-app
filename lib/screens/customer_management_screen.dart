@@ -134,6 +134,89 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
     _addressController.clear();
   }
 
+  void _showCustomerDetails(Customer customer) async {
+    final details = await DatabaseService.instance.getCustomerDetails(customer.id!);
+    final orders = await DatabaseService.instance.getCustomerOrders(customer.id!);
+    final invoices = await DatabaseService.instance.getCustomerInvoices(customer.id!);
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Customer Details: ${customer.name}'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: const Text('Contact Information'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (customer.email != null)
+                      Text('Email: ${customer.email}'),
+                    if (customer.phone != null)
+                      Text('Phone: ${customer.phone}'),
+                    if (customer.address != null)
+                      Text('Address: ${customer.address}'),
+                  ],
+                ),
+              ),
+              const Divider(),
+              ListTile(
+                title: const Text('Order Summary'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Total Orders: ${details['total_orders'] ?? 0}'),
+                    Text('Total Sales: \$${(details['total_completed_sales'] ?? 0.0).toStringAsFixed(2)}'),
+                    Text('Pending Payments: \$${(details['pending_payments'] ?? 0.0).toStringAsFixed(2)}'),
+                    if (customer.lastOrderDate != null)
+                      Text('Last Order: ${DateFormat('MMM dd, yyyy').format(customer.lastOrderDate!)}'),
+                  ],
+                ),
+              ),
+              if (orders.isNotEmpty) ...[
+                const Divider(),
+                const Text('Recent Orders', style: TextStyle(fontWeight: FontWeight.bold)),
+                ...orders.take(5).map((order) => ListTile(
+                  dense: true,
+                  title: Text('Order #${order['order_number']}'),
+                  subtitle: Text(
+                    'Amount: \$${order['total_amount'].toStringAsFixed(2)}\n'
+                    'Date: ${DateFormat('MMM dd, yyyy').format(DateTime.parse(order['created_at']))}',
+                  ),
+                  trailing: Text(order['status']),
+                )),
+              ],
+              if (invoices.isNotEmpty) ...[
+                const Divider(),
+                const Text('Recent Invoices', style: TextStyle(fontWeight: FontWeight.bold)),
+                ...invoices.take(5).map((invoice) => ListTile(
+                  dense: true,
+                  title: Text('Invoice #${invoice['invoice_number']}'),
+                  subtitle: Text(
+                    'Amount: \$${invoice['total_amount'].toStringAsFixed(2)}\n'
+                    'Date: ${DateFormat('MMM dd, yyyy').format(DateTime.parse(invoice['created_at']))}',
+                  ),
+                  trailing: Text(invoice['status']),
+                )),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -203,8 +286,16 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
                                 child: ListTile(
                                   leading: const Icon(Icons.person),
                                   title: Text(customer.name),
-                                  subtitle: Text(
-                                    'Added on: ${DateFormat('MMM dd, yyyy').format(customer.createdAt)}',
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Added on: ${DateFormat('MMM dd, yyyy').format(customer.createdAt)}',
+                                      ),
+                                      Text(
+                                        'Total Orders: ${customer.totalOrders} | Total Amount: \$${customer.totalAmount.toStringAsFixed(2)}',
+                                      ),
+                                    ],
                                   ),
                                   trailing: Row(
                                     mainAxisSize: MainAxisSize.min,
@@ -217,6 +308,10 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
                                           },
                                         ),
                                       IconButton(
+                                        icon: const Icon(Icons.visibility),
+                                        onPressed: () => _showCustomerDetails(customer),
+                                      ),
+                                      IconButton(
                                         icon: const Icon(Icons.edit),
                                         onPressed: () {
                                           // Implement edit functionality
@@ -224,6 +319,7 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
                                       ),
                                     ],
                                   ),
+                                  onTap: () => _showCustomerDetails(customer),
                                 ),
                               );
                             },

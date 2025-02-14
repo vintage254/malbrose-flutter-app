@@ -4,6 +4,7 @@ class Invoice {
   final int? id;
   final String invoiceNumber;
   final int customerId;
+  final String? customerName;
   final double totalAmount;
   final String status;
   final DateTime createdAt;
@@ -14,6 +15,7 @@ class Invoice {
     this.id,
     required this.invoiceNumber,
     required this.customerId,
+    this.customerName,
     required this.totalAmount,
     required this.status,
     required this.createdAt,
@@ -26,6 +28,7 @@ class Invoice {
       'id': id,
       'invoice_number': invoiceNumber,
       'customer_id': customerId,
+      'customer_name': customerName,
       'total_amount': totalAmount,
       'status': status,
       'created_at': createdAt.toIso8601String(),
@@ -38,6 +41,7 @@ class Invoice {
       id: map['id'] as int?,
       invoiceNumber: map['invoice_number'] as String,
       customerId: map['customer_id'] as int,
+      customerName: map['customer_name'] as String?,
       totalAmount: (map['total_amount'] as num).toDouble(),
       status: map['status'] as String,
       createdAt: DateTime.parse(map['created_at'] as String),

@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 import 'dart:convert'; // For utf8 encoding
 import 'package:synchronized/synchronized.dart';
 import 'package:my_flutter_app/models/invoice_model.dart';
+import '../models/customer_model.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
@@ -77,7 +78,7 @@ class DatabaseService {
       // Open database with write permissions
       final db = await openDatabase(
         path,
-        version: 14,  // Increment version to trigger migration
+        version: 15,  // Increment version to trigger migration
         onCreate: _createTables,
         onUpgrade: _onUpgrade,
         readOnly: false,
@@ -158,12 +159,28 @@ class DatabaseService {
       )
     ''');
 
+    // Create customers table
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableCustomers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        total_orders INTEGER DEFAULT 0,
+        total_amount REAL DEFAULT 0.0,
+        last_order_date TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+      )
+    ''');
+
     // Create orders table
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tableOrders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         order_number TEXT NOT NULL UNIQUE,
-        customer_name TEXT,
+        customer_id INTEGER NOT NULL,
         total_amount REAL NOT NULL,
         status TEXT NOT NULL DEFAULT 'PENDING',
         payment_status TEXT NOT NULL DEFAULT 'PENDING',
@@ -171,7 +188,8 @@ class DatabaseService {
         created_at TEXT NOT NULL,
         updated_at TEXT,
         order_date TEXT NOT NULL,
-        FOREIGN KEY (created_by) REFERENCES $tableUsers (id)
+        FOREIGN KEY (created_by) REFERENCES $tableUsers (id),
+        FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
       )
     ''');
 
@@ -234,29 +252,18 @@ class DatabaseService {
       )
     ''');
 
-    // Create customers table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableCustomers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        phone TEXT,
-        email TEXT,
-        address TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT
-      )
-    ''');
-
-    // Create invoices table
+    // Create invoices table with proper relations
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tableInvoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         invoice_number TEXT NOT NULL UNIQUE,
         customer_id INTEGER NOT NULL,
         total_amount REAL NOT NULL,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        payment_status TEXT NOT NULL DEFAULT 'PENDING',
         due_date TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
         FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
       )
     ''');
@@ -333,22 +340,6 @@ class DatabaseService {
       // Backup existing data
       final existingUsers = await db.query(tableUsers);
       
-      // Check if permissions column exists
-      var tableInfo = await db.rawQuery('PRAGMA table_info($tableUsers)');
-      bool hasPermissionsColumn = tableInfo.any((column) => column['name'] == 'permissions');
-      
-      if (!hasPermissionsColumn) {
-        await db.execute('ALTER TABLE $tableUsers ADD COLUMN permissions TEXT NOT NULL DEFAULT ?', 
-          [PERMISSION_BASIC]);
-          
-        await db.update(
-          tableUsers,
-          {'permissions': PERMISSION_FULL_ACCESS},
-          where: 'role = ?',
-          whereArgs: [ROLE_ADMIN]
-        );
-      }
-
       // Create missing tables if needed
       await _createTables(db, newVersion);
       
@@ -357,6 +348,9 @@ class DatabaseService {
       
       // Migrate activity logs
       await _migrateActivityLogs(db);
+
+      // Migrate customer data
+      await _migrateCustomerData(db);
 
       // Restore users if needed
       if (existingUsers.isNotEmpty) {
@@ -378,6 +372,43 @@ class DatabaseService {
             conflictAlgorithm: ConflictAlgorithm.ignore,
           );
         }
+      }
+
+      // Link any existing orders with customer_name to customer_id
+      final ordersWithCustomerName = await db.query(
+        tableOrders,
+        where: 'customer_name IS NOT NULL AND customer_id IS NULL'
+      );
+
+      for (var order in ordersWithCustomerName) {
+        final customerName = order['customer_name'] as String;
+        // Find or create customer
+        var customer = await db.query(
+          tableCustomers,
+          where: 'name = ?',
+          whereArgs: [customerName],
+          limit: 1
+        );
+
+        int customerId;
+        if (customer.isEmpty) {
+          // Create new customer
+          customerId = await db.insert(tableCustomers, {
+            'name': customerName,
+            'created_at': order['created_at'],
+            'updated_at': order['created_at']
+          });
+        } else {
+          customerId = customer.first['id'] as int;
+        }
+
+        // Update order with customer_id
+        await db.update(
+          tableOrders,
+          {'customer_id': customerId},
+          where: 'id = ?',
+          whereArgs: [order['id']]
+        );
       }
     } catch (e) {
       print('Error during database upgrade: $e');
@@ -906,6 +937,21 @@ class DatabaseService {
     int orderId = 0;
     
     await db.transaction((txn) async {
+      // Check if customer exists and get/create customer_id
+      int? customerId;
+      if (order.customerName?.isNotEmpty == true) {
+        final existingCustomer = await txn.query(
+          tableCustomers,
+          where: 'name = ?',
+          whereArgs: [order.customerName],
+          limit: 1,
+        );
+
+        if (existingCustomer.isNotEmpty) {
+          customerId = existingCustomer.first['id'] as int;
+        }
+      }
+
       // First, validate all items have sufficient stock
       for (var item in order.items) {
         final product = await getProductById(item.productId);
@@ -925,8 +971,13 @@ class DatabaseService {
         }
       }
 
-      // If all validations pass, create order
-      orderId = await txn.insert(tableOrders, order.toMap());
+      // Create order with customer_id if available
+      final orderMap = order.toMap();
+      if (customerId != null) {
+        orderMap['customer_id'] = customerId;
+      }
+      
+      orderId = await txn.insert(tableOrders, orderMap);
       
       // Create order items and update stock
       for (var item in order.items) {
@@ -982,6 +1033,39 @@ class DatabaseService {
     });
     
     return orderId;
+  }
+
+  Future<void> ensureCustomerExists(String customerName) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final existingCustomer = await txn.query(
+        tableCustomers,
+        where: 'name = ?',
+        whereArgs: [customerName],
+        limit: 1,
+      );
+
+      if (existingCustomer.isEmpty) {
+        await txn.insert(
+          tableCustomers,
+          {
+            'name': customerName,
+            'created_at': DateTime.now().toIso8601String(),
+          },
+        );
+      }
+    });
+  }
+
+  Future<Map<String, dynamic>?> getCustomerByName(String name) async {
+    final db = await database;
+    final results = await db.query(
+      tableCustomers,
+      where: 'name = ?',
+      whereArgs: [name],
+      limit: 1,
+    );
+    return results.isNotEmpty ? results.first : null;
   }
 
   Future<void> resetDatabase() async {
@@ -1397,6 +1481,21 @@ class DatabaseService {
   Future<void> createInvoice(Invoice invoice) async {
     final db = await database;
     await db.transaction((txn) async {
+      // Ensure customer exists
+      if (invoice.customerName != null) {
+        await ensureCustomerExists(invoice.customerName!);
+        final customer = await getCustomerByName(invoice.customerName!);
+        if (customer != null) {
+          // Update any orders that match this customer name but don't have customer_id
+          await txn.update(
+            tableOrders,
+            {'customer_id': customer['id']},
+            where: 'customer_name = ? AND customer_id IS NULL',
+            whereArgs: [invoice.customerName],
+          );
+        }
+      }
+      
       // Insert invoice
       final invoiceId = await txn.insert(tableInvoices, invoice.toMap());
       
@@ -1494,5 +1593,185 @@ class DatabaseService {
 
       return result.first;
     });
+  }
+
+  Future<List<Map<String, dynamic>>> getOrdersByCustomerName(String customerName) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT 
+        o.*,
+        oi.id as item_id,
+        oi.product_id,
+        oi.quantity,
+        oi.unit_price,
+        oi.selling_price,
+        oi.adjusted_price,
+        oi.total_amount,
+        oi.is_sub_unit,
+        oi.sub_unit_name,
+        p.product_name,
+        c.name as customer_name
+      FROM $tableOrders o
+      JOIN $tableOrderItems oi ON o.id = oi.order_id
+      JOIN $tableProducts p ON oi.product_id = p.id
+      LEFT JOIN $tableCustomers c ON o.customer_id = c.id
+      WHERE o.customer_name = ? OR c.name = ?
+      AND o.status = 'COMPLETED'
+      ORDER BY o.created_at DESC
+    ''', [customerName, customerName]);
+  }
+
+  Future<int> createCustomer(Customer customer) async {
+    final db = await database;
+    return await db.insert(
+      tableCustomers,
+      customer.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.abort
+    );
+  }
+
+  Future<void> updateCustomerStats(int customerId, double orderAmount) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.rawUpdate('''
+        UPDATE $tableCustomers 
+        SET total_orders = total_orders + 1,
+            total_amount = total_amount + ?,
+            last_order_date = ?,
+            updated_at = ?
+        WHERE id = ?
+      ''', [
+        orderAmount,
+        DateTime.now().toIso8601String(),
+        DateTime.now().toIso8601String(),
+        customerId,
+      ]);
+    });
+  }
+
+  Future<Map<String, dynamic>> getCustomerDetails(int customerId) async {
+    final db = await database;
+    final results = await db.rawQuery('''
+      SELECT 
+        c.*,
+        COUNT(DISTINCT o.id) as total_orders,
+        COUNT(DISTINCT i.id) as total_invoices,
+        SUM(CASE WHEN o.status = 'COMPLETED' THEN o.total_amount ELSE 0 END) as total_completed_sales,
+        SUM(CASE WHEN i.payment_status = 'PENDING' THEN i.total_amount ELSE 0 END) as pending_payments
+      FROM $tableCustomers c
+      LEFT JOIN $tableOrders o ON c.id = o.customer_id
+      LEFT JOIN $tableInvoices i ON c.id = i.customer_id
+      WHERE c.id = ?
+      GROUP BY c.id
+    ''', [customerId]);
+    
+    return results.isNotEmpty ? results.first : {};
+  }
+
+  Future<List<Map<String, dynamic>>> getCustomerOrders(int customerId) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT 
+        o.*,
+        GROUP_CONCAT(json_object(
+          'product_id', oi.product_id,
+          'quantity', oi.quantity,
+          'unit_price', oi.unit_price,
+          'selling_price', oi.selling_price,
+          'total_amount', oi.total_amount,
+          'product_name', p.product_name
+        )) as items_json
+      FROM $tableOrders o
+      LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
+      LEFT JOIN $tableProducts p ON oi.product_id = p.id
+      WHERE o.customer_id = ?
+      GROUP BY o.id
+      ORDER BY o.created_at DESC
+    ''', [customerId]);
+  }
+
+  Future<List<Map<String, dynamic>>> getCustomerInvoices(int customerId) async {
+    final db = await database;
+    return await db.query(
+      tableInvoices,
+      where: 'customer_id = ?',
+      whereArgs: [customerId],
+      orderBy: 'created_at DESC'
+    );
+  }
+
+  Future<void> linkOrderToCustomer(int orderId, int customerId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      // Update the order
+      await txn.update(
+        tableOrders,
+        {'customer_id': customerId},
+        where: 'id = ?',
+        whereArgs: [orderId]
+      );
+
+      // Get the order amount
+      final orderResult = await txn.query(
+        tableOrders,
+        columns: ['total_amount'],
+        where: 'id = ?',
+        whereArgs: [orderId],
+        limit: 1
+      );
+
+      if (orderResult.isNotEmpty) {
+        final orderAmount = orderResult.first['total_amount'] as double;
+        // Update customer stats
+        await updateCustomerStats(customerId, orderAmount);
+      }
+    });
+  }
+
+  Future<void> _migrateCustomerData(Database db) async {
+    try {
+      print('Starting customer data migration...');
+      
+      // Add new columns if they don't exist
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableCustomers)');
+      bool hasTotalOrders = tableInfo.any((column) => column['name'] == 'total_orders');
+      bool hasTotalAmount = tableInfo.any((column) => column['name'] == 'total_amount');
+      bool hasLastOrderDate = tableInfo.any((column) => column['name'] == 'last_order_date');
+      
+      if (!hasTotalOrders) {
+        await db.execute('ALTER TABLE $tableCustomers ADD COLUMN total_orders INTEGER DEFAULT 0');
+      }
+      if (!hasTotalAmount) {
+        await db.execute('ALTER TABLE $tableCustomers ADD COLUMN total_amount REAL DEFAULT 0.0');
+      }
+      if (!hasLastOrderDate) {
+        await db.execute('ALTER TABLE $tableCustomers ADD COLUMN last_order_date TEXT');
+      }
+
+      // Update customer statistics
+      await db.rawUpdate('''
+        UPDATE $tableCustomers
+        SET total_orders = (
+          SELECT COUNT(*) 
+          FROM $tableOrders 
+          WHERE customer_id = $tableCustomers.id
+        ),
+        total_amount = (
+          SELECT COALESCE(SUM(total_amount), 0) 
+          FROM $tableOrders 
+          WHERE customer_id = $tableCustomers.id
+        ),
+        last_order_date = (
+          SELECT MAX(created_at) 
+          FROM $tableOrders 
+          WHERE customer_id = $tableCustomers.id
+        )
+      ''');
+
+      print('Customer data migration completed successfully.');
+    } catch (e) {
+      print('Error during customer data migration: $e');
+      rethrow;
+    }
   }
 }
