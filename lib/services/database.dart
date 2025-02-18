@@ -838,6 +838,8 @@ class DatabaseService {
         'user_id': currentUser.id!,
         'action': 'update_product',
         'details': 'Updated product ID: ${product['id']}',
+        'timestamp': DateTime.now().toIso8601String(),
+        'username': currentUser.username,
       });
     }
   }
@@ -867,29 +869,35 @@ class DatabaseService {
         quantityToUpdate = quantity.toDouble();
       }
 
-      // Verify stock availability
-      if (isDeducting) {
-        final availableQuantity = currentQuantity * (isSubUnit ? subUnitQuantity : 1);
-        if (availableQuantity < quantity) {
-          throw Exception(
-            'Insufficient stock for ${product['product_name']}. '
-            'Available: ${(availableQuantity).toStringAsFixed(2)} '
-            '${isSubUnit ? (product['sub_unit_name'] ?? 'pieces') : 'units'}'
-          );
-        }
-      }
-
-      // Update quantity
+      // Calculate new quantity (allow negative for tracking oversold items)
       final newQuantity = isDeducting 
           ? currentQuantity - quantityToUpdate 
           : currentQuantity + quantityToUpdate;
 
+      // If adding new stock and current quantity is negative,
+      // calculate the actual new quantity by adding to the negative value
+      final finalQuantity = !isDeducting && currentQuantity < 0
+          ? newQuantity // This will effectively add to the negative value
+          : newQuantity;
+
       await txn.update(
         tableProducts,
-        {'quantity': newQuantity},
+        {'quantity': finalQuantity},
         where: 'id = ?',
         whereArgs: [productId],
       );
+
+      // Log stock update
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null) {
+        await logActivity({
+          'user_id': currentUser.id!,
+          'action': isDeducting ? 'deduct_stock' : 'add_stock',
+          'details': '${isDeducting ? 'Deducted' : 'Added'} ${quantity} ${isSubUnit ? product['sub_unit_name'] ?? 'pieces' : 'units'} of ${product['product_name']}. New quantity: ${finalQuantity}',
+          'timestamp': DateTime.now().toIso8601String(),
+          'username': currentUser.username,
+        });
+      }
     });
   }
 
@@ -1361,14 +1369,10 @@ class DatabaseService {
     try {
       return await db.rawQuery('''
         SELECT 
-          oi.id,
-          oi.order_id,
-          oi.product_id,
-          oi.quantity,
-          oi.unit_price,
-          oi.selling_price,
-          oi.total_amount,
-          p.product_name
+          oi.*,
+          p.product_name,
+          p.sub_unit_name,
+          p.sub_unit_quantity
         FROM $tableOrderItems oi
         LEFT JOIN $tableProducts p ON oi.product_id = p.id
         WHERE oi.order_id = ?

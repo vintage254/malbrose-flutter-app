@@ -372,6 +372,9 @@ class _OrderScreenState extends State<OrderScreen> {
             'unit_price': item.product.buyingPrice,
             'selling_price': item.product.sellingPrice,
             'total_amount': item.total,
+            'product_name': item.product.productName,
+            'is_sub_unit': item.isSubUnit ? 1 : 0,
+            'sub_unit_name': item.subUnitName,
           });
         }
       });

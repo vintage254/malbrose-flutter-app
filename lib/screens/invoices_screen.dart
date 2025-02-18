@@ -73,32 +73,72 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   }
 
   Future<void> _loadInvoices() async {
+    setState(() => _isLoading = true);
     try {
       final invoicesData = await DatabaseService.instance.getAllInvoices();
+      final List<Invoice> loadedInvoices = [];
+
+      for (var invoiceData in invoicesData) {
+        // Filter by customer if selected
+        if (_selectedCustomer != null && 
+            invoiceData['customer_id'] != _selectedCustomer!.id) {
+          continue;
+        }
+        
+        // Filter by date range if selected
+        final createdAt = DateTime.parse(invoiceData['created_at'] as String);
+        if (_startDate != null && createdAt.isBefore(_startDate!)) {
+          continue;
+        }
+        if (_endDate != null && createdAt.isAfter(_endDate!)) {
+          continue;
+        }
+
+        // Load order items for this invoice
+        final orderItems = await DatabaseService.instance.getOrderItems(invoiceData['id'] as int);
+        final items = orderItems.map((item) => OrderItem(
+          id: item['id'] as int?,
+          orderId: item['order_id'] as int,
+          productId: item['product_id'] as int,
+          quantity: item['quantity'] as int,
+          unitPrice: (item['unit_price'] as num).toDouble(),
+          sellingPrice: (item['selling_price'] as num).toDouble(),
+          adjustedPrice: (item['adjusted_price'] as num?)?.toDouble() ?? 
+                        (item['selling_price'] as num).toDouble(),
+          totalAmount: (item['total_amount'] as num).toDouble(),
+          productName: item['product_name'] as String,
+          isSubUnit: (item['is_sub_unit'] as int?) == 1,
+          subUnitName: item['sub_unit_name'] as String?,
+        )).toList();
+
+        // Create Invoice object with items
+        final invoice = Invoice(
+          id: invoiceData['id'] as int?,
+          invoiceNumber: invoiceData['invoice_number'] as String,
+          customerId: invoiceData['customer_id'] as int,
+          customerName: invoiceData['customer_name'] as String?,
+          totalAmount: (invoiceData['total_amount'] as num).toDouble(),
+          status: invoiceData['status'] as String,
+          createdAt: DateTime.parse(invoiceData['created_at'] as String),
+          dueDate: invoiceData['due_date'] != null 
+              ? DateTime.parse(invoiceData['due_date'] as String)
+              : null,
+          items: items,
+        );
+
+        loadedInvoices.add(invoice);
+      }
+
       if (mounted) {
         setState(() {
-          _invoices = invoicesData
-              .map((map) => Invoice.fromMap(map))
-              .where((invoice) {
-                if (_selectedCustomer != null && 
-                    invoice.customerId != _selectedCustomer!.id) {
-                  return false;
-                }
-                if (_startDate != null && 
-                    invoice.createdAt.isBefore(_startDate!)) {
-                  return false;
-                }
-                if (_endDate != null && 
-                    invoice.createdAt.isAfter(_endDate!)) {
-                  return false;
-                }
-                return true;
-              })
-              .toList();
+          _invoices = loadedInvoices;
+          _isLoading = false;
         });
       }
     } catch (e) {
+      print('Error loading invoices: $e');
       if (mounted) {
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading invoices: $e')),
         );
@@ -267,16 +307,22 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                                     prefixIcon: Icon(Icons.person),
                                   ),
                                   items: _customers.map((customer) {
-                                    return DropdownMenuItem(
+                                    return DropdownMenuItem<Customer>(
                                       value: customer,
                                       child: Text(customer.name),
                                     );
-                                  }).toList(),
+                                  }).toSet().toList(),
                                   onChanged: (customer) {
                                     setState(() {
                                       _selectedCustomer = customer;
                                     });
                                     _loadInvoices();
+                                  },
+                                  isExpanded: true,
+                                  selectedItemBuilder: (BuildContext context) {
+                                    return _customers.map<Widget>((Customer customer) {
+                                      return Text(customer.name);
+                                    }).toList();
                                   },
                                 ),
                               ),
