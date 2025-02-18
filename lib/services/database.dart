@@ -78,7 +78,7 @@ class DatabaseService {
       // Open database with write permissions
       final db = await openDatabase(
         path,
-        version: 15,  // Increment version to trigger migration
+        version: 18,  // Increment version to trigger migration
         onCreate: _createTables,
         onUpgrade: _onUpgrade,
         readOnly: false,
@@ -180,7 +180,8 @@ class DatabaseService {
       CREATE TABLE IF NOT EXISTS $tableOrders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         order_number TEXT NOT NULL UNIQUE,
-        customer_id INTEGER NOT NULL,
+        customer_id INTEGER,
+        customer_name TEXT NOT NULL,
         total_amount REAL NOT NULL,
         status TEXT NOT NULL DEFAULT 'PENDING',
         payment_status TEXT NOT NULL DEFAULT 'PENDING',
@@ -244,6 +245,7 @@ class DatabaseService {
         selling_price REAL NOT NULL,
         adjusted_price REAL,
         total_amount REAL NOT NULL,
+        product_name TEXT NOT NULL,
         is_sub_unit INTEGER DEFAULT 0,
         sub_unit_name TEXT,
         sub_unit_quantity INTEGER,
@@ -581,9 +583,126 @@ class DatabaseService {
   }
 
   // Order related methods
-  Future<int> addOrder(Order order) async {
-    final db = await database;
-    return await db.insert(tableOrders, order.toMap());
+  Future<int> createOrder(Order order) async {
+    int orderId = 0;
+    
+    await withTransaction((txn) async {
+      try {
+        // First ensure customer exists and get/create customer ID
+        int? customerId = order.customerId;
+        String? customerName = order.customerName;
+        
+        if (customerName != null && customerName.isNotEmpty) {
+          final existingCustomer = await txn.query(
+            tableCustomers,
+            where: 'name = ?',
+            whereArgs: [customerName],
+            limit: 1,
+          );
+
+          if (existingCustomer.isEmpty) {
+            // Create new customer
+            customerId = await txn.insert(
+              tableCustomers,
+              {
+                'name': customerName,
+                'created_at': DateTime.now().toIso8601String(),
+                'total_orders': 1,
+                'total_amount': order.totalAmount,
+                'last_order_date': DateTime.now().toIso8601String(),
+                'updated_at': DateTime.now().toIso8601String(),
+              },
+            );
+          } else {
+            customerId = existingCustomer.first['id'] as int;
+            // Update existing customer's stats within transaction
+            await txn.update(
+              tableCustomers,
+              {
+                'total_orders': (existingCustomer.first['total_orders'] as int) + 1,
+                'total_amount': (existingCustomer.first['total_amount'] as num).toDouble() + order.totalAmount,
+                'last_order_date': DateTime.now().toIso8601String(),
+                'updated_at': DateTime.now().toIso8601String(),
+              },
+              where: 'id = ?',
+              whereArgs: [customerId],
+            );
+          }
+        }
+
+        // Get current user's username within transaction
+        final userResult = await txn.query(
+          tableUsers,
+          columns: ['username'],
+          where: 'id = ?',
+          whereArgs: [order.createdBy],
+          limit: 1,
+        );
+        
+        final username = userResult.isNotEmpty ? userResult.first['username'] as String : 'Unknown';
+
+        // Create order with the customer information
+        final orderMap = {
+          'order_number': order.orderNumber,
+          'customer_id': customerId,
+          'customer_name': customerName,
+          'total_amount': order.totalAmount,
+          'status': order.orderStatus,
+          'payment_status': order.paymentStatus,
+          'created_by': order.createdBy,
+          'created_at': order.createdAt.toIso8601String(),
+          'order_date': order.orderDate.toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
+        };
+        
+        orderId = await txn.insert(tableOrders, orderMap);
+        
+        // Create order items within the same transaction
+        for (var item in order.items) {
+          // Get product name if not provided
+          String productName = item.productName;
+          if (productName.isEmpty) {
+            final productResult = await txn.query(
+              tableProducts,
+              columns: ['product_name'],
+              where: 'id = ?',
+              whereArgs: [item.productId],
+              limit: 1,
+            );
+            if (productResult.isNotEmpty) {
+              productName = productResult.first['product_name'] as String;
+            } else {
+              throw Exception('Product not found for ID: ${item.productId}');
+            }
+          }
+
+          await txn.insert(tableOrderItems, {
+            ...item.toMap(),
+            'order_id': orderId,
+            'product_name': productName,
+          });
+        }
+
+        // Log activity within the same transaction
+        await txn.insert(
+          tableActivityLogs,
+          {
+            'user_id': order.createdBy,
+            'username': username,
+            'action': 'create_order',
+            'details': 'Created order #${order.orderNumber} for ${customerName ?? "Walk-in Customer"}',
+            'timestamp': DateTime.now().toIso8601String(),
+          },
+        );
+
+        return orderId;
+      } catch (e) {
+        print('Error in transaction: $e');
+        rethrow;
+      }
+    });
+    
+    return orderId;
   }
 
   Future<void> updateOrder(Order order) async {
@@ -910,129 +1029,33 @@ class DatabaseService {
 
   Future<List<Map<String, dynamic>>> getOrdersByStatus(String status) async {
     final db = await database;
-    return await db.rawQuery('''
-      SELECT 
-        o.*,
-        oi.id as item_id,
-        oi.product_id,
-        oi.quantity,
-        oi.unit_price,
-        oi.selling_price,
-        oi.total_amount as item_total,
-        oi.is_sub_unit,
-        oi.sub_unit_name,
-        p.product_name,
-        p.sub_unit_quantity,
-        p.product_name as item_product_name
-      FROM $tableOrders o
-      LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
-      LEFT JOIN $tableProducts p ON oi.product_id = p.id
-      WHERE o.status = ?
-      ORDER BY o.created_at DESC, oi.id ASC
-    ''', [status]);
-  }
-
-  Future<int> createOrder(Order order) async {
-    final db = await database;
-    int orderId = 0;
-    
-    await db.transaction((txn) async {
-      // Check if customer exists and get/create customer_id
-      int? customerId;
-      if (order.customerName?.isNotEmpty == true) {
-        final existingCustomer = await txn.query(
-          tableCustomers,
-          where: 'name = ?',
-          whereArgs: [order.customerName],
-          limit: 1,
-        );
-
-        if (existingCustomer.isNotEmpty) {
-          customerId = existingCustomer.first['id'] as int;
-        }
-      }
-
-      // First, validate all items have sufficient stock
-      for (var item in order.items) {
-        final product = await getProductById(item.productId);
-        if (product == null) {
-          throw Exception('Product not found: ${item.productId}');
-        }
-
-        final wholeUnits = (product['quantity'] as num).toDouble();
-        final subUnitsPerUnit = (product['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
-        final totalSubUnitsAvailable = wholeUnits * subUnitsPerUnit;
-
-        if (item.isSubUnit && item.quantity > totalSubUnitsAvailable) {
-          throw Exception(
-            'Insufficient stock for ${product['product_name']}. '
-            'Available: ${totalSubUnitsAvailable.floor()} ${product['sub_unit_name'] ?? 'pieces'}'
-          );
-        }
-      }
-
-      // Create order with customer_id if available
-      final orderMap = order.toMap();
-      if (customerId != null) {
-        orderMap['customer_id'] = customerId;
-      }
-      
-      orderId = await txn.insert(tableOrders, orderMap);
-      
-      // Create order items and update stock
-      for (var item in order.items) {
-        await txn.insert(tableOrderItems, {
-          ...item.toMap(),
-          'order_id': orderId,
-        });
-
-        if (item.isSubUnit) {
-          final product = await getProductById(item.productId);
-          if (product != null) {
-            final currentWholeUnits = (product['quantity'] as num).toDouble();
-            final subUnitsPerUnit = (product['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
-            
-            // Calculate how many whole units will be affected
-            int remainingSubUnits = item.quantity;
-            double newWholeUnits = currentWholeUnits;
-            
-            // Sequential deduction
-            while (remainingSubUnits > 0) {
-              if (subUnitsPerUnit <= remainingSubUnits) {
-                // Deduct a whole unit
-                newWholeUnits -= 1;
-                remainingSubUnits -= subUnitsPerUnit.toInt();
-              } else {
-                // Partial unit deduction
-                newWholeUnits -= (remainingSubUnits / subUnitsPerUnit);
-                remainingSubUnits = 0;
-              }
-            }
-
-            // Update product quantity
-            await txn.update(
-              tableProducts,
-              {'quantity': newWholeUnits},
-              where: 'id = ?',
-              whereArgs: [item.productId],
-            );
-          }
-        } else {
-          // Handle regular unit deduction
-          final product = await getProductById(item.productId);
-          if (product != null) {
-            await txn.update(
-              tableProducts,
-              {'quantity': (product['quantity'] as num).toDouble() - item.quantity},
-              where: 'id = ?',
-              whereArgs: [item.productId],
-            );
-          }
-        }
-      }
-    });
-    
-    return orderId;
+    try {
+      return await db.rawQuery('''
+        SELECT 
+          o.*,
+          oi.id as item_id,
+          oi.product_id,
+          oi.quantity,
+          oi.unit_price,
+          oi.selling_price,
+          oi.adjusted_price,
+          oi.total_amount as item_total,
+          oi.is_sub_unit,
+          oi.sub_unit_name,
+          p.product_name,
+          c.name as customer_name,
+          c.id as customer_id
+        FROM $tableOrders o
+        LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
+        LEFT JOIN $tableProducts p ON oi.product_id = p.id
+        LEFT JOIN $tableCustomers c ON o.customer_id = c.id
+        WHERE o.status = ?
+        ORDER BY o.created_at DESC
+      ''', [status]);
+    } catch (e) {
+      print('Error getting orders by status: $e');
+      return [];
+    }
   }
 
   Future<void> ensureCustomerExists(String customerName) async {
@@ -1746,6 +1769,25 @@ class DatabaseService {
       }
       if (!hasLastOrderDate) {
         await db.execute('ALTER TABLE $tableCustomers ADD COLUMN last_order_date TEXT');
+      }
+
+      // Check if customer_name column exists in orders table
+      tableInfo = await db.rawQuery('PRAGMA table_info($tableOrders)');
+      bool hasCustomerName = tableInfo.any((column) => column['name'] == 'customer_name');
+      
+      if (!hasCustomerName) {
+        await db.execute('ALTER TABLE $tableOrders ADD COLUMN customer_name TEXT');
+        
+        // Update existing orders with customer names
+        await db.rawUpdate('''
+          UPDATE $tableOrders o
+          SET customer_name = (
+            SELECT name 
+            FROM $tableCustomers c 
+            WHERE c.id = o.customer_id
+          )
+          WHERE o.customer_name IS NULL AND o.customer_id IS NOT NULL
+        ''');
       }
 
       // Update customer statistics

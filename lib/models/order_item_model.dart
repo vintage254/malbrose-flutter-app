@@ -7,7 +7,7 @@ class OrderItem {
   final double sellingPrice;
   final double adjustedPrice;
   final double totalAmount;
-  final String? productName;
+  final String productName;
   final bool isSubUnit;
   final String? subUnitName;
 
@@ -20,7 +20,7 @@ class OrderItem {
     required this.sellingPrice,
     required this.adjustedPrice,
     required this.totalAmount,
-    this.productName,
+    required this.productName,
     this.isSubUnit = false,
     this.subUnitName,
   });
@@ -35,6 +35,7 @@ class OrderItem {
       'selling_price': sellingPrice,
       'adjusted_price': adjustedPrice,
       'total_amount': totalAmount,
+      'product_name': productName,
       'is_sub_unit': isSubUnit ? 1 : 0,
       'sub_unit_name': subUnitName,
     };
@@ -51,14 +52,11 @@ class OrderItem {
       adjustedPrice: (map['adjusted_price'] as num?)?.toDouble() ?? 
                     (map['selling_price'] as num).toDouble(),
       totalAmount: (map['total_amount'] as num).toDouble(),
-      productName: map['product_name'],
+      productName: map['product_name'] as String,
       isSubUnit: (map['is_sub_unit'] as num?)?.toInt() == 1,
       subUnitName: map['sub_unit_name'],
     );
   }
-
-  String get displayName => isSubUnit && subUnitName != null ? 
-      '$productName ($subUnitName)' : productName ?? 'Unknown Product';
 
   double get profit => (adjustedPrice - unitPrice) * quantity;
 } 

@@ -3,6 +3,7 @@ class Order {
   final String orderNumber;
   final double totalAmount;
   final String? customerName;
+  final int? customerId;
   final String orderStatus;
   final String paymentStatus;
   final int createdBy;
@@ -15,7 +16,8 @@ class Order {
     this.id,
     required this.orderNumber,
     required this.totalAmount,
-    this.customerName,
+    required this.customerName,
+    this.customerId,
     this.orderStatus = 'PENDING',
     this.paymentStatus = 'PENDING',
     required this.createdBy,
@@ -23,7 +25,11 @@ class Order {
     required this.orderDate,
     required this.items,
     this.adjustedPrice,
-  });
+  }) {
+    if (customerName == null || customerName!.isEmpty) {
+      throw ArgumentError('Customer name is required');
+    }
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -31,6 +37,7 @@ class Order {
       'order_number': orderNumber,
       'total_amount': totalAmount,
       'customer_name': customerName,
+      'customer_id': customerId,
       'status': orderStatus,
       'payment_status': paymentStatus,
       'created_by': createdBy,
@@ -40,11 +47,17 @@ class Order {
   }
 
   factory Order.fromMap(Map<String, dynamic> map, [List<OrderItem>? items]) {
+    final customerName = map['customer_name'] as String?;
+    if (customerName == null || customerName.isEmpty) {
+      throw ArgumentError('Customer name is required');
+    }
+
     return Order(
       id: map['id'],
       orderNumber: map['order_number'],
       totalAmount: (map['total_amount'] as num).toDouble(),
-      customerName: map['customer_name'],
+      customerName: customerName,
+      customerId: map['customer_id'] as int?,
       orderStatus: map['status'] ?? 'PENDING',
       paymentStatus: map['payment_status'] ?? 'PENDING',
       createdBy: map['created_by'],
@@ -132,9 +145,9 @@ class OrderItem {
   }
 
   String get displayName => isSubUnit && subUnitName != null ? 
-      '$productName ($subUnitName)' : productName ?? 'Unknown Product';
-
-  double get profit => (sellingPrice - unitPrice) * quantity;
+      '$productName ($subUnitName)' : productName;
 
   double get total => totalAmount;
+
+  double get profit => (sellingPrice - unitPrice) * quantity;
 } 

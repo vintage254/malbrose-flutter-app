@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:my_flutter_app/models/cart_item_model.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/services/order_service.dart';
+import 'package:my_flutter_app/models/customer_model.dart';
+import 'package:my_flutter_app/models/order_model.dart';
 
 class OrderCartPanel extends StatefulWidget {
   final List<CartItem> initialItems;
@@ -31,82 +34,166 @@ class OrderCartPanel extends StatefulWidget {
 
 class _OrderCartPanelState extends State<OrderCartPanel> {
   late final TextEditingController _customerNameController;
+  List<Customer> _customers = [];
+  Customer? _selectedCustomer;
+  bool _isLoadingCustomers = false;
+  Timer? _debounceTimer;
 
   @override
   void initState() {
     super.initState();
     _customerNameController = TextEditingController(text: widget.customerName);
+    _loadInitialCustomer();
+    _loadCustomers();
   }
 
-  @override
-  void didUpdateWidget(OrderCartPanel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.customerName != oldWidget.customerName) {
-      _customerNameController.text = widget.customerName ?? '';
+  Future<void> _loadInitialCustomer() async {
+    if (widget.customerName != null) {
+      try {
+        final customer = await DatabaseService.instance.getCustomerByName(widget.customerName!);
+        if (customer != null) {
+          setState(() {
+            _selectedCustomer = Customer.fromMap(customer);
+          });
+        }
+      } catch (e) {
+        print('Error loading initial customer: $e');
+      }
     }
   }
 
-  Future<void> _updateOrder() async {
+  Future<void> _loadCustomers() async {
+    setState(() => _isLoadingCustomers = true);
     try {
-      await DatabaseService.instance.withTransaction((txn) async {
-        // Update order details
-        await txn.update(
-          DatabaseService.tableOrders,
-          {
-            'customer_name': _customerNameController.text,
-            'total_amount': _total,
-            'updated_at': DateTime.now().toIso8601String(),
-          },
-          where: 'id = ?',
-          whereArgs: [widget.orderId],
-        );
-
-        // Delete existing order items
-        await txn.delete(
-          DatabaseService.tableOrderItems,
-          where: 'order_id = ?',
-          whereArgs: [widget.orderId],
-        );
-
-        // Insert updated order items
-        for (var item in widget.initialItems) {
-          await txn.insert(DatabaseService.tableOrderItems, {
-            'order_id': widget.orderId,
-            'product_id': item.product.id,
-            'quantity': item.quantity,
-            'unit_price': item.product.buyingPrice,
-            'selling_price': item.product.sellingPrice,
-            'total_amount': item.total,
-            'is_sub_unit': item.isSubUnit ? 1 : 0,
-            'sub_unit_name': item.subUnitName,
-          });
-        }
-
-        // Log the activity within the same transaction
-        await txn.insert(
-          DatabaseService.tableActivityLogs,
-          {
-            'user_id': AuthService.instance.currentUser!.id!,
-            'username': AuthService.instance.currentUser!.username,
-            'action': 'update_order',
-            'details': 'Updated order #${widget.orderId}',
-            'timestamp': DateTime.now().toIso8601String(),
-          },
-        );
-      });
-
-      // Notify order service to refresh stats
-      OrderService.instance.notifyOrderUpdate();
-
+      final customersData = await DatabaseService.instance.getAllCustomers();
       if (mounted) {
-        Navigator.pop(context);
+        setState(() {
+          _customers = customersData.map((c) => Customer.fromMap(c)).toList();
+          _isLoadingCustomers = false;
+        });
       }
     } catch (e) {
-      print('Error updating order: $e');
+      print('Error loading customers: $e');
+      if (mounted) {
+        setState(() => _isLoadingCustomers = false);
+      }
+    }
+  }
+
+  void _onCustomerSearchChanged(String value) {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () async {
+      if (value.isEmpty) {
+        await _loadCustomers();
+      } else {
+        setState(() => _isLoadingCustomers = true);
+        try {
+          final customersData = await DatabaseService.instance.getAllCustomers();
+          if (mounted) {
+            setState(() {
+              _customers = customersData
+                  .map((c) => Customer.fromMap(c))
+                  .where((c) => c.name.toLowerCase().contains(value.toLowerCase()))
+                  .toList();
+            });
+          }
+        } finally {
+          if (mounted) {
+            setState(() => _isLoadingCustomers = false);
+          }
+        }
+      }
+    });
+  }
+
+  Future<void> _createNewCustomer(String name) async {
+    try {
+      final customer = Customer(
+        name: name,
+        createdAt: DateTime.now(),
+      );
+      
+      final customerId = await DatabaseService.instance.createCustomer(customer);
+      setState(() {
+        _selectedCustomer = customer.copyWith(id: customerId);
+        _customerNameController.text = name;
+      });
+    } catch (e) {
+      if (mounted) {
+        if (e.toString().contains('UNIQUE constraint failed')) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Customer Already Exists'),
+              content: Text('A customer with the name "$name" already exists. Please select from the existing customers or use a different name.'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error creating customer: $e')),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _placeOrder() async {
+    if (widget.initialItems.isEmpty) return;
+
+    try {
+      String customerName = _customerNameController.text.trim();
+      if (customerName.isEmpty) {
+        throw Exception('Customer name is required');
+      }
+
+      final orderNumber = 'ORD-${DateTime.now().millisecondsSinceEpoch}';
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser == null) {
+        throw Exception('User not logged in');
+      }
+      
+      // Create order with customer information
+      final order = Order(
+        orderNumber: orderNumber,
+        customerId: _selectedCustomer?.id,
+        customerName: customerName,
+        totalAmount: _total,
+        orderStatus: 'PENDING',
+        paymentStatus: 'PENDING',
+        createdBy: currentUser.id!,
+        createdAt: DateTime.now(),
+        orderDate: DateTime.now(),
+        items: widget.initialItems.map((item) => OrderItem(
+          orderId: widget.orderId ?? 0,
+          productId: item.product.id!,
+          quantity: item.quantity,
+          unitPrice: item.product.buyingPrice,
+          sellingPrice: item.product.sellingPrice,
+          adjustedPrice: item.product.sellingPrice,
+          totalAmount: item.total,
+          productName: item.product.productName,
+          isSubUnit: item.isSubUnit,
+          subUnitName: item.subUnitName,
+        )).toList(),
+      );
+
+      // Let DatabaseService handle the transaction
+      await DatabaseService.instance.createOrder(order);
+      
+      if (widget.onPlaceOrder != null) {
+        widget.onPlaceOrder!();
+      }
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error updating order: $e'),
+            content: Text('Error placing order: ${e.toString()}'),
             backgroundColor: Colors.red,
           ),
         );
@@ -153,14 +240,77 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
               ),
             ),
             const SizedBox(height: defaultPadding),
-            TextField(
-              controller: _customerNameController,
-              decoration: const InputDecoration(
-                labelText: 'Customer Name (Optional)',
-                border: OutlineInputBorder(),
-                filled: true,
-                fillColor: Colors.white,
-              ),
+            // Customer Autocomplete
+            Autocomplete<Customer>(
+              initialValue: TextEditingValue(text: widget.customerName ?? ''),
+              optionsBuilder: (TextEditingValue textEditingValue) {
+                if (textEditingValue.text.isEmpty) {
+                  return _customers;
+                }
+                return _customers.where((customer) =>
+                    customer.name.toLowerCase().contains(textEditingValue.text.toLowerCase()));
+              },
+              onSelected: (Customer customer) {
+                setState(() {
+                  _selectedCustomer = customer;
+                  _customerNameController.text = customer.name;
+                });
+              },
+              displayStringForOption: (Customer customer) => customer.name,
+              fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                return TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  decoration: InputDecoration(
+                    labelText: 'Customer Name',
+                    border: const OutlineInputBorder(),
+                    filled: true,
+                    fillColor: Colors.white,
+                    suffixIcon: _isLoadingCustomers
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : IconButton(
+                            icon: const Icon(Icons.add),
+                            onPressed: () {
+                              if (controller.text.isNotEmpty) {
+                                _createNewCustomer(controller.text);
+                              }
+                            },
+                          ),
+                  ),
+                  onChanged: (value) {
+                    _customerNameController.text = value;
+                    _onCustomerSearchChanged(value);
+                  },
+                );
+              },
+              optionsViewBuilder: (context, onSelected, options) {
+                return Align(
+                  alignment: Alignment.topLeft,
+                  child: Material(
+                    elevation: 4,
+                    child: SizedBox(
+                      width: 300,
+                      child: ListView.builder(
+                        padding: EdgeInsets.zero,
+                        shrinkWrap: true,
+                        itemCount: options.length,
+                        itemBuilder: (context, index) {
+                          final customer = options.elementAt(index);
+                          return ListTile(
+                            title: Text(customer.name),
+                            subtitle: customer.phone != null ? Text(customer.phone!) : null,
+                            onTap: () => onSelected(customer),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: defaultPadding),
             Text(
@@ -235,7 +385,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                         if (widget.isEditing)
                           Expanded(
                             child: ElevatedButton.icon(
-                              onPressed: _updateOrder,
+                              onPressed: _placeOrder,
                               icon: const Icon(Icons.save),
                               label: const Text('Save Changes'),
                               style: ElevatedButton.styleFrom(
@@ -246,7 +396,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                         else ...[
                           Expanded(
                             child: ElevatedButton.icon(
-                              onPressed: widget.initialItems.isEmpty ? null : widget.onPlaceOrder,
+                              onPressed: widget.initialItems.isEmpty ? null : _placeOrder,
                               icon: const Icon(Icons.receipt_long),
                               label: const Text('Place Order'),
                               style: ElevatedButton.styleFrom(
@@ -281,6 +431,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
   @override
   void dispose() {
     _customerNameController.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 } 

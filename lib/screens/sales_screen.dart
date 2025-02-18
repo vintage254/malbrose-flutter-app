@@ -32,7 +32,9 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Future<void> _loadPendingOrders() async {
     try {
+      setState(() => _isLoading = true);
       final orders = await DatabaseService.instance.getOrdersByStatus('PENDING');
+      
       if (mounted) {
         // Group orders by order number
         final Map<String, List<Map<String, dynamic>>> groupedOrders = {};
@@ -47,24 +49,54 @@ class _SalesScreenState extends State<SalesScreen> {
         }
 
         // Convert grouped orders to Order objects
-        final List<Order> combinedOrders = groupedOrders.entries.map((entry) {
+        final List<Order> combinedOrders = [];
+        for (var entry in groupedOrders.entries) {
           final firstOrder = entry.value.first;
+          
+          // Create order items
           final orderItems = entry.value.map((o) => OrderItem(
+            id: o['item_id'],
             orderId: o['id'],
             productId: o['product_id'],
             quantity: o['quantity'],
             unitPrice: (o['unit_price'] as num).toDouble(),
             sellingPrice: (o['selling_price'] as num).toDouble(),
             adjustedPrice: (o['adjusted_price'] as num?)?.toDouble() ?? 
-                           (o['selling_price'] as num).toDouble(),
-            totalAmount: (o['total_amount'] as num).toDouble(),
+                         (o['selling_price'] as num).toDouble(),
+            totalAmount: (o['item_total'] as num).toDouble(),
             productName: o['product_name'] ?? 'Unknown Product',
             isSubUnit: o['is_sub_unit'] == 1,
             subUnitName: o['sub_unit_name'],
           )).toList();
 
-          return Order.fromMap(firstOrder, orderItems);
-        }).toList();
+          try {
+            // Calculate total amount from items
+            final totalAmount = orderItems.fold<double>(
+              0, 
+              (sum, item) => sum + item.totalAmount
+            );
+
+            // Create order with customer information
+            final order = Order(
+              id: firstOrder['id'],
+              orderNumber: firstOrder['order_number'],
+              totalAmount: totalAmount,
+              customerName: firstOrder['customer_name'] ?? 'Unknown Customer',
+              customerId: firstOrder['customer_id'],
+              orderStatus: firstOrder['status'] ?? 'PENDING',
+              paymentStatus: firstOrder['payment_status'] ?? 'PENDING',
+              createdBy: firstOrder['created_by'],
+              createdAt: DateTime.parse(firstOrder['created_at']),
+              orderDate: DateTime.parse(firstOrder['order_date']),
+              items: orderItems,
+            );
+            combinedOrders.add(order);
+          } catch (e) {
+            print('Error creating order object: $e');
+            print('Order data: ${firstOrder.toString()}');
+            continue;
+          }
+        }
 
         setState(() {
           _pendingOrders = combinedOrders;
@@ -77,6 +109,9 @@ class _SalesScreenState extends State<SalesScreen> {
         setState(() {
           _isLoading = false;
         });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading orders: $e')),
+        );
       }
     }
   }
@@ -123,7 +158,7 @@ class _SalesScreenState extends State<SalesScreen> {
           }
         }
 
-        // Update order status
+        // Update order status using simple map
         await txn.update(
           DatabaseService.tableOrders,
           {
@@ -135,7 +170,7 @@ class _SalesScreenState extends State<SalesScreen> {
           whereArgs: [order.orderNumber],
         );
 
-        // Update product quantities
+        // Update product quantities using simple values
         for (var item in order.items) {
           final product = await txn.query(
             DatabaseService.tableProducts,
@@ -146,30 +181,62 @@ class _SalesScreenState extends State<SalesScreen> {
 
           if (product.isNotEmpty) {
             final currentQuantity = (product.first['quantity'] as num).toDouble();
-            final newQuantity = item.isSubUnit
-                ? currentQuantity - (item.quantity / (product.first['sub_unit_quantity'] as num).toDouble())
-                : currentQuantity - item.quantity;
+            final quantityToDeduct = item.isSubUnit
+                ? item.quantity / (product.first['sub_unit_quantity'] as num).toDouble()
+                : item.quantity;
 
             await txn.update(
               DatabaseService.tableProducts,
-              {'quantity': newQuantity},
+              {'quantity': currentQuantity - quantityToDeduct},
               where: 'id = ?',
               whereArgs: [item.productId],
             );
           }
         }
 
-        // Log the activity within the same transaction
-        await txn.insert(
-          DatabaseService.tableActivityLogs,
-          {
-            'user_id': AuthService.instance.currentUser!.id!,
-            'username': AuthService.instance.currentUser!.username,
-            'action': 'complete_sale',
-            'details': 'Completed sale #${order.orderNumber}, amount: ${order.totalAmount}',
-            'timestamp': DateTime.now().toIso8601String(),
-          },
-        );
+        // Update customer statistics if customer_id exists
+        if (order.customerId != null) {
+          // Get current customer stats
+          final customerStats = await txn.query(
+            DatabaseService.tableCustomers,
+            columns: ['total_orders', 'total_amount'],
+            where: 'id = ?',
+            whereArgs: [order.customerId],
+            limit: 1,
+          );
+
+          if (customerStats.isNotEmpty) {
+            final currentTotalOrders = (customerStats.first['total_orders'] as int?) ?? 0;
+            final currentTotalAmount = (customerStats.first['total_amount'] as num?)?.toDouble() ?? 0.0;
+
+            await txn.update(
+              DatabaseService.tableCustomers,
+              {
+                'total_orders': currentTotalOrders + 1,
+                'total_amount': currentTotalAmount + order.totalAmount,
+                'last_order_date': DateTime.now().toIso8601String(),
+                'updated_at': DateTime.now().toIso8601String(),
+              },
+              where: 'id = ?',
+              whereArgs: [order.customerId],
+            );
+          }
+        }
+
+        // Log the activity using simple map
+        final currentUser = AuthService.instance.currentUser;
+        if (currentUser != null) {
+          await txn.insert(
+            DatabaseService.tableActivityLogs,
+            {
+              'user_id': currentUser.id,
+              'username': currentUser.username,
+              'action': 'complete_sale',
+              'details': 'Completed sale #${order.orderNumber}, amount: ${order.totalAmount}',
+              'timestamp': DateTime.now().toIso8601String(),
+            },
+          );
+        }
       });
 
       // Notify order service to refresh stats

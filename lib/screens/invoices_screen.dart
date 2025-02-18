@@ -11,6 +11,7 @@ import 'package:my_flutter_app/widgets/invoice_preview_widget.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'dart:async';
 
 class InvoicesScreen extends StatefulWidget {
   const InvoicesScreen({super.key});
@@ -28,12 +29,25 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   bool _isLoading = false;
   List<Customer> _customers = [];
   List<Invoice> _invoices = [];
+  Timer? _debounceTimer;
+  String _searchQuery = '';
 
   @override
   void initState() {
     super.initState();
-    _loadCustomers();
-    _loadInvoices();
+    _loadInitialData();
+  }
+
+  Future<void> _loadInitialData() async {
+    setState(() => _isLoading = true);
+    try {
+      await Future.wait([
+        _loadCustomers(),
+        _loadInvoices(),
+      ]);
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _loadCustomers() async {
@@ -41,7 +55,12 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
       final customersData = await DatabaseService.instance.getAllCustomers();
       if (mounted) {
         setState(() {
-          _customers = customersData.map((map) => Customer.fromMap(map)).toList();
+          _customers = customersData
+              .map((map) => Customer.fromMap(map))
+              .where((customer) => customer.name
+                  .toLowerCase()
+                  .contains(_searchQuery.toLowerCase()))
+              .toList();
         });
       }
     } catch (e) {
@@ -58,7 +77,24 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
       final invoicesData = await DatabaseService.instance.getAllInvoices();
       if (mounted) {
         setState(() {
-          _invoices = invoicesData.map((map) => Invoice.fromMap(map)).toList();
+          _invoices = invoicesData
+              .map((map) => Invoice.fromMap(map))
+              .where((invoice) {
+                if (_selectedCustomer != null && 
+                    invoice.customerId != _selectedCustomer!.id) {
+                  return false;
+                }
+                if (_startDate != null && 
+                    invoice.createdAt.isBefore(_startDate!)) {
+                  return false;
+                }
+                if (_endDate != null && 
+                    invoice.createdAt.isAfter(_endDate!)) {
+                  return false;
+                }
+                return true;
+              })
+              .toList();
         });
       }
     } catch (e) {
@@ -70,23 +106,32 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
     }
   }
 
-  Future<void> _loadInvoiceData() async {
-    if (_selectedCustomer == null) return;
+  void _onSearchChanged(String query) {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+      setState(() {
+        _searchQuery = query;
+        _loadCustomers();
+      });
+    });
+  }
+
+  Future<void> _selectDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDateRange: _startDate != null && _endDate != null
+          ? DateTimeRange(start: _startDate!, end: _endDate!)
+          : null,
+    );
     
-    setState(() => _isLoading = true);
-    try {
-      final data = await DatabaseService.instance.getCustomerInvoiceData(
-        customerId: _selectedCustomer!.id!,
-        startDate: _startDate,
-        endDate: _endDate,
-      );
-      setState(() => _invoiceData = data);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
-    } finally {
-      setState(() => _isLoading = false);
+    if (picked != null && mounted) {
+      setState(() {
+        _startDate = picked.start;
+        _endDate = picked.end;
+      });
+      _loadInvoices();
     }
   }
 
@@ -98,13 +143,19 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
       return;
     }
 
+    setState(() => _isLoading = true);
     try {
       final orders = await DatabaseService.instance.getOrdersByCustomerId(_selectedCustomer!.id!);
       final totalAmount = await DatabaseService.instance.calculateCustomerTotal(_selectedCustomer!.id!);
 
+      if (orders.isEmpty) {
+        throw Exception('No completed orders found for this customer');
+      }
+
       final invoice = Invoice(
         invoiceNumber: 'INV-${DateTime.now().millisecondsSinceEpoch}',
         customerId: _selectedCustomer!.id!,
+        customerName: _selectedCustomer!.name,
         totalAmount: totalAmount,
         status: 'PENDING',
         createdAt: DateTime.now(),
@@ -129,15 +180,23 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invoice generated successfully')),
+          const SnackBar(
+            content: Text('Invoice generated successfully'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error generating invoice: $e')),
+          SnackBar(
+            content: Text('Error generating invoice: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
@@ -166,35 +225,76 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Customer Selection and Invoice Generation
+                  // Header with controls
                   Card(
                     margin: const EdgeInsets.all(defaultPadding),
                     child: Padding(
                       padding: const EdgeInsets.all(defaultPadding),
-                      child: Row(
+                      child: Column(
                         children: [
-                          Expanded(
-                            child: DropdownButtonFormField<Customer>(
-                              value: _selectedCustomer,
-                              hint: const Text('Select Customer'),
-                              items: _customers.map((customer) {
-                                return DropdownMenuItem(
-                                  value: customer,
-                                  child: Text(customer.name),
-                                );
-                              }).toList(),
-                              onChanged: (customer) {
-                                setState(() {
-                                  _selectedCustomer = customer;
-                                });
-                              },
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _searchController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Search Customers',
+                                    prefixIcon: Icon(Icons.search),
+                                  ),
+                                  onChanged: _onSearchChanged,
+                                ),
+                              ),
+                              const SizedBox(width: defaultPadding),
+                              ElevatedButton.icon(
+                                onPressed: _selectDateRange,
+                                icon: const Icon(Icons.date_range),
+                                label: Text(
+                                  _startDate != null && _endDate != null
+                                      ? '${DateFormat('MMM d').format(_startDate!)} - ${DateFormat('MMM d').format(_endDate!)}'
+                                      : 'Select Date Range',
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: defaultPadding),
-                          ElevatedButton.icon(
-                            onPressed: _generateInvoice,
-                            icon: const Icon(Icons.add),
-                            label: const Text('New Invoice'),
+                          const SizedBox(height: defaultPadding),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: DropdownButtonFormField<Customer>(
+                                  value: _selectedCustomer,
+                                  hint: const Text('Select Customer'),
+                                  decoration: const InputDecoration(
+                                    prefixIcon: Icon(Icons.person),
+                                  ),
+                                  items: _customers.map((customer) {
+                                    return DropdownMenuItem(
+                                      value: customer,
+                                      child: Text(customer.name),
+                                    );
+                                  }).toList(),
+                                  onChanged: (customer) {
+                                    setState(() {
+                                      _selectedCustomer = customer;
+                                    });
+                                    _loadInvoices();
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: defaultPadding),
+                              ElevatedButton.icon(
+                                onPressed: _isLoading ? null : _generateInvoice,
+                                icon: _isLoading 
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.add),
+                                label: const Text('New Invoice'),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -207,48 +307,110 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                       margin: const EdgeInsets.all(defaultPadding),
                       child: _isLoading
                           ? const Center(child: CircularProgressIndicator())
-                          : ListView.builder(
-                              itemCount: _invoices.length,
-                              itemBuilder: (context, index) {
-                                final invoice = _invoices[index];
-                                final customer = _customers.firstWhere(
-                                  (c) => c.id == invoice.customerId,
-                                  orElse: () => Customer(
-                                    name: 'Unknown Customer',
-                                    createdAt: DateTime.now(),
-                                  ),
-                                );
-                                
-                                return ListTile(
-                                  leading: Icon(
-                                    Icons.receipt_long,
-                                    color: _getStatusColor(invoice.status),
-                                  ),
-                                  title: Text('Invoice #${invoice.invoiceNumber}'),
-                                  subtitle: Text(
-                                    'Customer: ${customer.name}\n'
-                                    'Date: ${DateFormat('MMM dd, yyyy').format(invoice.createdAt)}',
-                                  ),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
+                          : _invoices.isEmpty
+                              ? Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Text(
-                                        'KSH ${invoice.totalAmount.toStringAsFixed(2)}',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                      const Icon(
+                                        Icons.receipt_long,
+                                        size: 64,
+                                        color: Colors.grey,
                                       ),
-                                      const SizedBox(width: defaultPadding),
-                                      IconButton(
-                                        icon: const Icon(Icons.print),
-                                        onPressed: () => _printInvoice(invoice, customer),
+                                      const SizedBox(height: defaultPadding),
+                                      Text(
+                                        _selectedCustomer != null
+                                            ? 'No invoices found for ${_selectedCustomer!.name}'
+                                            : 'No invoices found',
+                                        style: Theme.of(context).textTheme.titleMedium,
                                       ),
                                     ],
                                   ),
-                                  onTap: () => _showInvoiceDetails(invoice, customer),
-                                );
-                              },
-                            ),
+                                )
+                              : ListView.builder(
+                                  itemCount: _invoices.length,
+                                  itemBuilder: (context, index) {
+                                    final invoice = _invoices[index];
+                                    final customer = _customers.firstWhere(
+                                      (c) => c.id == invoice.customerId,
+                                      orElse: () => Customer(
+                                        name: invoice.customerName ?? 'Unknown Customer',
+                                        createdAt: DateTime.now(),
+                                      ),
+                                    );
+                                    
+                                    return Card(
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: defaultPadding,
+                                        vertical: defaultPadding / 2,
+                                      ),
+                                      child: ListTile(
+                                        leading: CircleAvatar(
+                                          backgroundColor: _getStatusColor(invoice.status),
+                                          child: const Icon(
+                                            Icons.receipt_long,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                        title: Text(
+                                          'Invoice #${invoice.invoiceNumber}',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        subtitle: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text('Customer: ${customer.name}'),
+                                            Text(
+                                              'Date: ${DateFormat('MMM dd, yyyy').format(invoice.createdAt)}',
+                                            ),
+                                            if (invoice.dueDate != null)
+                                              Text(
+                                                'Due: ${DateFormat('MMM dd, yyyy').format(invoice.dueDate!)}',
+                                              ),
+                                          ],
+                                        ),
+                                        trailing: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Column(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              crossAxisAlignment: CrossAxisAlignment.end,
+                                              children: [
+                                                Text(
+                                                  'KSH ${invoice.totalAmount.toStringAsFixed(2)}',
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 16,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  invoice.status,
+                                                  style: TextStyle(
+                                                    color: _getStatusColor(invoice.status),
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(width: defaultPadding),
+                                            IconButton(
+                                              icon: const Icon(Icons.print),
+                                              onPressed: () => _printInvoice(invoice, customer),
+                                            ),
+                                            IconButton(
+                                              icon: const Icon(Icons.visibility),
+                                              onPressed: () => _showInvoiceDetails(invoice, customer),
+                                            ),
+                                          ],
+                                        ),
+                                        isThreeLine: true,
+                                        onTap: () => _showInvoiceDetails(invoice, customer),
+                                      ),
+                                    );
+                                  },
+                                ),
                     ),
                   ),
                 ],
@@ -315,6 +477,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 } 
