@@ -12,46 +12,62 @@ class SalesReportScreen extends StatefulWidget {
 }
 
 class _SalesReportScreenState extends State<SalesReportScreen> {
+  List<Map<String, dynamic>> _salesData = [];
+  Map<String, dynamic> _summary = {};
+  bool _isLoading = false;
   DateTime _startDate = DateTime.now().subtract(const Duration(days: 30));
   DateTime _endDate = DateTime.now();
-  String _groupBy = 'day'; // 'day', 'month', 'year'
-  bool _isLoading = false;
-  List<Map<String, dynamic>> _reportData = [];
-  Map<String, dynamic> _summary = {};
 
   @override
   void initState() {
     super.initState();
-    _loadReport();
+    _loadSalesReport();
   }
 
-  Future<void> _loadReport() async {
+  Future<void> _loadSalesReport() async {
     setState(() => _isLoading = true);
-    
     try {
       final reportData = await DatabaseService.instance.getSalesReport(
-        startDate: _startDate,
-        endDate: _endDate,
-        groupBy: _groupBy,
+        _startDate,
+        _endDate,
       );
-      
       final summary = await DatabaseService.instance.getSalesSummary(
         _startDate,
         _endDate,
       );
 
-      if (mounted) {
-        setState(() {
-          _reportData = reportData;
-          _summary = summary;
-          _isLoading = false;
-        });
-      }
+      setState(() {
+        _salesData = reportData;
+        _summary = summary;
+      });
     } catch (e) {
-      print('Error loading report: $e');
       if (mounted) {
-        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading sales report: $e')),
+        );
       }
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _selectDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDateRange: DateTimeRange(
+        start: _startDate,
+        end: _endDate,
+      ),
+    );
+
+    if (picked != null) {
+      setState(() {
+        _startDate = picked.start;
+        _endDate = picked.end;
+      });
+      await _loadSalesReport();
     }
   }
 
@@ -60,184 +76,202 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
     return Scaffold(
       body: Row(
         children: [
-          const Expanded(flex: 1, child: SideMenuWidget()),
+          const Expanded(
+            flex: 1,
+            child: SideMenuWidget(),
+          ),
           Expanded(
             flex: 4,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.amber.withOpacity(0.7),
-                    Colors.orange.shade900,
-                  ],
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : SingleChildScrollView(
                     padding: const EdgeInsets.all(defaultPadding),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Sales Report',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const Spacer(),
-                        // Date Range Picker
-                        TextButton.icon(
-                          icon: const Icon(Icons.calendar_today, color: Colors.white),
-                          label: Text(
-                            '${DateFormat('MMM d, y').format(_startDate)} - ${DateFormat('MMM d, y').format(_endDate)}',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          onPressed: () async {
-                            final picked = await showDateRangePicker(
-                              context: context,
-                              firstDate: DateTime(2020),
-                              lastDate: DateTime.now(),
-                              initialDateRange: DateTimeRange(
-                                start: _startDate,
-                                end: _endDate,
-                              ),
-                            );
-                            if (picked != null) {
-                              setState(() {
-                                _startDate = picked.start;
-                                _endDate = picked.end;
-                              });
-                              _loadReport();
-                            }
-                          },
-                        ),
-                        const SizedBox(width: defaultPadding),
-                        // Group By Dropdown
-                        DropdownButton<String>(
-                          value: _groupBy,
-                          dropdownColor: Colors.amber,
-                          style: const TextStyle(color: Colors.white),
-                          items: const [
-                            DropdownMenuItem(value: 'day', child: Text('Daily')),
-                            DropdownMenuItem(value: 'month', child: Text('Monthly')),
-                            DropdownMenuItem(value: 'year', child: Text('Yearly')),
-                          ],
-                          onChanged: (value) {
-                            if (value != null) {
-                              setState(() => _groupBy = value);
-                              _loadReport();
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Summary Cards
-                  Padding(
-                    padding: const EdgeInsets.all(defaultPadding),
-                    child: Row(
-                      children: [
-                        _buildSummaryCard(
-                          'Total Orders',
-                          _summary['total_orders']?.toString() ?? '0',
-                          Icons.shopping_cart,
-                          Colors.blue,
-                        ),
-                        _buildSummaryCard(
-                          'Total Buying Price',
-                          'KSH ${NumberFormat('#,##0.00').format(_summary['total_cost'] ?? 0)}',
-                          Icons.money,
-                          Colors.orange,
-                        ),
-                        _buildSummaryCard(
-                          'Total Selling Price',
-                          'KSH ${NumberFormat('#,##0.00').format(_summary['total_sales'] ?? 0)}',
-                          Icons.payments,
-                          Colors.green,
-                        ),
-                        _buildSummaryCard(
-                          'Total Profit',
-                          'KSH ${NumberFormat('#,##0.00').format(_summary['total_profit'] ?? 0)}',
-                          Icons.trending_up,
-                          Colors.purple,
-                        ),
-                      ],
-                    ),
-                  ),
-                  // Report Table
-                  Expanded(
-                    child: _isLoading
-                        ? const Center(child: CircularProgressIndicator())
-                        : SingleChildScrollView(
-                            padding: const EdgeInsets.all(defaultPadding),
-                            child: DataTable(
-                              columns: const [
-                                DataColumn(label: Text('Date')),
-                                DataColumn(label: Text('Product')),
-                                DataColumn(label: Text('Quantity')),
-                                DataColumn(label: Text('Buying Price')),
-                                DataColumn(label: Text('Selling Price')),
-                                DataColumn(label: Text('Total Sales')),
-                                DataColumn(label: Text('Total Cost')),
-                                DataColumn(label: Text('Profit')),
-                              ],
-                              rows: _reportData.map((item) {
-                                return DataRow(
-                                  cells: [
-                                    DataCell(Text(item['date'])),
-                                    DataCell(Text(item['product_name'])),
-                                    DataCell(Text('${item['total_quantity']} ${item['is_sub_unit'] == 1 ? (item['sub_unit_name'] ?? 'pieces') : 'units'}')),
-                                    DataCell(Text('KSH ${NumberFormat('#,##0.00').format(item['buying_price'])}')),
-                                    DataCell(Text('KSH ${NumberFormat('#,##0.00').format(item['selling_price'])}')),
-                                    DataCell(Text('KSH ${NumberFormat('#,##0.00').format(item['total_sales'])}')),
-                                    DataCell(Text('KSH ${NumberFormat('#,##0.00').format(item['total_cost'])}')),
-                                    DataCell(Text('KSH ${NumberFormat('#,##0.00').format(item['profit'])}')),
-                                  ],
-                                );
-                              }).toList(),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Sales Report',
+                              style: Theme.of(context).textTheme.titleLarge,
                             ),
-                          ),
+                            Row(
+                              children: [
+                                TextButton.icon(
+                                  icon: const Icon(Icons.calendar_today),
+                                  label: Text(
+                                    '${DateFormat('MMM dd, yyyy').format(_startDate)} - ${DateFormat('MMM dd, yyyy').format(_endDate)}',
+                                  ),
+                                  onPressed: _selectDateRange,
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.refresh),
+                                  onPressed: _loadSalesReport,
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: defaultPadding),
+                        _buildSummaryCards(),
+                        const SizedBox(height: defaultPadding),
+                        _buildSalesTable(),
+                      ],
+                    ),
                   ),
-                ],
-              ),
-            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSummaryCard(String title, String value, IconData icon, Color color) {
-    return Expanded(
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(defaultPadding),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(icon, color: color),
-                  const SizedBox(width: 8),
-                  Text(title),
-                ],
+  Widget _buildSummaryCards() {
+    // Safe number conversions for summary data
+    final totalSales = (_summary['total_sales'] as num?)?.toDouble() ?? 0.0;
+    final totalCost = (_summary['total_buying_cost'] as num?)?.toDouble() ?? 0.0;
+    final totalProfit = (_summary['total_profit'] as num?)?.toDouble() ?? 0.0;
+    final totalOrders = (_summary['total_orders'] as num?)?.toInt() ?? 0;
+    final totalQuantity = (_summary['total_quantity'] as num?)?.toInt() ?? 0;
+    final uniqueCustomers = (_summary['unique_customers'] as num?)?.toInt() ?? 0;
+
+    return GridView.count(
+      crossAxisCount: 3,
+      shrinkWrap: true,
+      crossAxisSpacing: defaultPadding,
+      mainAxisSpacing: defaultPadding,
+      childAspectRatio: 2,
+      physics: const NeverScrollableScrollPhysics(),
+      children: [
+        _buildSummaryCard(
+          'Total Sales',
+          'KSH ${totalSales.toStringAsFixed(2)}',
+          Colors.blue,
+          Icons.shopping_cart,
+        ),
+        _buildSummaryCard(
+          'Total Cost',
+          'KSH ${totalCost.toStringAsFixed(2)}',
+          Colors.orange,
+          Icons.inventory_2,
+        ),
+        _buildSummaryCard(
+          'Total Profit',
+          'KSH ${totalProfit.toStringAsFixed(2)}',
+          Colors.green,
+          Icons.trending_up,
+        ),
+        _buildSummaryCard(
+          'Total Orders',
+          totalOrders.toString(),
+          Colors.purple,
+          Icons.receipt_long,
+        ),
+        _buildSummaryCard(
+          'Items Sold',
+          '$totalQuantity units',
+          Colors.indigo,
+          Icons.inventory,
+        ),
+        _buildSummaryCard(
+          'Unique Customers',
+          uniqueCustomers.toString(),
+          Colors.teal,
+          Icons.people,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSalesTable() {
+    return Card(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          columns: const [
+            DataColumn(label: Text('Date')),
+            DataColumn(label: Text('Order #')),
+            DataColumn(label: Text('Customer')),
+            DataColumn(label: Text('Product')),
+            DataColumn(label: Text('Quantity')),
+            DataColumn(label: Text('Buying Price')),
+            DataColumn(label: Text('Selling Price')),
+            DataColumn(label: Text('Total')),
+            DataColumn(label: Text('Profit')),
+            DataColumn(label: Text('Margin %')),
+          ],
+          rows: _salesData.map((sale) {
+            // Safe number conversions with null checks
+            final buyingPrice = (sale['actual_buying_price'] as num?)?.toDouble() ?? 0.0;
+            final sellingPrice = (sale['actual_selling_price'] as num?)?.toDouble() ?? 0.0;
+            final quantity = (sale['quantity'] as num?)?.toDouble() ?? 0.0;
+            final total = (sale['item_total'] as num?)?.toDouble() ?? 0.0;
+            final profit = (sale['profit'] as num?)?.toDouble() ?? 0.0;
+            
+            // Avoid division by zero
+            final marginPercentage = buyingPrice > 0 ? 
+                (profit / (buyingPrice * quantity) * 100) : 0.0;
+
+            return DataRow(
+              cells: [
+                DataCell(Text(DateFormat('MMM dd, yyyy').format(
+                  DateTime.parse(sale['created_at'] as String)))),
+                DataCell(Text(sale['order_number']?.toString() ?? '-')),
+                DataCell(Text(sale['customer_name']?.toString() ?? '-')),
+                DataCell(Text('${sale['product_name']}${sale['is_sub_unit'] == 1 ? ' (${sale['sub_unit_name'] ?? 'piece'})' : ''}')),
+                DataCell(Text('${sale['quantity']}${sale['is_sub_unit'] == 1 ? ' ${sale['sub_unit_name'] ?? 'pieces'}' : ''}')),
+                DataCell(Text('KSH ${buyingPrice.toStringAsFixed(2)}')),
+                DataCell(Text('KSH ${sellingPrice.toStringAsFixed(2)}')),
+                DataCell(Text('KSH ${total.toStringAsFixed(2)}')),
+                DataCell(Text('KSH ${profit.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    color: profit >= 0 ? Colors.green : Colors.red,
+                    fontWeight: FontWeight.bold
+                  ))),
+                DataCell(Text('${marginPercentage.toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    color: marginPercentage >= 20 ? Colors.green : 
+                           marginPercentage >= 10 ? Colors.orange : Colors.red
+                  ))),
+              ],
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSummaryCard(String title, String value, Color color, IconData icon) {
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(defaultPadding),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 40,
+              color: color,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
               ),
-              const SizedBox(height: 8),
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: color,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

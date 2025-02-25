@@ -135,7 +135,49 @@ class DatabaseService {
       }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
 
-    // Create other tables with IF NOT EXISTS
+    // Create customers table first
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableCustomers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        total_orders INTEGER DEFAULT 0,
+        total_amount REAL DEFAULT 0.0,
+        last_order_date TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT
+      )
+    ''');
+
+    // Create creditors table
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableCreditors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        balance REAL NOT NULL,
+        details TEXT,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_updated TEXT
+      )
+    ''');
+
+    // Create debtors table
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableDebtors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        balance REAL NOT NULL,
+        details TEXT,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_updated TEXT
+      )
+    ''');
+
+    // Create products table
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tableProducts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,23 +201,7 @@ class DatabaseService {
       )
     ''');
 
-    // Create customers table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableCustomers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        phone TEXT,
-        email TEXT,
-        address TEXT,
-        total_orders INTEGER DEFAULT 0,
-        total_amount REAL DEFAULT 0.0,
-        last_order_date TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT
-      )
-    ''');
-
-    // Create orders table
+    // Create orders table with customer_id foreign key
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tableOrders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,32 +234,6 @@ class DatabaseService {
       )
     ''');
 
-    // Create creditors table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableCreditors (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        balance REAL NOT NULL,
-        details TEXT,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        last_updated TEXT
-      )
-    ''');
-
-    // Create debtors table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableDebtors (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        balance REAL NOT NULL,
-        details TEXT,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        last_updated TEXT
-      )
-    ''');
-
     // Create order_items table with proper relations
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tableOrderItems (
@@ -249,6 +249,7 @@ class DatabaseService {
         is_sub_unit INTEGER DEFAULT 0,
         sub_unit_name TEXT,
         sub_unit_quantity INTEGER,
+        status TEXT NOT NULL DEFAULT 'PENDING',
         FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
       )
@@ -258,14 +259,15 @@ class DatabaseService {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tableInvoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoice_number TEXT NOT NULL UNIQUE,
+        invoice_number TEXT NOT NULL,
         customer_id INTEGER NOT NULL,
+        customer_name TEXT,
         total_amount REAL NOT NULL,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        payment_status TEXT NOT NULL DEFAULT 'PENDING',
-        due_date TEXT,
+        completed_amount REAL NOT NULL,
+        pending_amount REAL NOT NULL,
+        status TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        updated_at TEXT,
+        due_date TEXT,
         FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
       )
     ''');
@@ -921,16 +923,17 @@ class DatabaseService {
   Future<void> updateCreditorBalanceAndStatus(
     int id,
     double newBalance,
-    String newStatus,
-    String lastUpdated,
+    String details,
+    String status,
   ) async {
     final db = await database;
     await db.update(
       tableCreditors,
       {
         'balance': newBalance,
-        'status': newStatus,
-        'last_updated': lastUpdated,
+        'details': details,
+        'status': status,
+        'last_updated': DateTime.now().toIso8601String(),
       },
       where: 'id = ?',
       whereArgs: [id],
@@ -962,16 +965,17 @@ class DatabaseService {
   Future<void> updateDebtorBalanceAndStatus(
     int id,
     double newBalance,
-    String newStatus,
-    String lastUpdated,
+    String details,
+    String status,
   ) async {
     final db = await database;
     await db.update(
       tableDebtors,
       {
         'balance': newBalance,
-        'status': newStatus,
-        'last_updated': lastUpdated,
+        'details': details,
+        'status': status,
+        'last_updated': DateTime.now().toIso8601String(),
       },
       where: 'id = ?',
       whereArgs: [id],
@@ -1363,23 +1367,63 @@ class DatabaseService {
     return result.isNotEmpty;
   }
 
-  // Update the getOrderItems method
-  Future<List<Map<String, dynamic>>> getOrderItems(int orderId) async {
+  // Update getOrderItems to handle both Map and OrderItem responses
+  Future<List<Map<String, dynamic>>> getOrderItems(
+    int orderId, {
+    String? status
+  }) async {
+    final db = await database;
+    try {
+      String query = '''
+        SELECT 
+          oi.*,
+          p.product_name,
+          p.buying_price,
+          p.sub_unit_quantity,
+          o.status as order_status,
+          o.customer_name,
+          o.order_number
+        FROM $tableOrderItems oi
+        JOIN $tableOrders o ON oi.order_id = o.id
+        JOIN $tableProducts p ON oi.product_id = p.id
+        WHERE oi.order_id = ?
+      ''';
+      
+      List<dynamic> args = [orderId];
+      if (status != null) {
+        query += ' AND o.status = ?';
+        args.add(status);
+      }
+      
+      query += ' ORDER BY oi.id';
+      
+      final results = await db.rawQuery(query, args);
+      return results;
+    } catch (e) {
+      print('Error getting order items: $e');
+      return [];
+    }
+  }
+
+  // Add a separate method for invoice items if needed
+  Future<List<Map<String, dynamic>>> getInvoiceOrderItems(int invoiceId) async {
     final db = await database;
     try {
       return await db.rawQuery('''
         SELECT 
           oi.*,
           p.product_name,
-          p.sub_unit_name,
-          p.sub_unit_quantity
-        FROM $tableOrderItems oi
-        LEFT JOIN $tableProducts p ON oi.product_id = p.id
-        WHERE oi.order_id = ?
-        ORDER BY oi.id ASC
-      ''', [orderId]);
+          o.status as order_status,
+          o.order_number
+        FROM $tableOrders o
+        JOIN $tableOrderItems oi ON o.id = oi.order_id
+        JOIN $tableProducts p ON oi.product_id = p.id
+        JOIN invoice_orders io ON o.id = io.order_id
+        WHERE io.invoice_id = ?
+        ORDER BY o.order_number, oi.id
+      ''', [invoiceId]);
     } catch (e) {
-      print('Error getting order items: $e');
+      print('Error getting invoice order items: $e');
       return [];
     }
   }
@@ -1469,355 +1513,311 @@ class DatabaseService {
     return await db.query('invoices', orderBy: 'created_at DESC');
   }
 
-  Future<List<Map<String, dynamic>>> getOrdersByCustomerId(int customerId) async {
-    final db = await database;
-    return await db.rawQuery('''
-      SELECT 
-        o.*,
-        oi.id as item_id,
-        oi.product_id,
-        oi.quantity,
-        oi.unit_price,
-        oi.selling_price,
-        oi.adjusted_price,
-        oi.total_amount,
-        oi.is_sub_unit,
-        oi.sub_unit_name,
-        p.product_name,
-        c.name as customer_name
-      FROM $tableOrders o
-      JOIN $tableOrderItems oi ON o.id = oi.order_id
-      JOIN $tableProducts p ON oi.product_id = p.id
-      JOIN $tableCustomers c ON o.customer_name = c.name
-      WHERE c.id = ? AND o.status = 'COMPLETED'
-      ORDER BY o.created_at DESC
-    ''', [customerId]);
-  }
+  // Simplified invoice creation with proper transaction handling
+  Future<Invoice> createInvoiceWithItems(Invoice invoice) async {
+    return await _lock.synchronized(() async {
+      final db = await database;
+      return await db.transaction((txn) async {
+        try {
+          // Insert invoice in a single transaction
+          final invoiceId = await txn.insert(tableInvoices, {
+            'invoice_number': invoice.invoiceNumber,
+            'customer_id': invoice.customerId,
+            'customer_name': invoice.customerName,
+            'total_amount': invoice.totalAmount,
+            'completed_amount': invoice.completedAmount,
+            'pending_amount': invoice.pendingAmount,
+            'status': invoice.status,
+            'created_at': invoice.createdAt.toIso8601String(),
+            'due_date': invoice.dueDate?.toIso8601String(),
+          });
 
-  Future<double> calculateCustomerTotal(int customerId) async {
-    final db = await database;
-    final result = await db.rawQuery('''
-      SELECT SUM(total_amount) as total
-      FROM $tableOrders o
-      JOIN $tableCustomers c ON o.customer_name = c.name
-      WHERE c.id = ? AND o.status = 'COMPLETED'
-    ''', [customerId]);
-    return (result.first['total'] as num?)?.toDouble() ?? 0.0;
-  }
+          // Update order statuses in the same transaction
+          if (invoice.completedItems != null) {
+            for (var item in invoice.completedItems!) {
+              await txn.update(
+                tableOrders,
+                {'status': 'INVOICED'},
+                where: 'id = ?',
+                whereArgs: [item.orderId],
+              );
+            }
+          }
 
-  Future<void> createInvoice(Invoice invoice) async {
-    final db = await database;
-    await db.transaction((txn) async {
-      // Ensure customer exists
-      if (invoice.customerName != null) {
-        await ensureCustomerExists(invoice.customerName!);
-        final customer = await getCustomerByName(invoice.customerName!);
-        if (customer != null) {
-          // Update any orders that match this customer name but don't have customer_id
-          await txn.update(
-            tableOrders,
-            {'customer_id': customer['id']},
-            where: 'customer_name = ? AND customer_id IS NULL',
-            whereArgs: [invoice.customerName],
-          );
+          return invoice.copyWith(id: invoiceId);
+        } catch (e) {
+          print('Error creating invoice: $e');
+          rethrow;
         }
-      }
-      
-      // Insert invoice
-      final invoiceId = await txn.insert(tableInvoices, invoice.toMap());
-      
-      // Update orders status
-      if (invoice.items != null) {
-        for (var item in invoice.items!) {
-          await txn.update(
-            tableOrders,
-            {'status': 'INVOICED'},
-            where: 'id = ?',
-            whereArgs: [item.orderId],
-          );
-        }
-      }
+      });
     });
   }
 
-  Future<List<Map<String, dynamic>>> getSalesReport({
-    required DateTime startDate,
-    required DateTime endDate,
-    String? groupBy, // 'day', 'month', or 'year'
+  // Simplified method to get orders by customer
+  Future<List<Map<String, dynamic>>> getOrdersByCustomerId(
+    int customerId, {
+    String? status,
+    Transaction? txn,
+  }) async {
+    final db = await database;
+    final queryExecutor = txn ?? db;
+
+    final query = '''
+      SELECT 
+        o.id as order_id,
+        o.status,
+        o.created_at,
+        o.total_amount,
+        o.customer_id,
+        o.customer_name
+      FROM $tableOrders o
+      WHERE o.customer_id = ? 
+      AND o.status != 'INVOICED'
+      ${status != null ? 'AND o.status = ?' : ''}
+      ORDER BY o.created_at DESC
+    ''';
+
+    return await queryExecutor.rawQuery(
+      query, 
+      status != null ? [customerId, status] : [customerId],
+    );
+  }
+
+  // Simple method to get invoices with basic filtering
+  Future<List<Map<String, dynamic>>> getInvoices({
+    DateTime? startDate,
+    DateTime? endDate,
+    String? searchQuery,
   }) async {
     final db = await database;
     
-    String groupByClause = '';
-    String dateFormat = '';
-    
-    switch (groupBy?.toLowerCase()) {
-      case 'month':
-        dateFormat = '%Y-%m';
-        groupByClause = "strftime('%Y-%m', o.created_at)";
-        break;
-      case 'year':
-        dateFormat = '%Y';
-        groupByClause = "strftime('%Y', o.created_at)";
-        break;
-      default: // day
-        dateFormat = '%Y-%m-%d';
-        groupByClause = "date(o.created_at)";
+    String whereClause = '1=1';
+    List<dynamic> whereArgs = [];
+
+    if (startDate != null) {
+      whereClause += ' AND date(created_at) >= date(?)';
+      whereArgs.add(startDate.toIso8601String());
+    }
+    if (endDate != null) {
+      whereClause += ' AND date(created_at) <= date(?)';
+      whereArgs.add(endDate.toIso8601String());
+    }
+    if (searchQuery != null && searchQuery.isNotEmpty) {
+      whereClause += ' AND (invoice_number LIKE ? OR customer_name LIKE ?)';
+      whereArgs.addAll(['%$searchQuery%', '%$searchQuery%']);
     }
 
-    try {
-      return await db.rawQuery('''
-        SELECT 
-          $groupByClause as date,
-          p.product_name,
-          SUM(oi.quantity) as total_quantity,
-          oi.unit_price as buying_price,
-          oi.selling_price,
-          SUM(oi.total_amount) as total_sales,
-          SUM(oi.quantity * oi.unit_price) as total_cost,
-          SUM(oi.total_amount - (oi.quantity * oi.unit_price)) as profit,
-          oi.is_sub_unit,
-          oi.sub_unit_name
-        FROM $tableOrders o
-        JOIN $tableOrderItems oi ON o.id = oi.order_id
-        JOIN $tableProducts p ON oi.product_id = p.id
-        WHERE o.status = 'COMPLETED'
-        AND date(o.created_at) BETWEEN date(?) AND date(?)
-        GROUP BY 
-          $groupByClause,
-          p.product_name,
-          oi.unit_price,
-          oi.selling_price,
-          oi.is_sub_unit,
-          oi.sub_unit_name
-        ORDER BY date DESC, p.product_name
-      ''', [
-        startDate.toIso8601String(),
-        endDate.toIso8601String(),
-      ]);
-    } catch (e) {
-      print('Error getting sales report: $e');
-      return [];
-    }
-  }
-
-  Future<Map<String, dynamic>> getSalesSummary(
-    DateTime startDate,
-    DateTime endDate,
-  ) async {
-    return await withTransaction((txn) async {
-      final result = await txn.rawQuery('''
-        SELECT 
-          COUNT(*) as total_orders,
-          SUM(total_amount) as total_sales,
-          SUM(CASE WHEN payment_status = 'PAID' THEN total_amount ELSE 0 END) as paid_amount,
-          SUM(CASE WHEN payment_status = 'PENDING' THEN total_amount ELSE 0 END) as pending_amount
-        FROM orders 
-        WHERE created_at BETWEEN ? AND ?
-      ''', [
-        startDate.toIso8601String(),
-        endDate.toIso8601String(),
-      ]);
-
-      return result.first;
-    });
-  }
-
-  Future<List<Map<String, dynamic>>> getOrdersByCustomerName(String customerName) async {
-    final db = await database;
-    return await db.rawQuery('''
-      SELECT 
-        o.*,
-        oi.id as item_id,
-        oi.product_id,
-        oi.quantity,
-        oi.unit_price,
-        oi.selling_price,
-        oi.adjusted_price,
-        oi.total_amount,
-        oi.is_sub_unit,
-        oi.sub_unit_name,
-        p.product_name,
-        c.name as customer_name
-      FROM $tableOrders o
-      JOIN $tableOrderItems oi ON o.id = oi.order_id
-      JOIN $tableProducts p ON oi.product_id = p.id
-      LEFT JOIN $tableCustomers c ON o.customer_id = c.id
-      WHERE o.customer_name = ? OR c.name = ?
-      AND o.status = 'COMPLETED'
-      ORDER BY o.created_at DESC
-    ''', [customerName, customerName]);
-  }
-
-  Future<int> createCustomer(Customer customer) async {
-    final db = await database;
-    return await db.insert(
-      tableCustomers,
-      customer.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.abort
-    );
-  }
-
-  Future<void> updateCustomerStats(int customerId, double orderAmount) async {
-    final db = await database;
-    await db.transaction((txn) async {
-      await txn.rawUpdate('''
-        UPDATE $tableCustomers 
-        SET total_orders = total_orders + 1,
-            total_amount = total_amount + ?,
-            last_order_date = ?,
-            updated_at = ?
-        WHERE id = ?
-      ''', [
-        orderAmount,
-        DateTime.now().toIso8601String(),
-        DateTime.now().toIso8601String(),
-        customerId,
-      ]);
-    });
-  }
-
-  Future<Map<String, dynamic>> getCustomerDetails(int customerId) async {
-    final db = await database;
-    final results = await db.rawQuery('''
-      SELECT 
-        c.*,
-        COUNT(DISTINCT o.id) as total_orders,
-        COUNT(DISTINCT i.id) as total_invoices,
-        SUM(CASE WHEN o.status = 'COMPLETED' THEN o.total_amount ELSE 0 END) as total_completed_sales,
-        SUM(CASE WHEN i.payment_status = 'PENDING' THEN i.total_amount ELSE 0 END) as pending_payments
-      FROM $tableCustomers c
-      LEFT JOIN $tableOrders o ON c.id = o.customer_id
-      LEFT JOIN $tableInvoices i ON c.id = i.customer_id
-      WHERE c.id = ?
-      GROUP BY c.id
-    ''', [customerId]);
-    
-    return results.isNotEmpty ? results.first : {};
-  }
-
-  Future<List<Map<String, dynamic>>> getCustomerOrders(int customerId) async {
-    final db = await database;
-    return await db.rawQuery('''
-      SELECT 
-        o.*,
-        GROUP_CONCAT(json_object(
-          'product_id', oi.product_id,
-          'quantity', oi.quantity,
-          'unit_price', oi.unit_price,
-          'selling_price', oi.selling_price,
-          'total_amount', oi.total_amount,
-          'product_name', p.product_name
-        )) as items_json
-      FROM $tableOrders o
-      LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
-      LEFT JOIN $tableProducts p ON oi.product_id = p.id
-      WHERE o.customer_id = ?
-      GROUP BY o.id
-      ORDER BY o.created_at DESC
-    ''', [customerId]);
-  }
-
-  Future<List<Map<String, dynamic>>> getCustomerInvoices(int customerId) async {
-    final db = await database;
     return await db.query(
       tableInvoices,
-      where: 'customer_id = ?',
-      whereArgs: [customerId],
-      orderBy: 'created_at DESC'
+      where: whereClause,
+      whereArgs: whereArgs,
+      orderBy: 'created_at DESC',
     );
-  }
-
-  Future<void> linkOrderToCustomer(int orderId, int customerId) async {
-    final db = await database;
-    await db.transaction((txn) async {
-      // Update the order
-      await txn.update(
-        tableOrders,
-        {'customer_id': customerId},
-        where: 'id = ?',
-        whereArgs: [orderId]
-      );
-
-      // Get the order amount
-      final orderResult = await txn.query(
-        tableOrders,
-        columns: ['total_amount'],
-        where: 'id = ?',
-        whereArgs: [orderId],
-        limit: 1
-      );
-
-      if (orderResult.isNotEmpty) {
-        final orderAmount = orderResult.first['total_amount'] as double;
-        // Update customer stats
-        await updateCustomerStats(customerId, orderAmount);
-      }
-    });
   }
 
   Future<void> _migrateCustomerData(Database db) async {
     try {
       print('Starting customer data migration...');
       
-      // Add new columns if they don't exist
-      var tableInfo = await db.rawQuery('PRAGMA table_info($tableCustomers)');
-      bool hasTotalOrders = tableInfo.any((column) => column['name'] == 'total_orders');
-      bool hasTotalAmount = tableInfo.any((column) => column['name'] == 'total_amount');
-      bool hasLastOrderDate = tableInfo.any((column) => column['name'] == 'last_order_date');
+      // First check if the customer_id column exists in orders table
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableOrders)');
+      bool hasCustomerId = tableInfo.any((column) => column['name'] == 'customer_id');
       
-      if (!hasTotalOrders) {
-        await db.execute('ALTER TABLE $tableCustomers ADD COLUMN total_orders INTEGER DEFAULT 0');
-      }
-      if (!hasTotalAmount) {
-        await db.execute('ALTER TABLE $tableCustomers ADD COLUMN total_amount REAL DEFAULT 0.0');
-      }
-      if (!hasLastOrderDate) {
-        await db.execute('ALTER TABLE $tableCustomers ADD COLUMN last_order_date TEXT');
+      if (!hasCustomerId) {
+        // Add customer_id column if it doesn't exist
+        await db.execute('ALTER TABLE $tableOrders ADD COLUMN customer_id INTEGER REFERENCES $tableCustomers (id)');
       }
 
-      // Check if customer_name column exists in orders table
-      tableInfo = await db.rawQuery('PRAGMA table_info($tableOrders)');
-      bool hasCustomerName = tableInfo.any((column) => column['name'] == 'customer_name');
+      // Get all customers
+      final customers = await db.query(tableCustomers);
       
-      if (!hasCustomerName) {
-        await db.execute('ALTER TABLE $tableOrders ADD COLUMN customer_name TEXT');
+      for (var customer in customers) {
+        // Get orders for this customer by name
+        final orders = await db.query(
+          tableOrders,
+          where: 'customer_name = ?',
+          whereArgs: [customer['name']],
+        );
         
-        // Update existing orders with customer names
-        await db.rawUpdate('''
-          UPDATE $tableOrders o
-          SET customer_name = (
-            SELECT name 
-            FROM $tableCustomers c 
-            WHERE c.id = o.customer_id
-          )
-          WHERE o.customer_name IS NULL AND o.customer_id IS NOT NULL
-        ''');
+        if (orders.isNotEmpty) {
+          // Update customer statistics
+          final totalOrders = orders.length;
+          final totalAmount = orders.fold<double>(
+            0.0,
+            (sum, order) => sum + (order['total_amount'] as num).toDouble(),
+          );
+          final lastOrderDate = orders
+              .map((o) => DateTime.parse(o['created_at'] as String))
+              .reduce((a, b) => a.isAfter(b) ? a : b)
+              .toIso8601String();
+
+          // Update customer record
+          await db.update(
+            tableCustomers,
+            {
+              'total_orders': totalOrders,
+              'total_amount': totalAmount,
+              'last_order_date': lastOrderDate,
+              'updated_at': DateTime.now().toIso8601String(),
+            },
+            where: 'id = ?',
+            whereArgs: [customer['id']],
+          );
+
+          // Update orders with customer_id
+          for (var order in orders) {
+            await db.update(
+              tableOrders,
+              {'customer_id': customer['id']},
+              where: 'id = ?',
+              whereArgs: [order['id']],
+            );
+          }
+        }
       }
-
-      // Update customer statistics
-      await db.rawUpdate('''
-        UPDATE $tableCustomers
-        SET total_orders = (
-          SELECT COUNT(*) 
-          FROM $tableOrders 
-          WHERE customer_id = $tableCustomers.id
-        ),
-        total_amount = (
-          SELECT COALESCE(SUM(total_amount), 0) 
-          FROM $tableOrders 
-          WHERE customer_id = $tableCustomers.id
-        ),
-        last_order_date = (
-          SELECT MAX(created_at) 
-          FROM $tableOrders 
-          WHERE customer_id = $tableCustomers.id
-        )
-      ''');
-
+      
       print('Customer data migration completed successfully.');
     } catch (e) {
       print('Error during customer data migration: $e');
-      rethrow;
     }
+  }
+
+  // Update getSalesReport method to include proper price calculations
+  Future<List<Map<String, dynamic>>> getSalesReport(
+    DateTime startDate,
+    DateTime endDate,
+  ) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT 
+        o.id as order_id,
+        o.order_number,
+        o.created_at,
+        o.customer_name,
+        oi.product_id,
+        oi.quantity,
+        p.product_name,
+        p.buying_price as unit_buying_price,
+        p.sub_unit_quantity,
+        p.sub_unit_price,
+        oi.is_sub_unit,
+        oi.sub_unit_name,
+        CASE 
+          WHEN oi.is_sub_unit = 1 AND p.sub_unit_price IS NOT NULL 
+          THEN p.sub_unit_price
+          ELSE oi.selling_price
+        END as actual_selling_price,
+        CASE 
+          WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0
+          THEN p.buying_price / p.sub_unit_quantity
+          ELSE p.buying_price
+        END as actual_buying_price,
+        oi.total_amount as item_total,
+        CASE 
+          WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0 AND p.sub_unit_price IS NOT NULL
+          THEN (p.sub_unit_price - (p.buying_price / p.sub_unit_quantity)) * oi.quantity
+          ELSE (oi.selling_price - p.buying_price) * oi.quantity
+        END as profit
+      FROM $tableOrders o
+      JOIN $tableOrderItems oi ON o.id = oi.order_id
+      JOIN $tableProducts p ON oi.product_id = p.id
+      WHERE o.status = 'COMPLETED'
+      AND date(o.created_at) BETWEEN date(?) AND date(?)
+      ORDER BY o.created_at DESC
+    ''', [startDate.toIso8601String(), endDate.toIso8601String()]);
+  }
+
+  // Update getSalesSummary for accurate profit calculation
+  Future<Map<String, dynamic>> getSalesSummary(
+    DateTime startDate,
+    DateTime endDate,
+  ) async {
+    final db = await database;
+    final results = await db.rawQuery('''
+      SELECT
+        COUNT(DISTINCT o.id) as total_orders,
+        SUM(
+          CASE 
+            WHEN oi.is_sub_unit = 1 AND p.sub_unit_price IS NOT NULL
+            THEN p.sub_unit_price * oi.quantity
+            ELSE oi.selling_price * oi.quantity
+          END
+        ) as total_sales,
+        SUM(
+          CASE 
+            WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0
+            THEN (p.buying_price / p.sub_unit_quantity) * oi.quantity
+            ELSE p.buying_price * oi.quantity
+          END
+        ) as total_buying_cost,
+        SUM(
+          CASE 
+            WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0 AND p.sub_unit_price IS NOT NULL
+            THEN (p.sub_unit_price - (p.buying_price / p.sub_unit_quantity)) * oi.quantity
+            ELSE (oi.selling_price - p.buying_price) * oi.quantity
+          END
+        ) as total_profit,
+        COUNT(DISTINCT o.customer_id) as unique_customers,
+        COUNT(oi.id) as total_items,
+        SUM(oi.quantity) as total_quantity
+      FROM $tableOrders o
+      JOIN $tableOrderItems oi ON o.id = oi.order_id
+      JOIN $tableProducts p ON oi.product_id = p.id
+      WHERE o.status = 'COMPLETED'
+      AND date(o.created_at) BETWEEN date(?) AND date(?)
+    ''', [startDate.toIso8601String(), endDate.toIso8601String()]);
+
+    final data = results.first;
+    return {
+      'total_orders': (data['total_orders'] as num?)?.toInt() ?? 0,
+      'total_sales': (data['total_sales'] as num?)?.toDouble() ?? 0.0,
+      'total_buying_cost': (data['total_buying_cost'] as num?)?.toDouble() ?? 0.0,
+      'total_profit': (data['total_profit'] as num?)?.toDouble() ?? 0.0,
+      'unique_customers': (data['unique_customers'] as num?)?.toInt() ?? 0,
+      'total_items': (data['total_items'] as num?)?.toInt() ?? 0,
+      'total_quantity': (data['total_quantity'] as num?)?.toInt() ?? 0
+    };
+  }
+
+  // Update createCustomer to handle both Map and Customer objects
+  Future<int> createCustomer(dynamic customerData) async {
+    final Map<String, dynamic> customerMap;
+    if (customerData is Customer) {
+      customerMap = customerData.toMap();
+    } else if (customerData is Map<String, dynamic>) {
+      customerMap = customerData;
+    } else {
+      throw ArgumentError('Invalid customer data type');
+    }
+
+    return await withTransaction((txn) async {
+      try {
+        // Check if customer already exists
+        final existing = await txn.query(
+          tableCustomers,
+          where: 'name = ?',
+          whereArgs: [customerMap['name']],
+          limit: 1,
+        );
+
+        if (existing.isNotEmpty) {
+          return existing.first['id'] as int;
+        }
+
+        // Create new customer
+        return await txn.insert(
+          tableCustomers,
+          {
+            ...customerMap,
+            'created_at': DateTime.now().toIso8601String(),
+            'total_orders': 0,
+            'total_amount': 0.0,
+          },
+        );
+      } catch (e) {
+        print('Error creating customer: $e');
+        rethrow;
+      }
+    });
   }
 }

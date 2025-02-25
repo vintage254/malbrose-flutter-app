@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:my_flutter_app/models/product_model.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/cart_item_model.dart';
+import 'package:my_flutter_app/services/database.dart';
 
-class OrderReceiptDialog extends StatelessWidget {
+class OrderReceiptDialog extends StatefulWidget {
   final List<CartItem> items;
   final String? customerName;
 
@@ -14,8 +15,22 @@ class OrderReceiptDialog extends StatelessWidget {
   });
 
   @override
+  State<OrderReceiptDialog> createState() => _OrderReceiptDialogState();
+}
+
+class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
+  late List<CartItem> _orderItems;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _orderItems = widget.items;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final totalAmount = items.fold<double>(
+    final totalAmount = _orderItems.fold<double>(
       0,
       (sum, item) => sum + item.total,
     );
@@ -31,10 +46,10 @@ class OrderReceiptDialog extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: defaultPadding),
             Text('Date: ${DateTime.now().toString()}'),
-            if (customerName != null && customerName!.isNotEmpty)
-              Text('Customer: $customerName'),
+            if (widget.customerName != null && widget.customerName!.isNotEmpty)
+              Text('Customer: ${widget.customerName}'),
             const Divider(),
-            ...items.map((item) => Padding(
+            ..._orderItems.map((item) => Padding(
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,

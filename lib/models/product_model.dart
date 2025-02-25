@@ -72,4 +72,18 @@ class Product {
       updatedBy: map['updated_by'] as int?,
     );
   }
+
+  double getSellingPrice({bool isSubUnit = false}) {
+    if (isSubUnit && hasSubUnits && subUnitPrice != null) {
+      return subUnitPrice!;
+    }
+    return sellingPrice;
+  }
+
+  double getBuyingPrice({bool isSubUnit = false}) {
+    if (isSubUnit && hasSubUnits && subUnitQuantity != null && subUnitQuantity! > 0) {
+      return buyingPrice / subUnitQuantity!;
+    }
+    return buyingPrice;
+  }
 }

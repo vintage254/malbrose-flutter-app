@@ -3,6 +3,7 @@ import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/invoice_model.dart';
 import 'package:my_flutter_app/models/customer_model.dart';
 import 'package:intl/intl.dart';
+import 'package:my_flutter_app/models/order_model.dart';
 
 class InvoicePreviewWidget extends StatelessWidget {
   final Invoice invoice;
@@ -36,82 +37,15 @@ class InvoicePreviewWidget extends StatelessWidget {
                 _buildInfoRow('Due Date:', DateFormat('MMM dd, yyyy').format(invoice.dueDate!)),
               _buildInfoRow('Status:', invoice.status),
               const SizedBox(height: defaultPadding),
-              if (invoice.items != null && invoice.items!.isNotEmpty) ...[
-                const Text('Items:', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: defaultPadding / 2),
-                Table(
-                  columnWidths: const {
-                    0: FlexColumnWidth(2),  // Product
-                    1: FlexColumnWidth(1),  // Quantity
-                    2: FlexColumnWidth(1),  // Price
-                    3: FlexColumnWidth(1),  // Total
-                  },
-                  border: TableBorder.all(color: Colors.grey.shade300),
-                  children: [
-                    const TableRow(
-                      decoration: BoxDecoration(
-                        color: Colors.grey,
-                      ),
-                      children: [
-                        TableCell(
-                          child: Padding(
-                            padding: EdgeInsets.all(8.0),
-                            child: Text('Product', style: TextStyle(fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                        TableCell(
-                          child: Padding(
-                            padding: EdgeInsets.all(8.0),
-                            child: Text('Quantity', style: TextStyle(fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                        TableCell(
-                          child: Padding(
-                            padding: EdgeInsets.all(8.0),
-                            child: Text('Price', style: TextStyle(fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                        TableCell(
-                          child: Padding(
-                            padding: EdgeInsets.all(8.0),
-                            child: Text('Total', style: TextStyle(fontWeight: FontWeight.bold)),
-                          ),
-                        ),
-                      ],
-                    ),
-                    ...invoice.items!.map((item) => TableRow(
-                      children: [
-                        TableCell(
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Text(item.productName),
-                          ),
-                        ),
-                        TableCell(
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Text(
-                              '${item.quantity} ${item.isSubUnit ? (item.subUnitName ?? "pieces") : "units"}'
-                            ),
-                          ),
-                        ),
-                        TableCell(
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Text('KSH ${item.adjustedPrice.toStringAsFixed(2)}'),
-                          ),
-                        ),
-                        TableCell(
-                          child: Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Text('KSH ${item.totalAmount.toStringAsFixed(2)}'),
-                          ),
-                        ),
-                      ],
-                    )).toList(),
-                  ],
-                ),
-              ],
+              
+              // Completed Orders Section
+              if (invoice.completedItems != null && invoice.completedItems!.isNotEmpty)
+                _buildOrdersSection('Completed Orders', invoice.completedItems!, invoice.completedAmount),
+              
+              // Pending Orders Section
+              if (invoice.pendingItems != null && invoice.pendingItems!.isNotEmpty)
+                _buildOrdersSection('Pending Orders', invoice.pendingItems!, invoice.pendingAmount),
+              
               const SizedBox(height: defaultPadding),
               Align(
                 alignment: Alignment.centerRight,
@@ -158,6 +92,84 @@ class InvoicePreviewWidget extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildOrdersSection(String title, List<OrderItem> items, double sectionTotal) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 16,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Table(
+          columnWidths: const {
+            0: FlexColumnWidth(2),
+            1: FlexColumnWidth(1),
+            2: FlexColumnWidth(1),
+            3: FlexColumnWidth(1),
+          },
+          border: TableBorder.all(color: Colors.grey.shade300),
+          children: [
+            const TableRow(
+              decoration: BoxDecoration(color: Colors.grey),
+              children: [
+                TableCell(child: Padding(
+                  padding: EdgeInsets.all(8.0),
+                  child: Text('Product', style: TextStyle(fontWeight: FontWeight.bold)),
+                )),
+                TableCell(child: Padding(
+                  padding: EdgeInsets.all(8.0),
+                  child: Text('Quantity', style: TextStyle(fontWeight: FontWeight.bold)),
+                )),
+                TableCell(child: Padding(
+                  padding: EdgeInsets.all(8.0),
+                  child: Text('Price', style: TextStyle(fontWeight: FontWeight.bold)),
+                )),
+                TableCell(child: Padding(
+                  padding: EdgeInsets.all(8.0),
+                  child: Text('Total', style: TextStyle(fontWeight: FontWeight.bold)),
+                )),
+              ],
+            ),
+            ...items.map((item) => TableRow(
+              children: [
+                TableCell(child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Text(item.productName),
+                )),
+                TableCell(child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Text('${item.quantity} ${item.isSubUnit ? item.subUnitName ?? "pieces" : "units"}'),
+                )),
+                TableCell(child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Text('KSH ${item.adjustedPrice.toStringAsFixed(2)}'),
+                )),
+                TableCell(child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Text('KSH ${item.totalAmount.toStringAsFixed(2)}'),
+                )),
+              ],
+            )).toList(),
+          ],
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Text(
+              'Subtotal: KSH ${sectionTotal.toStringAsFixed(2)}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+      ],
     );
   }
 } 

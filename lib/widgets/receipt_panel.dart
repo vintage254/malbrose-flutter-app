@@ -35,29 +35,24 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
 
   Future<void> _loadOrderItems() async {
     try {
-      if (widget.order.id == null) {
-        setState(() {
-          _orderItems = [];
-          _isLoading = false;
-        });
-        return;
-      }
-
-      final items = await DatabaseService.instance.getOrderItems(widget.order.id!);
-      
-      if (mounted) {
-        setState(() {
-          _orderItems = items;
-          _isLoading = false;
-        });
+      if (widget.order.id != null) {
+        final items = await DatabaseService.instance.getOrderItems(widget.order.id!);
+        if (mounted) {
+          setState(() {
+            _orderItems = items;  // Keep as Map<String, dynamic>
+            _isLoading = false;
+          });
+        }
       }
     } catch (e) {
       print('Error loading order items: $e');
       if (mounted) {
         setState(() {
-          _orderItems = [];
           _isLoading = false;
         });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading order items: $e')),
+        );
       }
     }
   }

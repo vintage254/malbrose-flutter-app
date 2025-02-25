@@ -73,57 +73,46 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   }
 
   Future<void> _loadInvoices() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
+    
     try {
-      final invoicesData = await DatabaseService.instance.getAllInvoices();
       final List<Invoice> loadedInvoices = [];
+      final invoicesData = await DatabaseService.instance.getInvoices(
+        startDate: _startDate,
+        endDate: _endDate,
+        searchQuery: _searchQuery,
+      );
 
       for (var invoiceData in invoicesData) {
-        // Filter by customer if selected
-        if (_selectedCustomer != null && 
-            invoiceData['customer_id'] != _selectedCustomer!.id) {
-          continue;
-        }
-        
-        // Filter by date range if selected
-        final createdAt = DateTime.parse(invoiceData['created_at'] as String);
-        if (_startDate != null && createdAt.isBefore(_startDate!)) {
-          continue;
-        }
-        if (_endDate != null && createdAt.isAfter(_endDate!)) {
-          continue;
-        }
-
         // Load order items for this invoice
-        final orderItems = await DatabaseService.instance.getOrderItems(invoiceData['id'] as int);
-        final items = orderItems.map((item) => OrderItem(
-          id: item['id'] as int?,
-          orderId: item['order_id'] as int,
-          productId: item['product_id'] as int,
-          quantity: item['quantity'] as int,
-          unitPrice: (item['unit_price'] as num).toDouble(),
-          sellingPrice: (item['selling_price'] as num).toDouble(),
-          adjustedPrice: (item['adjusted_price'] as num?)?.toDouble() ?? 
-                        (item['selling_price'] as num).toDouble(),
-          totalAmount: (item['total_amount'] as num).toDouble(),
-          productName: item['product_name'] as String,
-          isSubUnit: (item['is_sub_unit'] as int?) == 1,
-          subUnitName: item['sub_unit_name'] as String?,
-        )).toList();
+        final completedItems = await DatabaseService.instance.getOrderItems(
+          invoiceData['id'] as int,
+          status: 'COMPLETED',
+        );
+        
+        final pendingItems = await DatabaseService.instance.getOrderItems(
+          invoiceData['id'] as int,
+          status: 'PENDING',
+        );
 
-        // Create Invoice object with items
+        // Create Invoice object
         final invoice = Invoice(
           id: invoiceData['id'] as int?,
           invoiceNumber: invoiceData['invoice_number'] as String,
           customerId: invoiceData['customer_id'] as int,
           customerName: invoiceData['customer_name'] as String?,
           totalAmount: (invoiceData['total_amount'] as num).toDouble(),
+          completedAmount: (invoiceData['completed_amount'] as num?)?.toDouble() ?? 0.0,
+          pendingAmount: (invoiceData['pending_amount'] as num?)?.toDouble() ?? 0.0,
           status: invoiceData['status'] as String,
+          paymentStatus: invoiceData['payment_status'] as String,
           createdAt: DateTime.parse(invoiceData['created_at'] as String),
           dueDate: invoiceData['due_date'] != null 
               ? DateTime.parse(invoiceData['due_date'] as String)
               : null,
-          items: items,
+          completedItems: _mapOrderItems(completedItems),
+          pendingItems: _mapOrderItems(pendingItems),
         );
 
         loadedInvoices.add(invoice);
@@ -140,10 +129,30 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
       if (mounted) {
         setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading invoices: $e')),
+          SnackBar(
+            content: Text('Failed to load invoices: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
+  }
+
+  List<OrderItem> _mapOrderItems(List<Map<String, dynamic>> items) {
+    return items.map((item) => OrderItem(
+      id: item['id'] as int?,
+      orderId: item['order_id'] as int,
+      productId: item['product_id'] as int,
+      quantity: item['quantity'] as int,
+      unitPrice: (item['unit_price'] as num).toDouble(),
+      sellingPrice: (item['selling_price'] as num).toDouble(),
+      adjustedPrice: (item['adjusted_price'] as num?)?.toDouble() ?? 
+                    (item['selling_price'] as num).toDouble(),
+      totalAmount: (item['total_amount'] as num).toDouble(),
+      productName: item['product_name'] as String,
+      isSubUnit: (item['is_sub_unit'] as int?) == 1,
+      subUnitName: item['sub_unit_name'] as String?,
+    )).toList();
   }
 
   void _onSearchChanged(String query) {
@@ -185,37 +194,56 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
 
     setState(() => _isLoading = true);
     try {
-      final orders = await DatabaseService.instance.getOrdersByCustomerId(_selectedCustomer!.id!);
-      final totalAmount = await DatabaseService.instance.calculateCustomerTotal(_selectedCustomer!.id!);
+      final invoice = await DatabaseService.instance.withTransaction((txn) async {
+        // Get orders within the same transaction
+        final completedOrders = await DatabaseService.instance.getOrdersByCustomerId(
+          _selectedCustomer!.id!,
+          status: 'COMPLETED',
+          txn: txn,
+        );
+        
+        final pendingOrders = await DatabaseService.instance.getOrdersByCustomerId(
+          _selectedCustomer!.id!,
+          status: 'PENDING',
+          txn: txn,
+        );
 
-      if (orders.isEmpty) {
-        throw Exception('No completed orders found for this customer');
-      }
+        if (completedOrders.isEmpty && pendingOrders.isEmpty) {
+          throw Exception('No orders found for this customer');
+        }
 
-      final invoice = Invoice(
-        invoiceNumber: 'INV-${DateTime.now().millisecondsSinceEpoch}',
-        customerId: _selectedCustomer!.id!,
-        customerName: _selectedCustomer!.name,
-        totalAmount: totalAmount,
-        status: 'PENDING',
-        createdAt: DateTime.now(),
-        dueDate: DateTime.now().add(const Duration(days: 30)),
-        items: orders.map((order) => OrderItem(
-          orderId: order['id'] as int,
-          productId: order['product_id'] as int,
-          quantity: order['quantity'] as int,
-          unitPrice: (order['unit_price'] as num).toDouble(),
-          sellingPrice: (order['selling_price'] as num).toDouble(),
-          adjustedPrice: (order['adjusted_price'] as num?)?.toDouble() ?? 
-                         (order['selling_price'] as num).toDouble(),
-          totalAmount: (order['total_amount'] as num).toDouble(),
-          productName: order['product_name'] as String,
-          isSubUnit: (order['is_sub_unit'] as int?) == 1,
-          subUnitName: order['sub_unit_name'] as String?,
-        )).toList(),
-      );
+        // Calculate totals
+        final completedAmount = completedOrders.fold<double>(
+          0.0,
+          (sum, order) => sum + (order['total_amount'] as num).toDouble(),
+        );
+        
+        final pendingAmount = pendingOrders.fold<double>(
+          0.0,
+          (sum, order) => sum + (order['total_amount'] as num).toDouble(),
+        );
 
-      await DatabaseService.instance.createInvoice(invoice);
+        final newInvoice = Invoice(
+          id: null,
+          invoiceNumber: await InvoiceService.instance.generateInvoiceNumber(),
+          customerId: _selectedCustomer!.id!,
+          customerName: _selectedCustomer!.name,
+          totalAmount: completedAmount + pendingAmount,
+          status: 'PENDING',
+          paymentStatus: 'PENDING',
+          createdAt: DateTime.now(),
+          dueDate: DateTime.now().add(const Duration(days: 30)),
+          orderIds: [...completedOrders.map((o) => o['id'] as int), 
+                    ...pendingOrders.map((o) => o['id'] as int)],
+          completedAmount: completedAmount,
+          pendingAmount: pendingAmount,
+        );
+
+        // Create invoice within the same transaction
+        return await DatabaseService.instance.createInvoiceWithItems(newInvoice);
+      });
+
+      // Reload invoices after successful creation
       await _loadInvoices();
       
       if (mounted) {
@@ -227,6 +255,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
         );
       }
     } catch (e) {
+      print('Error generating invoice: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -236,7 +265,9 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
         );
       }
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -251,214 +282,92 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
           ),
           Expanded(
             flex: 4,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.amber.withOpacity(0.7),
-                    Colors.orange.shade900,
-                  ],
-                ),
-              ),
+            child: Padding(
+              padding: const EdgeInsets.all(defaultPadding),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header with controls
-                  Card(
-                    margin: const EdgeInsets.all(defaultPadding),
-                    child: Padding(
-                      padding: const EdgeInsets.all(defaultPadding),
-                      child: Column(
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _searchController,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Search Customers',
-                                    prefixIcon: Icon(Icons.search),
-                                  ),
-                                  onChanged: _onSearchChanged,
-                                ),
-                              ),
-                              const SizedBox(width: defaultPadding),
-                              ElevatedButton.icon(
-                                onPressed: _selectDateRange,
-                                icon: const Icon(Icons.date_range),
-                                label: Text(
-                                  _startDate != null && _endDate != null
-                                      ? '${DateFormat('MMM d').format(_startDate!)} - ${DateFormat('MMM d').format(_endDate!)}'
-                                      : 'Select Date Range',
-                                ),
-                              ),
-                            ],
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<Customer>(
+                          value: _selectedCustomer,
+                          decoration: InputDecoration(
+                            labelText: 'Select Customer',
+                            prefixIcon: const Icon(Icons.person),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                           ),
-                          const SizedBox(height: defaultPadding),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: DropdownButtonFormField<Customer>(
-                                  value: _selectedCustomer,
-                                  hint: const Text('Select Customer'),
-                                  decoration: const InputDecoration(
-                                    prefixIcon: Icon(Icons.person),
-                                  ),
-                                  items: _customers.map((customer) {
-                                    return DropdownMenuItem<Customer>(
-                                      value: customer,
-                                      child: Text(customer.name),
-                                    );
-                                  }).toSet().toList(),
-                                  onChanged: (customer) {
-                                    setState(() {
-                                      _selectedCustomer = customer;
-                                    });
-                                    _loadInvoices();
-                                  },
-                                  isExpanded: true,
-                                  selectedItemBuilder: (BuildContext context) {
-                                    return _customers.map<Widget>((Customer customer) {
-                                      return Text(customer.name);
-                                    }).toList();
-                                  },
-                                ),
+                          items: _customers.map((customer) {
+                            return DropdownMenuItem(
+                              value: customer,
+                              child: Text(customer.name),
+                            );
+                          }).toList(),
+                          onChanged: (Customer? customer) {
+                            setState(() => _selectedCustomer = customer);
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: defaultPadding),
+                      ElevatedButton.icon(
+                        onPressed: _isLoading ? null : _generateInvoice,
+                        icon: _isLoading 
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
                               ),
-                              const SizedBox(width: defaultPadding),
-                              ElevatedButton.icon(
-                                onPressed: _isLoading ? null : _generateInvoice,
-                                icon: _isLoading 
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.add),
-                                label: const Text('New Invoice'),
-                              ),
-                            ],
+                            )
+                          : const Icon(Icons.add),
+                        label: const Text('New Invoice'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: defaultPadding),
+                  if (_isLoading)
+                    const Center(child: CircularProgressIndicator())
+                  else if (_invoices.isEmpty)
+                    Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.receipt_long_outlined,
+                            size: 64,
+                            color: Colors.grey,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _selectedCustomer != null
+                              ? 'No invoices found for ${_selectedCustomer!.name}'
+                              : 'Select a customer to view invoices',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: Colors.grey,
+                            ),
                           ),
                         ],
                       ),
+                    )
+                  else
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: _invoices.length,
+                        itemBuilder: (context, index) {
+                          final invoice = _invoices[index];
+                          return InvoicePreviewWidget(
+                            invoice: invoice,
+                            customer: _customers.firstWhere(
+                              (c) => c.id == invoice.customerId,
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                  
-                  // Invoices List
-                  Expanded(
-                    child: Card(
-                      margin: const EdgeInsets.all(defaultPadding),
-                      child: _isLoading
-                          ? const Center(child: CircularProgressIndicator())
-                          : _invoices.isEmpty
-                              ? Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      const Icon(
-                                        Icons.receipt_long,
-                                        size: 64,
-                                        color: Colors.grey,
-                                      ),
-                                      const SizedBox(height: defaultPadding),
-                                      Text(
-                                        _selectedCustomer != null
-                                            ? 'No invoices found for ${_selectedCustomer!.name}'
-                                            : 'No invoices found',
-                                        style: Theme.of(context).textTheme.titleMedium,
-                                      ),
-                                    ],
-                                  ),
-                                )
-                              : ListView.builder(
-                                  itemCount: _invoices.length,
-                                  itemBuilder: (context, index) {
-                                    final invoice = _invoices[index];
-                                    final customer = _customers.firstWhere(
-                                      (c) => c.id == invoice.customerId,
-                                      orElse: () => Customer(
-                                        name: invoice.customerName ?? 'Unknown Customer',
-                                        createdAt: DateTime.now(),
-                                      ),
-                                    );
-                                    
-                                    return Card(
-                                      margin: const EdgeInsets.symmetric(
-                                        horizontal: defaultPadding,
-                                        vertical: defaultPadding / 2,
-                                      ),
-                                      child: ListTile(
-                                        leading: CircleAvatar(
-                                          backgroundColor: _getStatusColor(invoice.status),
-                                          child: const Icon(
-                                            Icons.receipt_long,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                        title: Text(
-                                          'Invoice #${invoice.invoiceNumber}',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        subtitle: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text('Customer: ${customer.name}'),
-                                            Text(
-                                              'Date: ${DateFormat('MMM dd, yyyy').format(invoice.createdAt)}',
-                                            ),
-                                            if (invoice.dueDate != null)
-                                              Text(
-                                                'Due: ${DateFormat('MMM dd, yyyy').format(invoice.dueDate!)}',
-                                              ),
-                                          ],
-                                        ),
-                                        trailing: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Column(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              crossAxisAlignment: CrossAxisAlignment.end,
-                                              children: [
-                                                Text(
-                                                  'KSH ${invoice.totalAmount.toStringAsFixed(2)}',
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 16,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  invoice.status,
-                                                  style: TextStyle(
-                                                    color: _getStatusColor(invoice.status),
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(width: defaultPadding),
-                                            IconButton(
-                                              icon: const Icon(Icons.print),
-                                              onPressed: () => _printInvoice(invoice, customer),
-                                            ),
-                                            IconButton(
-                                              icon: const Icon(Icons.visibility),
-                                              onPressed: () => _showInvoiceDetails(invoice, customer),
-                                            ),
-                                          ],
-                                        ),
-                                        isThreeLine: true,
-                                        onTap: () => _showInvoiceDetails(invoice, customer),
-                                      ),
-                                    );
-                                  },
-                                ),
-                    ),
-                  ),
                 ],
               ),
             ),
