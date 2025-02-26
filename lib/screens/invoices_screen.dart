@@ -25,7 +25,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   DateTime? _startDate;
   DateTime? _endDate;
   Customer? _selectedCustomer;
-  List<Map<String, dynamic>> _invoiceData = [];
+  List<Invoice> _invoiceData = [];
   bool _isLoading = false;
   List<Customer> _customers = [];
   List<Invoice> _invoices = [];
@@ -73,67 +73,28 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   }
 
   Future<void> _loadInvoices() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
+    if (_selectedCustomer == null) return;
     
+    setState(() => _isLoading = true);
     try {
-      final List<Invoice> loadedInvoices = [];
-      final invoicesData = await DatabaseService.instance.getInvoices(
-        startDate: _startDate,
-        endDate: _endDate,
-        searchQuery: _searchQuery,
-      );
-
-      for (var invoiceData in invoicesData) {
-        // Load order items for this invoice
-        final completedItems = await DatabaseService.instance.getOrderItems(
-          invoiceData['id'] as int,
-          status: 'COMPLETED',
+      await DatabaseService.instance.withTransaction((txn) async {
+        final invoices = await InvoiceService.instance.getCustomerInvoices(
+          _selectedCustomer!.id!,
+          txn: txn
         );
-        
-        final pendingItems = await DatabaseService.instance.getOrderItems(
-          invoiceData['id'] as int,
-          status: 'PENDING',
-        );
-
-        // Create Invoice object
-        final invoice = Invoice(
-          id: invoiceData['id'] as int?,
-          invoiceNumber: invoiceData['invoice_number'] as String,
-          customerId: invoiceData['customer_id'] as int,
-          customerName: invoiceData['customer_name'] as String?,
-          totalAmount: (invoiceData['total_amount'] as num).toDouble(),
-          completedAmount: (invoiceData['completed_amount'] as num?)?.toDouble() ?? 0.0,
-          pendingAmount: (invoiceData['pending_amount'] as num?)?.toDouble() ?? 0.0,
-          status: invoiceData['status'] as String,
-          paymentStatus: invoiceData['payment_status'] as String,
-          createdAt: DateTime.parse(invoiceData['created_at'] as String),
-          dueDate: invoiceData['due_date'] != null 
-              ? DateTime.parse(invoiceData['due_date'] as String)
-              : null,
-          completedItems: _mapOrderItems(completedItems),
-          pendingItems: _mapOrderItems(pendingItems),
-        );
-
-        loadedInvoices.add(invoice);
-      }
-
-      if (mounted) {
-        setState(() {
-          _invoices = loadedInvoices;
-          _isLoading = false;
-        });
-      }
+        if (mounted) {
+          setState(() => _invoices = invoices);
+        }
+      });
     } catch (e) {
-      print('Error loading invoices: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading invoices: $e')),
+        );
+      }
+    } finally {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load invoices: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
       }
     }
   }
@@ -185,83 +146,33 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   }
 
   Future<void> _generateInvoice() async {
-    if (_selectedCustomer == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a customer')),
-      );
-      return;
-    }
+    if (_selectedCustomer == null) return;
 
     setState(() => _isLoading = true);
     try {
-      final invoice = await DatabaseService.instance.withTransaction((txn) async {
-        // Get orders within the same transaction
-        final completedOrders = await DatabaseService.instance.getOrdersByCustomerId(
+      await DatabaseService.instance.withTransaction((txn) async {
+        final invoice = await InvoiceService.instance.generateInvoice(
           _selectedCustomer!.id!,
-          status: 'COMPLETED',
-          txn: txn,
+          txn: txn
         );
         
-        final pendingOrders = await DatabaseService.instance.getOrdersByCustomerId(
-          _selectedCustomer!.id!,
-          status: 'PENDING',
-          txn: txn,
+        await InvoiceService.instance.createInvoiceWithItems(
+          invoice, 
+          txn: txn
         );
-
-        if (completedOrders.isEmpty && pendingOrders.isEmpty) {
-          throw Exception('No orders found for this customer');
-        }
-
-        // Calculate totals
-        final completedAmount = completedOrders.fold<double>(
-          0.0,
-          (sum, order) => sum + (order['total_amount'] as num).toDouble(),
-        );
-        
-        final pendingAmount = pendingOrders.fold<double>(
-          0.0,
-          (sum, order) => sum + (order['total_amount'] as num).toDouble(),
-        );
-
-        final newInvoice = Invoice(
-          id: null,
-          invoiceNumber: await InvoiceService.instance.generateInvoiceNumber(),
-          customerId: _selectedCustomer!.id!,
-          customerName: _selectedCustomer!.name,
-          totalAmount: completedAmount + pendingAmount,
-          status: 'PENDING',
-          paymentStatus: 'PENDING',
-          createdAt: DateTime.now(),
-          dueDate: DateTime.now().add(const Duration(days: 30)),
-          orderIds: [...completedOrders.map((o) => o['id'] as int), 
-                    ...pendingOrders.map((o) => o['id'] as int)],
-          completedAmount: completedAmount,
-          pendingAmount: pendingAmount,
-        );
-
-        // Create invoice within the same transaction
-        return await DatabaseService.instance.createInvoiceWithItems(newInvoice);
       });
 
-      // Reload invoices after successful creation
       await _loadInvoices();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invoice generated successfully'),
-            backgroundColor: Colors.green,
-          ),
+          const SnackBar(content: Text('Invoice generated successfully')),
         );
       }
     } catch (e) {
-      print('Error generating invoice: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error generating invoice: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('Error generating invoice: $e')),
         );
       }
     } finally {

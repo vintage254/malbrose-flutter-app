@@ -141,15 +141,17 @@ class InvoicePreviewWidget extends StatelessWidget {
               children: [
                 TableCell(child: Padding(
                   padding: const EdgeInsets.all(8.0),
-                  child: Text(item.productName),
+                  child: Text(item.displayName),
                 )),
                 TableCell(child: Padding(
                   padding: const EdgeInsets.all(8.0),
-                  child: Text('${item.quantity} ${item.isSubUnit ? item.subUnitName ?? "pieces" : "units"}'),
+                  child: Text(
+                    '${item.quantity}${item.isSubUnit ? " ${item.subUnitName ?? 'pieces'}" : ""}'
+                  ),
                 )),
                 TableCell(child: Padding(
                   padding: const EdgeInsets.all(8.0),
-                  child: Text('KSH ${item.adjustedPrice.toStringAsFixed(2)}'),
+                  child: Text('KSH ${item.effectivePrice.toStringAsFixed(2)}'),
                 )),
                 TableCell(child: Padding(
                   padding: const EdgeInsets.all(8.0),
@@ -170,6 +172,23 @@ class InvoicePreviewWidget extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildItemRow(OrderItem item) {
+    return ListTile(
+      title: Text(item.displayName),
+      subtitle: Text(
+        '${item.quantity}${item.isSubUnit ? " ${item.subUnitName ?? 'pieces'}" : ""}'
+      ),
+      trailing: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text('KSH ${item.effectivePrice.toStringAsFixed(2)}'),
+          Text('KSH ${item.totalAmount.toStringAsFixed(2)}'),
+        ],
+      ),
     );
   }
 } 

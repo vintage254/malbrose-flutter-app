@@ -25,6 +25,7 @@ class DatabaseService {
   static const String tableOrderItems = 'order_items';
   static const String tableCustomers = 'customers';
   static const String tableInvoices = 'invoices';
+  static const String tableInvoiceItems = 'invoice_items';
 
   // Add these constants at the top of the DatabaseService class
   static const String actionCreateOrder = 'create_order';
@@ -78,7 +79,7 @@ class DatabaseService {
       // Open database with write permissions
       final db = await openDatabase(
         path,
-        version: 18,  // Increment version to trigger migration
+        version: 20,  // Increment version to trigger migration
         onCreate: _createTables,
         onUpgrade: _onUpgrade,
         readOnly: false,
@@ -261,14 +262,36 @@ class DatabaseService {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         invoice_number TEXT NOT NULL,
         customer_id INTEGER NOT NULL,
-        customer_name TEXT,
+        customer_name TEXT NOT NULL,
         total_amount REAL NOT NULL,
         completed_amount REAL NOT NULL,
         pending_amount REAL NOT NULL,
-        status TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        payment_status TEXT NOT NULL DEFAULT 'PENDING',
         created_at TEXT NOT NULL,
         due_date TEXT,
         FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
+      )
+    ''');
+
+    // Update invoice items table with proper schema
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableInvoiceItems (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER NOT NULL,
+        order_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity INTEGER NOT NULL,
+        unit_price REAL NOT NULL,
+        selling_price REAL NOT NULL,
+        total_amount REAL NOT NULL,
+        is_sub_unit INTEGER NOT NULL DEFAULT 0,
+        sub_unit_name TEXT,
+        sub_unit_quantity REAL,
+        status TEXT NOT NULL,
+        FOREIGN KEY (invoice_id) REFERENCES $tableInvoices (id) ON DELETE CASCADE,
+        FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
       )
     ''');
   }
@@ -340,7 +363,27 @@ class DatabaseService {
 
   // Migration logic
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 18) {
+      // Add payment_status column if it doesn't exist
+      try {
+        await db.execute(
+          'ALTER TABLE $tableInvoices ADD COLUMN payment_status TEXT NOT NULL DEFAULT "PENDING"'
+        );
+      } catch (e) {
+        print('Column might already exist: $e');
+      }
+    }
     try {
+      // Check if sub_unit_quantity column exists in invoice_items
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableInvoiceItems)');
+      bool hasSubUnitQuantity = tableInfo.any((column) => column['name'] == 'sub_unit_quantity');
+      
+      if (!hasSubUnitQuantity) {
+        await db.execute(
+          'ALTER TABLE $tableInvoiceItems ADD COLUMN sub_unit_quantity REAL'
+        );
+      }
+
       // Backup existing data
       final existingUsers = await db.query(tableUsers);
       
@@ -1514,42 +1557,63 @@ class DatabaseService {
   }
 
   // Simplified invoice creation with proper transaction handling
-  Future<Invoice> createInvoiceWithItems(Invoice invoice) async {
-    return await _lock.synchronized(() async {
-      final db = await database;
-      return await db.transaction((txn) async {
-        try {
-          // Insert invoice in a single transaction
-          final invoiceId = await txn.insert(tableInvoices, {
-            'invoice_number': invoice.invoiceNumber,
-            'customer_id': invoice.customerId,
-            'customer_name': invoice.customerName,
-            'total_amount': invoice.totalAmount,
-            'completed_amount': invoice.completedAmount,
-            'pending_amount': invoice.pendingAmount,
-            'status': invoice.status,
-            'created_at': invoice.createdAt.toIso8601String(),
-            'due_date': invoice.dueDate?.toIso8601String(),
-          });
+  Future<Invoice> createInvoiceWithItems(Invoice invoice, {Transaction? txn}) async {
+    return await withTransaction((transaction) async {
+      final db = txn ?? transaction;
+      
+      try {
+        // Insert invoice
+        final invoiceId = await db.insert(tableInvoices, invoice.toMap());
+        
+        // Insert completed items
+        if (invoice.completedItems != null) {
+          for (var item in invoice.completedItems!) {
+            await db.insert(tableInvoiceItems, {
+              'invoice_id': invoiceId,
+              'order_id': item.orderId,
+              'product_id': item.productId,
+              'quantity': item.quantity,
+              'unit_price': item.unitPrice,
+              'selling_price': item.sellingPrice,
+              'total_amount': item.totalAmount,
+              'is_sub_unit': item.isSubUnit ? 1 : 0,
+              'sub_unit_name': item.subUnitName,
+              'status': 'COMPLETED'
+            });
 
-          // Update order statuses in the same transaction
-          if (invoice.completedItems != null) {
-            for (var item in invoice.completedItems!) {
-              await txn.update(
-                tableOrders,
-                {'status': 'INVOICED'},
-                where: 'id = ?',
-                whereArgs: [item.orderId],
-              );
-            }
+            // Update order status
+            await db.update(
+              tableOrders,
+              {'status': 'INVOICED'},
+              where: 'id = ?',
+              whereArgs: [item.orderId],
+            );
           }
-
-          return invoice.copyWith(id: invoiceId);
-        } catch (e) {
-          print('Error creating invoice: $e');
-          rethrow;
         }
-      });
+
+        // Insert pending items
+        if (invoice.pendingItems != null) {
+          for (var item in invoice.pendingItems!) {
+            await db.insert(tableInvoiceItems, {
+              'invoice_id': invoiceId,
+              'order_id': item.orderId,
+              'product_id': item.productId,
+              'quantity': item.quantity,
+              'unit_price': item.unitPrice,
+              'selling_price': item.sellingPrice,
+              'total_amount': item.totalAmount,
+              'is_sub_unit': item.isSubUnit ? 1 : 0,
+              'sub_unit_name': item.subUnitName,
+              'status': 'PENDING'
+            });
+          }
+        }
+
+        return invoice.copyWith(id: invoiceId);
+      } catch (e) {
+        print('Error creating invoice: $e');
+        rethrow;
+      }
     });
   }
 
@@ -1590,29 +1654,34 @@ class DatabaseService {
     String? searchQuery,
   }) async {
     final db = await database;
-    
-    String whereClause = '1=1';
-    List<dynamic> whereArgs = [];
+    String query = '''
+      SELECT i.*, c.name as customer_name 
+      FROM invoices i
+      LEFT JOIN customers c ON i.customer_id = c.id
+      WHERE 1=1
+    ''';
+
+    List<dynamic> arguments = [];
 
     if (startDate != null) {
-      whereClause += ' AND date(created_at) >= date(?)';
-      whereArgs.add(startDate.toIso8601String());
-    }
-    if (endDate != null) {
-      whereClause += ' AND date(created_at) <= date(?)';
-      whereArgs.add(endDate.toIso8601String());
-    }
-    if (searchQuery != null && searchQuery.isNotEmpty) {
-      whereClause += ' AND (invoice_number LIKE ? OR customer_name LIKE ?)';
-      whereArgs.addAll(['%$searchQuery%', '%$searchQuery%']);
+      query += ' AND date(i.created_at) >= date(?)';
+      arguments.add(startDate.toIso8601String());
     }
 
-    return await db.query(
-      tableInvoices,
-      where: whereClause,
-      whereArgs: whereArgs,
-      orderBy: 'created_at DESC',
-    );
+    if (endDate != null) {
+      query += ' AND date(i.created_at) <= date(?)';
+      arguments.add(endDate.toIso8601String());
+    }
+
+    if (searchQuery != null && searchQuery.isNotEmpty) {
+      query += ' AND (i.invoice_number LIKE ? OR c.name LIKE ?)';
+      arguments.add('%$searchQuery%');
+      arguments.add('%$searchQuery%');
+    }
+
+    query += ' ORDER BY i.created_at DESC';
+
+    return await db.rawQuery(query, arguments);
   }
 
   Future<void> _migrateCustomerData(Database db) async {
@@ -1683,41 +1752,29 @@ class DatabaseService {
   }
 
   // Update getSalesReport method to include proper price calculations
-  Future<List<Map<String, dynamic>>> getSalesReport(
-    DateTime startDate,
-    DateTime endDate,
-  ) async {
+  Future<List<Map<String, dynamic>>> getSalesReport(DateTime startDate, DateTime endDate) async {
     final db = await database;
     return await db.rawQuery('''
       SELECT 
-        o.id as order_id,
-        o.order_number,
         o.created_at,
+        o.order_number,
         o.customer_name,
-        oi.product_id,
+        oi.product_name,
         oi.quantity,
-        p.product_name,
-        p.buying_price as unit_buying_price,
-        p.sub_unit_quantity,
-        p.sub_unit_price,
+        oi.unit_price,
+        oi.selling_price,
+        COALESCE(oi.adjusted_price, 
+          CASE 
+            WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0
+            THEN oi.selling_price / p.sub_unit_quantity
+            ELSE oi.selling_price
+          END
+        ) as effective_price,
+        oi.total_amount,
         oi.is_sub_unit,
         oi.sub_unit_name,
-        CASE 
-          WHEN oi.is_sub_unit = 1 AND p.sub_unit_price IS NOT NULL 
-          THEN p.sub_unit_price
-          ELSE oi.selling_price
-        END as actual_selling_price,
-        CASE 
-          WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0
-          THEN p.buying_price / p.sub_unit_quantity
-          ELSE p.buying_price
-        END as actual_buying_price,
-        oi.total_amount as item_total,
-        CASE 
-          WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0 AND p.sub_unit_price IS NOT NULL
-          THEN (p.sub_unit_price - (p.buying_price / p.sub_unit_quantity)) * oi.quantity
-          ELSE (oi.selling_price - p.buying_price) * oi.quantity
-        END as profit
+        p.sub_unit_quantity,
+        p.buying_price as base_buying_price
       FROM $tableOrders o
       JOIN $tableOrderItems oi ON o.id = oi.order_id
       JOIN $tableProducts p ON oi.product_id = p.id

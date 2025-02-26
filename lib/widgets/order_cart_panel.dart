@@ -169,18 +169,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         createdBy: currentUser.id!,
         createdAt: DateTime.now(),
         orderDate: DateTime.now(),
-        items: widget.initialItems.map((item) => OrderItem(
-          orderId: widget.orderId ?? 0,
-          productId: item.product.id!,
-          quantity: item.quantity,
-          unitPrice: item.product.buyingPrice,
-          sellingPrice: item.product.sellingPrice,
-          adjustedPrice: item.product.sellingPrice,
-          totalAmount: item.total,
-          productName: item.product.productName,
-          isSubUnit: item.isSubUnit,
-          subUnitName: item.subUnitName,
-        )).toList(),
+        items: widget.initialItems.map((item) => _createOrderItem(item)).toList(),
       );
 
       // Let DatabaseService handle the transaction
@@ -199,6 +188,21 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         );
       }
     }
+  }
+
+  OrderItem _createOrderItem(CartItem item) {
+    return OrderItem(
+      orderId: 0,  // Will be set when order is created
+      productId: item.productId,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      sellingPrice: item.sellingPrice,
+      totalAmount: item.total,
+      productName: item.product.productName,
+      isSubUnit: item.isSubUnit,
+      subUnitName: item.subUnitName,
+      subUnitQuantity: item.subUnitQuantity?.toDouble(),
+    );
   }
 
   double get _total => widget.initialItems.fold(

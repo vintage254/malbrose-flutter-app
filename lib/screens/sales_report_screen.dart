@@ -200,44 +200,53 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
             DataColumn(label: Text('Profit')),
             DataColumn(label: Text('Margin %')),
           ],
-          rows: _salesData.map((sale) {
-            // Safe number conversions with null checks
-            final buyingPrice = (sale['actual_buying_price'] as num?)?.toDouble() ?? 0.0;
-            final sellingPrice = (sale['actual_selling_price'] as num?)?.toDouble() ?? 0.0;
-            final quantity = (sale['quantity'] as num?)?.toDouble() ?? 0.0;
-            final total = (sale['item_total'] as num?)?.toDouble() ?? 0.0;
-            final profit = (sale['profit'] as num?)?.toDouble() ?? 0.0;
-            
-            // Avoid division by zero
-            final marginPercentage = buyingPrice > 0 ? 
-                (profit / (buyingPrice * quantity) * 100) : 0.0;
-
-            return DataRow(
-              cells: [
-                DataCell(Text(DateFormat('MMM dd, yyyy').format(
-                  DateTime.parse(sale['created_at'] as String)))),
-                DataCell(Text(sale['order_number']?.toString() ?? '-')),
-                DataCell(Text(sale['customer_name']?.toString() ?? '-')),
-                DataCell(Text('${sale['product_name']}${sale['is_sub_unit'] == 1 ? ' (${sale['sub_unit_name'] ?? 'piece'})' : ''}')),
-                DataCell(Text('${sale['quantity']}${sale['is_sub_unit'] == 1 ? ' ${sale['sub_unit_name'] ?? 'pieces'}' : ''}')),
-                DataCell(Text('KSH ${buyingPrice.toStringAsFixed(2)}')),
-                DataCell(Text('KSH ${sellingPrice.toStringAsFixed(2)}')),
-                DataCell(Text('KSH ${total.toStringAsFixed(2)}')),
-                DataCell(Text('KSH ${profit.toStringAsFixed(2)}',
-                  style: TextStyle(
-                    color: profit >= 0 ? Colors.green : Colors.red,
-                    fontWeight: FontWeight.bold
-                  ))),
-                DataCell(Text('${marginPercentage.toStringAsFixed(1)}%',
-                  style: TextStyle(
-                    color: marginPercentage >= 20 ? Colors.green : 
-                           marginPercentage >= 10 ? Colors.orange : Colors.red
-                  ))),
-              ],
-            );
-          }).toList(),
+          rows: _salesData.map(_buildSaleRow).toList(),
         ),
       ),
+    );
+  }
+
+  DataRow _buildSaleRow(Map<String, dynamic> sale) {
+    final isSubUnit = sale['is_sub_unit'] == 1;
+    final subUnitQuantity = (sale['sub_unit_quantity'] as num?)?.toDouble();
+    final effectivePrice = (sale['effective_price'] as num).toDouble();
+    final baseBuyingPrice = (sale['base_buying_price'] as num).toDouble();
+    final quantity = (sale['quantity'] as num).toInt();
+
+    final buyingPrice = isSubUnit && subUnitQuantity != null ? 
+        baseBuyingPrice / subUnitQuantity : 
+        baseBuyingPrice;
+
+    final total = effectivePrice * quantity;
+    final profit = (effectivePrice - buyingPrice) * quantity;
+    final marginPercentage = buyingPrice > 0 ? 
+        ((effectivePrice - buyingPrice) / buyingPrice * 100) : 
+        0.0;
+
+    return DataRow(
+      cells: [
+        DataCell(Text(DateFormat('MMM dd, yyyy').format(
+          DateTime.parse(sale['created_at'] as String)))),
+        DataCell(Text(sale['order_number']?.toString() ?? '-')),
+        DataCell(Text(sale['customer_name']?.toString() ?? '-')),
+        DataCell(Text('${sale['product_name']}${isSubUnit ? 
+          ' (${sale['sub_unit_name'] ?? 'piece'})' : ''}')),
+        DataCell(Text('${quantity}${isSubUnit ? 
+          ' ${sale['sub_unit_name'] ?? 'pieces'}' : ''}')),
+        DataCell(Text('KSH ${buyingPrice.toStringAsFixed(2)}')),
+        DataCell(Text('KSH ${effectivePrice.toStringAsFixed(2)}')),
+        DataCell(Text('KSH ${total.toStringAsFixed(2)}')),
+        DataCell(Text('KSH ${profit.toStringAsFixed(2)}',
+          style: TextStyle(
+            color: profit >= 0 ? Colors.green : Colors.red,
+            fontWeight: FontWeight.bold
+          ))),
+        DataCell(Text('${marginPercentage.toStringAsFixed(1)}%',
+          style: TextStyle(
+            color: marginPercentage >= 20 ? Colors.green : 
+                   marginPercentage >= 10 ? Colors.orange : Colors.red
+          ))),
+      ],
     );
   }
 

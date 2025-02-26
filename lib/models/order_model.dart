@@ -87,12 +87,12 @@ class OrderItem {
   final int quantity;
   final double unitPrice;
   final double sellingPrice;
-  final double adjustedPrice;
   final double totalAmount;
   final String productName;
   final bool isSubUnit;
   final String? subUnitName;
   final double? subUnitQuantity;
+  final double? adjustedPrice;
 
   OrderItem({
     this.id,
@@ -101,53 +101,59 @@ class OrderItem {
     required this.quantity,
     required this.unitPrice,
     required this.sellingPrice,
-    required this.adjustedPrice,
     required this.totalAmount,
     required this.productName,
     required this.isSubUnit,
     this.subUnitName,
     this.subUnitQuantity,
+    this.adjustedPrice,
   });
+
+  double get effectivePrice => adjustedPrice ?? 
+    (isSubUnit && subUnitQuantity != null ? 
+      sellingPrice / subUnitQuantity! : 
+      sellingPrice);
+
+  double get effectiveQuantity => isSubUnit && subUnitQuantity != null ?
+      quantity / subUnitQuantity! :
+      quantity.toDouble();
+
+  double get profit => (effectivePrice - unitPrice) * effectiveQuantity;
+
+  String get displayName => isSubUnit && subUnitName != null ? 
+      '$productName ($subUnitName)' : 
+      productName;
+
+  factory OrderItem.fromMap(Map<String, dynamic> map) {
+    return OrderItem(
+      id: map['item_id'] != null ? (map['item_id'] as num).toInt() : null,
+      orderId: (map['id'] as num?)?.toInt() ?? 0,
+      productId: (map['product_id'] as num?)?.toInt() ?? 0,
+      quantity: (map['quantity'] as num?)?.toInt() ?? 0,
+      unitPrice: (map['unit_price'] as num?)?.toDouble() ?? 0.0,
+      sellingPrice: (map['selling_price'] as num?)?.toDouble() ?? 0.0,
+      totalAmount: (map['total_amount'] as num?)?.toDouble() ?? 0.0,
+      productName: (map['product_name'] as String?) ?? 'Unknown Product',
+      isSubUnit: map['is_sub_unit'] == 1,
+      subUnitName: map['sub_unit_name'] as String?,
+      subUnitQuantity: (map['sub_unit_quantity'] as num?)?.toDouble(),
+      adjustedPrice: (map['adjusted_price'] as num?)?.toDouble(),
+    );
+  }
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
+      if (id != null) 'id': id,
       'order_id': orderId,
       'product_id': productId,
       'quantity': quantity,
       'unit_price': unitPrice,
       'selling_price': sellingPrice,
-      'adjusted_price': adjustedPrice,
       'total_amount': totalAmount,
-      'product_name': productName,
       'is_sub_unit': isSubUnit ? 1 : 0,
-      'sub_unit_name': subUnitName,
-      'sub_unit_quantity': subUnitQuantity,
+      if (subUnitName != null) 'sub_unit_name': subUnitName,
+      if (subUnitQuantity != null) 'sub_unit_quantity': subUnitQuantity,
+      if (adjustedPrice != null) 'adjusted_price': adjustedPrice,
     };
   }
-
-  factory OrderItem.fromMap(Map<String, dynamic> map) {
-    return OrderItem(
-      id: map['id'] as int?,
-      orderId: map['order_id'] as int,
-      productId: map['product_id'] as int,
-      quantity: map['quantity'] as int,
-      unitPrice: (map['unit_price'] as num).toDouble(),
-      sellingPrice: (map['selling_price'] as num).toDouble(),
-      adjustedPrice: (map['adjusted_price'] as num?)?.toDouble() ?? 
-                    (map['selling_price'] as num).toDouble(),
-      totalAmount: (map['total_amount'] as num).toDouble(),
-      productName: map['product_name'] as String,
-      isSubUnit: (map['is_sub_unit'] as int?) == 1,
-      subUnitName: map['sub_unit_name'] as String?,
-      subUnitQuantity: (map['sub_unit_quantity'] as num?)?.toDouble(),
-    );
-  }
-
-  String get displayName => isSubUnit && subUnitName != null ? 
-      '$productName ($subUnitName)' : productName;
-
-  double get total => totalAmount;
-
-  double get profit => (sellingPrice - unitPrice) * quantity;
 } 

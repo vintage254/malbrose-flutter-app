@@ -8,6 +8,7 @@ class CartItem {
   final bool isSubUnit;
   final String? subUnitName;
   final int? subUnitQuantity;
+  final double? adjustedPrice;
 
   CartItem({
     required this.product,
@@ -16,11 +17,23 @@ class CartItem {
     this.isSubUnit = false,
     this.subUnitName,
     this.subUnitQuantity,
+    this.adjustedPrice,
   });
 
   double get unitPrice => product.buyingPrice;
   double get sellingPrice => product.sellingPrice;
   int get productId => product.id!;
+
+  double get effectivePrice => adjustedPrice ?? 
+    (isSubUnit && subUnitQuantity != null ? 
+      sellingPrice / subUnitQuantity! : 
+      sellingPrice);
+
+  double get effectiveQuantity => isSubUnit && subUnitQuantity != null ?
+      quantity / subUnitQuantity! :
+      quantity.toDouble();
+
+  double get profit => (effectivePrice - unitPrice) * effectiveQuantity;
 
   factory CartItem.fromOrderItem(OrderItem orderItem) {
     final product = Product(
@@ -31,6 +44,8 @@ class CartItem {
       quantity: orderItem.quantity,
       supplier: 'Unknown',
       receivedDate: DateTime.now(),
+      subUnitQuantity: orderItem.subUnitQuantity?.toInt(),
+      subUnitName: orderItem.subUnitName,
     );
 
     return CartItem(
@@ -40,17 +55,9 @@ class CartItem {
       isSubUnit: orderItem.isSubUnit,
       subUnitName: orderItem.subUnitName,
       subUnitQuantity: orderItem.subUnitQuantity?.toInt(),
+      adjustedPrice: orderItem.adjustedPrice,
     );
   }
-
-  double get effectiveQuantity => isSubUnit && subUnitQuantity != null
-      ? quantity / subUnitQuantity!
-      : quantity.toDouble();
-
-  double get adjustedPrice => isSubUnit ? unitPrice : sellingPrice;
-  double get profit => (adjustedPrice - (isSubUnit ? 
-      (unitPrice / (subUnitQuantity ?? 1)) : 
-      unitPrice)) * effectiveQuantity;
 
   Map<String, dynamic> toMap() => {
     'product_id': product.id,
@@ -61,5 +68,6 @@ class CartItem {
     'is_sub_unit': isSubUnit ? 1 : 0,
     'sub_unit_name': subUnitName,
     'sub_unit_quantity': subUnitQuantity,
+    if (adjustedPrice != null) 'adjusted_price': adjustedPrice,
   };
 } 
