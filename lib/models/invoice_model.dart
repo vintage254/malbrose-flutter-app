@@ -24,18 +24,16 @@ class Invoice {
     this.completedAmount = 0.0,
     this.pendingAmount = 0.0,
     required this.status,
-    this.paymentStatus = 'PENDING',
+    required this.paymentStatus,
     required this.createdAt,
     this.dueDate,
     this.completedItems,
     this.pendingItems,
   });
 
-  // Add helper methods for calculations
+  // Helper methods for calculations
   double get effectiveTotal => completedAmount + pendingAmount;
-  
   bool get hasCompletedItems => completedItems?.isNotEmpty ?? false;
-  
   bool get hasPendingItems => pendingItems?.isNotEmpty ?? false;
 
   Map<String, dynamic> toMap() {
@@ -71,7 +69,6 @@ class Invoice {
       dueDate: map['due_date'] != null 
           ? DateTime.parse(map['due_date'] as String)
           : null,
-      // Items will be loaded separately
     );
   }
 

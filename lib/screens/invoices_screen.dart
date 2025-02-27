@@ -12,6 +12,10 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'dart:async';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_file/open_file.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'dart:io';
 
 class InvoicesScreen extends StatefulWidget {
   const InvoicesScreen({super.key});
@@ -78,12 +82,31 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
     setState(() => _isLoading = true);
     try {
       await DatabaseService.instance.withTransaction((txn) async {
-        final invoices = await InvoiceService.instance.getCustomerInvoices(
-          _selectedCustomer!.id!,
-          txn: txn
+        final invoices = await DatabaseService.instance.getInvoices(
+          startDate: _startDate,
+          endDate: _endDate,
+          searchQuery: _searchQuery,
+          executor: txn,
         );
+        
+        final List<Invoice> processedInvoices = [];
+        for (final map in invoices) {
+          final invoice = Invoice.fromMap(map);
+          final items = await InvoiceService.instance.getInvoiceItems(invoice.id!, txn: txn);
+          processedInvoices.add(invoice.copyWith(
+            completedItems: items.where((item) => item['status'] == 'COMPLETED').map((item) => 
+              OrderItem.fromMap(item)).toList(),
+            pendingItems: items.where((item) => item['status'] == 'PENDING').map((item) => 
+              OrderItem.fromMap(item)).toList(),
+          ));
+        }
+        
         if (mounted) {
-          setState(() => _invoices = invoices);
+          setState(() {
+            _invoices = processedInvoices
+                .where((invoice) => invoice.customerId == _selectedCustomer!.id)
+                .toList();
+          });
         }
       });
     } catch (e) {
@@ -153,6 +176,8 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
       await DatabaseService.instance.withTransaction((txn) async {
         final invoice = await InvoiceService.instance.generateInvoice(
           _selectedCustomer!.id!,
+          startDate: _startDate,
+          endDate: _endDate,
           txn: txn
         );
         
@@ -219,7 +244,18 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                           }).toList(),
                           onChanged: (Customer? customer) {
                             setState(() => _selectedCustomer = customer);
+                            _loadInvoices();
                           },
+                        ),
+                      ),
+                      const SizedBox(width: defaultPadding),
+                      OutlinedButton.icon(
+                        onPressed: _selectDateRange,
+                        icon: const Icon(Icons.date_range),
+                        label: Text(
+                          _startDate != null && _endDate != null
+                              ? '${DateFormat('MMM d').format(_startDate!)} - ${DateFormat('MMM d').format(_endDate!)}'
+                              : 'Select Date Range',
                         ),
                       ),
                       const SizedBox(width: defaultPadding),
@@ -270,11 +306,15 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                         itemCount: _invoices.length,
                         itemBuilder: (context, index) {
                           final invoice = _invoices[index];
+                          final customer = _customers.firstWhere(
+                            (c) => c.id == invoice.customerId,
+                          );
                           return InvoicePreviewWidget(
                             invoice: invoice,
-                            customer: _customers.firstWhere(
-                              (c) => c.id == invoice.customerId,
-                            ),
+                            customer: customer,
+                            onPrint: () => _printInvoice(invoice, customer),
+                            onSave: () => _saveInvoice(invoice, customer),
+                            onSend: () => _sendInvoice(invoice, customer),
                           );
                         },
                       ),
@@ -303,41 +343,127 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
 
   Future<void> _printInvoice(Invoice invoice, Customer customer) async {
     try {
+      setState(() => _isLoading = true);
       await InvoiceService.instance.generateAndPrintInvoice(invoice, customer);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Invoice printed successfully')),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error printing invoice: $e')),
         );
       }
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
-  void _showInvoiceDetails(Invoice invoice, Customer customer) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Invoice #${invoice.invoiceNumber}'),
-        content: SizedBox(
-          width: 600,
-          child: InvoicePreviewWidget(
-            invoice: invoice,
-            customer: customer,
+  Future<void> _saveInvoice(Invoice invoice, Customer customer) async {
+    try {
+      setState(() => _isLoading = true);
+      final pdf = await InvoiceService.generateInvoicePdf(invoice, customer);
+      
+      // Save PDF to downloads directory
+      final downloadsPath = await getDownloadsDirectory();
+      if (downloadsPath == null) throw Exception('Downloads directory not found');
+      
+      final fileName = '${invoice.invoiceNumber.replaceAll('/', '_')}.pdf';
+      final file = File('${downloadsPath.path}/$fileName');
+      await file.writeAsBytes(pdf);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('PDF saved to ${file.path}'),
+            action: SnackBarAction(
+              label: 'Open',
+              onPressed: () => OpenFile.open(file.path),
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () => _printInvoice(invoice, customer),
-            icon: const Icon(Icons.print),
-            label: const Text('Print'),
-          ),
-        ],
-      ),
-    );
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error saving invoice: $e')),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _sendInvoice(Invoice invoice, Customer customer) async {
+    try {
+      setState(() => _isLoading = true);
+      
+      if (customer.email == null) {
+        throw Exception('Customer email not available');
+      }
+      
+      // First save the PDF
+      final pdf = await InvoiceService.generateInvoicePdf(invoice, customer);
+      final tempDir = await getTemporaryDirectory();
+      final fileName = '${invoice.invoiceNumber.replaceAll('/', '_')}.pdf';
+      final file = File('${tempDir.path}/$fileName');
+      await file.writeAsBytes(pdf);
+      
+      // Prepare email content
+      final emailSubject = 'Invoice ${invoice.invoiceNumber}';
+      final emailBody = '''
+Dear ${customer.name},
+
+Please find attached your invoice ${invoice.invoiceNumber}.
+
+Total Amount: KSH ${invoice.totalAmount.toStringAsFixed(2)}
+Due Date: ${invoice.dueDate != null ? DateFormat('MMM dd, yyyy').format(invoice.dueDate!) : 'N/A'}
+
+Thank you for your business!
+
+Best regards,
+Your Company Name''';
+
+      // Create mailto URL
+      final mailtoUri = Uri(
+        scheme: 'mailto',
+        path: customer.email,
+        query: encodeQueryParameters({
+          'subject': emailSubject,
+          'body': emailBody,
+          'attachment': file.path,
+        }),
+      );
+
+      // Launch email client
+      if (await canLaunchUrl(mailtoUri)) {
+        await launchUrl(mailtoUri);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Email client opened successfully')),
+          );
+        }
+      } else {
+        throw Exception('Could not launch email client');
+      }
+      
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error sending invoice: $e')),
+        );
+      }
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  String encodeQueryParameters(Map<String, String> params) {
+    return params.entries
+        .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}')
+        .join('&');
   }
 
   @override

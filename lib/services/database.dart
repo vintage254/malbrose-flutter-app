@@ -65,242 +65,234 @@ class DatabaseService {
     final path = join(databasePath, 'malbrose_db.db');
 
     try {
+      print('Initializing database at path: $path');
+      
       // Delete existing database if it's corrupted
       if (await databaseExists(path)) {
         try {
+          print('Database exists, checking if it can be opened...');
           final db = await openDatabase(path, readOnly: true);
           await db.close();
+          print('Existing database is valid');
         } catch (e) {
           print('Database corrupted, recreating...');
           await deleteDatabase(path);
         }
       }
 
+      print('Opening database with write permissions...');
       // Open database with write permissions
       final db = await openDatabase(
         path,
-        version: 20,  // Increment version to trigger migration
-        onCreate: _createTables,
-        onUpgrade: _onUpgrade,
+        version: 1,  // Reset to version 1 for clean slate
+        onCreate: (db, version) async {
+          print('Creating new database tables...');
+          await _createTables(db, version);
+          print('Database tables created successfully');
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          print('Upgrading database from version $oldVersion to $newVersion');
+          await _onUpgrade(db, oldVersion, newVersion);
+        },
         readOnly: false,
         singleInstance: true,
         onConfigure: (db) async {
+          print('Configuring database...');
           await db.execute('PRAGMA journal_mode=WAL');
           await db.execute('PRAGMA synchronous=NORMAL');
           await db.execute('PRAGMA busy_timeout=10000');
+          await db.execute('PRAGMA foreign_keys=ON');
+          print('Database configuration complete');
         },
       );
       
-      // Verify write access
-      await db.execute('PRAGMA journal_mode=WAL'); // Enable Write-Ahead Logging
-      await db.execute('PRAGMA foreign_keys=ON');
-      
+      print('Database initialized successfully');
       return db;
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('Database initialization error: $e');
-      throw Exception('Failed to initialize the database: $e');
+      print('Stack trace: $stackTrace');
+      
+      // Try to recover by deleting and recreating the database
+      try {
+        print('Attempting database recovery...');
+        await deleteDatabase(path);
+        
+        final db = await openDatabase(
+          path,
+          version: 1,
+          onCreate: _createTables,
+          readOnly: false,
+          singleInstance: true,
+        );
+        
+        print('Database recovered successfully');
+        return db;
+      } catch (recoveryError) {
+        print('Database recovery failed: $recoveryError');
+        throw Exception('Failed to initialize or recover the database: $e\nOriginal error: $recoveryError');
+      }
     }
   }
 
   Future<void> _createTables(Database db, int version) async {
-    // First create users table since it's referenced by others
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableUsers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL UNIQUE,
-        password TEXT NOT NULL,
-        full_name TEXT NOT NULL,
-        email TEXT NOT NULL,
-        role TEXT NOT NULL,
-        permissions TEXT NOT NULL DEFAULT '$PERMISSION_BASIC',
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        last_login TEXT
-      )
-    ''');
+    try {
+      print('Enabling foreign key support...');
+      // Enable foreign key support
+      await db.execute('PRAGMA foreign_keys = ON');
 
-    // Check if admin exists before creating
-    final hasAdmin = await _adminExists(db);
-    
-    if (!hasAdmin) {
-      String plainPassword = 'admin123';
-      String hashedPassword = _hashPassword(plainPassword);
+      print('Creating users table...');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS $tableUsers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT NOT NULL UNIQUE,
+          password TEXT NOT NULL,
+          full_name TEXT NOT NULL,
+          email TEXT NOT NULL,
+          role TEXT NOT NULL CHECK (role IN ('ADMIN', 'USER')),
+          permissions TEXT NOT NULL DEFAULT '$PERMISSION_BASIC' CHECK (permissions IN ('$PERMISSION_BASIC', '$PERMISSION_FULL_ACCESS')),
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          last_login TEXT,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+      ''');
 
-      await db.insert(tableUsers, {
-        'username': 'admin',
-        'password': hashedPassword,
-        'full_name': 'System Administrator',
-        'email': 'admin@example.com',
-        'role': ROLE_ADMIN,
-        'permissions': PERMISSION_FULL_ACCESS,
-        'created_at': DateTime.now().toIso8601String(),
-      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      print('Creating customers table...');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS $tableCustomers (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          email TEXT,
+          phone TEXT,
+          address TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+      ''');
+
+      print('Creating products table...');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS $tableProducts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          product_name TEXT NOT NULL,
+          description TEXT,
+          buying_price REAL NOT NULL CHECK (buying_price >= 0),
+          selling_price REAL NOT NULL CHECK (selling_price >= 0),
+          stock_quantity INTEGER NOT NULL DEFAULT 0,
+          is_sub_unit INTEGER NOT NULL DEFAULT 0 CHECK (is_sub_unit IN (0, 1)),
+          sub_unit_name TEXT,
+          sub_unit_quantity INTEGER CHECK (sub_unit_quantity > 0),
+          sub_unit_price REAL CHECK (sub_unit_price >= 0),
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+      ''');
+
+      print('Creating orders table...');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS $tableOrders (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          order_number TEXT NOT NULL UNIQUE,
+          customer_id INTEGER,
+          customer_name TEXT,
+          total_amount REAL NOT NULL CHECK (total_amount >= 0),
+          status TEXT NOT NULL CHECK (status IN ('PENDING', 'COMPLETED', 'CANCELLED')),
+          payment_status TEXT NOT NULL CHECK (payment_status IN ('PENDING', 'COMPLETED', 'PARTIAL')),
+          created_by INTEGER NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          completed_at TEXT,
+          FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id) ON DELETE SET NULL,
+          FOREIGN KEY (created_by) REFERENCES $tableUsers (id) ON DELETE RESTRICT
+        )
+      ''');
+
+      print('Creating order items table...');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS $tableOrderItems (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          order_id INTEGER NOT NULL,
+          product_id INTEGER NOT NULL,
+          quantity INTEGER NOT NULL CHECK (quantity > 0),
+          unit_price REAL NOT NULL CHECK (unit_price >= 0),
+          selling_price REAL NOT NULL CHECK (selling_price >= 0),
+          total_amount REAL NOT NULL CHECK (total_amount >= 0),
+          is_sub_unit INTEGER NOT NULL DEFAULT 0 CHECK (is_sub_unit IN (0, 1)),
+          sub_unit_name TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
+          FOREIGN KEY (product_id) REFERENCES $tableProducts (id) ON DELETE RESTRICT
+        )
+      ''');
+
+      print('Creating invoices table...');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS $tableInvoices (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          invoice_number TEXT NOT NULL UNIQUE,
+          customer_id INTEGER NOT NULL,
+          customer_name TEXT NOT NULL,
+          total_amount REAL NOT NULL CHECK (total_amount >= 0),
+          completed_amount REAL NOT NULL CHECK (completed_amount >= 0),
+          pending_amount REAL NOT NULL CHECK (pending_amount >= 0),
+          status TEXT NOT NULL CHECK (status IN ('PENDING', 'COMPLETED', 'CANCELLED')),
+          created_by INTEGER NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          due_date TEXT,
+          FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id) ON DELETE RESTRICT,
+          FOREIGN KEY (created_by) REFERENCES $tableUsers (id) ON DELETE RESTRICT
+        )
+      ''');
+
+      print('Creating invoice items table...');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS $tableInvoiceItems (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          invoice_id INTEGER NOT NULL,
+          order_id INTEGER,
+          product_id INTEGER NOT NULL,
+          quantity INTEGER NOT NULL CHECK (quantity > 0),
+          unit_price REAL NOT NULL CHECK (unit_price >= 0),
+          total_amount REAL NOT NULL CHECK (total_amount >= 0),
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (invoice_id) REFERENCES $tableInvoices (id) ON DELETE CASCADE,
+          FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE SET NULL,
+          FOREIGN KEY (product_id) REFERENCES $tableProducts (id) ON DELETE RESTRICT
+        )
+      ''');
+
+      print('Creating activity logs table...');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS $tableActivityLogs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          username TEXT NOT NULL,
+          action TEXT NOT NULL,
+          action_type TEXT NOT NULL CHECK (action_type IN (
+            'create_order', 'complete_sale', 'update_product', 'create_product',
+            'create_creditor', 'update_creditor', 'create_debtor', 'update_debtor',
+            'login', 'logout', 'add_stock', 'deduct_stock'
+          )),
+          details TEXT NOT NULL,
+          timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES $tableUsers (id) ON DELETE CASCADE
+        )
+      ''');
+
+      print('All tables created successfully');
+      
+      // Ensure admin user exists with proper credentials
+      print('Creating admin user...');
+      await checkAndCreateAdminUser();
+      print('Admin user created/verified successfully');
+    } catch (e, stackTrace) {
+      print('Error creating tables: $e');
+      print('Stack trace: $stackTrace');
+      throw Exception('Failed to create database tables: $e');
     }
-
-    // Create customers table first
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableCustomers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        phone TEXT,
-        email TEXT,
-        address TEXT,
-        total_orders INTEGER DEFAULT 0,
-        total_amount REAL DEFAULT 0.0,
-        last_order_date TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT
-      )
-    ''');
-
-    // Create creditors table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableCreditors (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        balance REAL NOT NULL,
-        details TEXT,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        last_updated TEXT
-      )
-    ''');
-
-    // Create debtors table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableDebtors (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        balance REAL NOT NULL,
-        details TEXT,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        last_updated TEXT
-      )
-    ''');
-
-    // Create products table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableProducts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        image TEXT,
-        supplier TEXT NOT NULL,
-        received_date TEXT NOT NULL,
-        product_name TEXT NOT NULL,
-        buying_price REAL NOT NULL,
-        selling_price REAL NOT NULL,
-        quantity INTEGER NOT NULL,
-        description TEXT,
-        has_sub_units INTEGER DEFAULT 0,
-        sub_unit_quantity INTEGER,
-        sub_unit_price REAL,
-        sub_unit_name TEXT,
-        created_by INTEGER,
-        updated_by INTEGER,
-        updated_at TEXT,
-        FOREIGN KEY (created_by) REFERENCES $tableUsers (id),
-        FOREIGN KEY (updated_by) REFERENCES $tableUsers (id)
-      )
-    ''');
-
-    // Create orders table with customer_id foreign key
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableOrders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_number TEXT NOT NULL UNIQUE,
-        customer_id INTEGER,
-        customer_name TEXT NOT NULL,
-        total_amount REAL NOT NULL,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        payment_status TEXT NOT NULL DEFAULT 'PENDING',
-        created_by INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT,
-        order_date TEXT NOT NULL,
-        FOREIGN KEY (created_by) REFERENCES $tableUsers (id),
-        FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
-      )
-    ''');
-
-    // Create activity logs table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableActivityLogs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        username TEXT NOT NULL,
-        action TEXT NOT NULL,
-        action_type TEXT,
-        details TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES $tableUsers (id)
-      )
-    ''');
-
-    // Create order_items table with proper relations
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableOrderItems (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_id INTEGER NOT NULL,
-        product_id INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        unit_price REAL NOT NULL,
-        selling_price REAL NOT NULL,
-        adjusted_price REAL,
-        total_amount REAL NOT NULL,
-        product_name TEXT NOT NULL,
-        is_sub_unit INTEGER DEFAULT 0,
-        sub_unit_name TEXT,
-        sub_unit_quantity INTEGER,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
-        FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
-      )
-    ''');
-
-    // Create invoices table with proper relations
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableInvoices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoice_number TEXT NOT NULL,
-        customer_id INTEGER NOT NULL,
-        customer_name TEXT NOT NULL,
-        total_amount REAL NOT NULL,
-        completed_amount REAL NOT NULL,
-        pending_amount REAL NOT NULL,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        payment_status TEXT NOT NULL DEFAULT 'PENDING',
-        created_at TEXT NOT NULL,
-        due_date TEXT,
-        FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
-      )
-    ''');
-
-    // Update invoice items table with proper schema
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableInvoiceItems (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoice_id INTEGER NOT NULL,
-        order_id INTEGER NOT NULL,
-        product_id INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        unit_price REAL NOT NULL,
-        selling_price REAL NOT NULL,
-        total_amount REAL NOT NULL,
-        is_sub_unit INTEGER NOT NULL DEFAULT 0,
-        sub_unit_name TEXT,
-        sub_unit_quantity REAL,
-        status TEXT NOT NULL,
-        FOREIGN KEY (invoice_id) REFERENCES $tableInvoices (id) ON DELETE CASCADE,
-        FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
-        FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
-      )
-    ''');
   }
 
   String _hashPassword(String password) {
-    // Convert the password to bytes
-    var bytes = utf8.encode(password); // Convert to UTF-8
-    var digest = sha256.convert(bytes); // Hash the password
-    return digest.toString(); // Return the hashed password as a string
+    // This method is deprecated, use AuthService.instance.hashPassword instead
+    return AuthService.instance.hashPassword(password);
   }
 
   // Add migration method for unhashed passwords
@@ -342,12 +334,45 @@ class DatabaseService {
   // Add migration method for activity logs
   Future<void> _migrateActivityLogs(Database db) async {
     try {
-      // Check if action_type column exists
-      var tableInfo = await db.rawQuery('PRAGMA table_info($tableActivityLogs)');
-      bool hasActionTypeColumn = tableInfo.any((column) => column['name'] == 'action_type');
+      // First check if the table exists
+      final tables = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        [tableActivityLogs]
+      );
       
-      if (!hasActionTypeColumn) {
+      if (tables.isEmpty) {
+        // Table doesn't exist, create it with all required columns
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS $tableActivityLogs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            username TEXT NOT NULL,
+            action TEXT NOT NULL,
+            action_type TEXT,
+            details TEXT NOT NULL,
+            timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES $tableUsers (id) ON DELETE CASCADE
+          )
+        ''');
+        print('Created activity_logs table');
+        return;
+      }
+      
+      // Table exists, check for required columns
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableActivityLogs)');
+      
+      // Check for username column
+      bool hasUsername = tableInfo.any((column) => column['name'] == 'username');
+      if (!hasUsername) {
+        await db.execute('ALTER TABLE $tableActivityLogs ADD COLUMN username TEXT');
+        print('Added username column to activity_logs');
+      }
+      
+      // Check for action_type column
+      bool hasActionType = tableInfo.any((column) => column['name'] == 'action_type');
+      if (!hasActionType) {
         await db.execute('ALTER TABLE $tableActivityLogs ADD COLUMN action_type TEXT');
+        print('Added action_type column to activity_logs');
       }
       
       // Update any existing records to use action as action_type if needed
@@ -356,6 +381,18 @@ class DatabaseService {
         SET action_type = action 
         WHERE action_type IS NULL
       ''');
+      
+      // If username is NULL, try to populate it from users table
+      await db.execute('''
+        UPDATE $tableActivityLogs al
+        SET username = (
+          SELECT username 
+          FROM $tableUsers u 
+          WHERE u.id = al.user_id
+        )
+        WHERE al.username IS NULL
+      ''');
+      
     } catch (e) {
       print('Error during activity logs migration: $e');
     }
@@ -363,103 +400,117 @@ class DatabaseService {
 
   // Migration logic
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 18) {
-      // Add payment_status column if it doesn't exist
-      try {
-        await db.execute(
-          'ALTER TABLE $tableInvoices ADD COLUMN payment_status TEXT NOT NULL DEFAULT "PENDING"'
-        );
-      } catch (e) {
-        print('Column might already exist: $e');
-      }
-    }
+    print('Upgrading database from version $oldVersion to $newVersion');
+    
     try {
-      // Check if sub_unit_quantity column exists in invoice_items
-      var tableInfo = await db.rawQuery('PRAGMA table_info($tableInvoiceItems)');
-      bool hasSubUnitQuantity = tableInfo.any((column) => column['name'] == 'sub_unit_quantity');
-      
-      if (!hasSubUnitQuantity) {
-        await db.execute(
-          'ALTER TABLE $tableInvoiceItems ADD COLUMN sub_unit_quantity REAL'
-        );
-      }
-
       // Backup existing data
       final existingUsers = await db.query(tableUsers);
+      final existingCustomers = await db.query(tableCustomers);
+      final existingProducts = await db.query(tableProducts);
+      final existingOrders = await db.query(tableOrders);
+      final existingOrderItems = await db.query(tableOrderItems);
+      final existingInvoices = await db.query(tableInvoices);
+      final existingInvoiceItems = await db.query(tableInvoiceItems);
+      final existingActivityLogs = await db.query(tableActivityLogs);
       
-      // Create missing tables if needed
+      // Drop all existing tables
+      await db.execute('DROP TABLE IF EXISTS $tableInvoiceItems');
+      await db.execute('DROP TABLE IF EXISTS $tableInvoices');
+      await db.execute('DROP TABLE IF EXISTS $tableOrderItems');
+      await db.execute('DROP TABLE IF EXISTS $tableOrders');
+      await db.execute('DROP TABLE IF EXISTS $tableProducts');
+      await db.execute('DROP TABLE IF EXISTS $tableActivityLogs');
+      await db.execute('DROP TABLE IF EXISTS $tableCustomers');
+      await db.execute('DROP TABLE IF EXISTS $tableUsers');
+      
+      // Create new tables with updated schema
       await _createTables(db, newVersion);
       
-      // Migrate unhashed passwords
-      await _migrateUnhashedPasswords(db);
+      // Restore data with proper validation
+      for (var user in existingUsers) {
+        user.remove('id');
+        if (!user.containsKey('permissions')) {
+          user['permissions'] = user['role'] == ROLE_ADMIN ? PERMISSION_FULL_ACCESS : PERMISSION_BASIC;
+        }
+        if (user['password'].toString().length != 64) {
+          user['password'] = AuthService.instance.hashPassword(user['password'] as String);
+        }
+        await db.insert(tableUsers, user, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
       
-      // Migrate activity logs
-      await _migrateActivityLogs(db);
-
-      // Migrate customer data
-      await _migrateCustomerData(db);
-
-      // Restore users if needed
-      if (existingUsers.isNotEmpty) {
-        for (var user in existingUsers) {
-          if (!user.containsKey('permissions')) {
-            user['permissions'] = user['role'] == ROLE_ADMIN ? 
-              PERMISSION_FULL_ACCESS : PERMISSION_BASIC;
-          }
-          
-          // Ensure password is hashed
-          if (user['password'].toString().length != 64) {
-            user['password'] = _hashPassword(user['password'] as String);
-          }
-          
-          user.remove('id');
-          await db.insert(
-            tableUsers,
-            user,
-            conflictAlgorithm: ConflictAlgorithm.ignore,
-          );
-        }
+      for (var customer in existingCustomers) {
+        customer.remove('id');
+        await db.insert(tableCustomers, customer, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
-
-      // Link any existing orders with customer_name to customer_id
-      final ordersWithCustomerName = await db.query(
-        tableOrders,
-        where: 'customer_name IS NOT NULL AND customer_id IS NULL'
-      );
-
-      for (var order in ordersWithCustomerName) {
-        final customerName = order['customer_name'] as String;
-        // Find or create customer
-        var customer = await db.query(
-          tableCustomers,
-          where: 'name = ?',
-          whereArgs: [customerName],
-          limit: 1
-        );
-
-        int customerId;
-        if (customer.isEmpty) {
-          // Create new customer
-          customerId = await db.insert(tableCustomers, {
-            'name': customerName,
-            'created_at': order['created_at'],
-            'updated_at': order['created_at']
-          });
-        } else {
-          customerId = customer.first['id'] as int;
-        }
-
-        // Update order with customer_id
-        await db.update(
-          tableOrders,
-          {'customer_id': customerId},
-          where: 'id = ?',
-          whereArgs: [order['id']]
-        );
+      
+      for (var product in existingProducts) {
+        product.remove('id');
+        await db.insert(tableProducts, product, conflictAlgorithm: ConflictAlgorithm.ignore);
       }
+      
+      for (var order in existingOrders) {
+        order.remove('id');
+        if (!order.containsKey('payment_status')) {
+          order['payment_status'] = 'PENDING';
+        }
+        await db.insert(tableOrders, order, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      
+      for (var item in existingOrderItems) {
+        item.remove('id');
+        await db.insert(tableOrderItems, item, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      
+      for (var invoice in existingInvoices) {
+        invoice.remove('id');
+        await db.insert(tableInvoices, invoice, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      
+      for (var item in existingInvoiceItems) {
+        item.remove('id');
+        await db.insert(tableInvoiceItems, item, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      
+      for (var log in existingActivityLogs) {
+        log.remove('id');
+        if (!log.containsKey('action_type')) {
+          log['action_type'] = log['action'];
+        }
+        await db.insert(tableActivityLogs, log, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      
+      // Ensure admin user exists with correct credentials
+      await checkAndCreateAdminUser();
+      
+      print('Database upgrade completed successfully');
     } catch (e) {
       print('Error during database upgrade: $e');
       rethrow;
+    }
+  }
+
+  Future<void> _migrateInvoicePaymentStatus(Database db) async {
+    try {
+      // Check if payment_status column exists
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableInvoices)');
+      bool hasPaymentStatus = tableInfo.any((column) => column['name'] == 'payment_status');
+      
+      if (!hasPaymentStatus) {
+        // Add payment_status column with default value
+        await db.execute('''
+          ALTER TABLE $tableInvoices 
+          ADD COLUMN payment_status TEXT NOT NULL DEFAULT 'PENDING'
+        ''');
+        
+        // Update existing rows to have the default status
+        await db.update(
+          tableInvoices,
+          {'payment_status': 'PENDING'},
+          where: 'payment_status IS NULL'
+        );
+      }
+    } catch (e) {
+      print('Error migrating invoice payment status: $e');
     }
   }
 
@@ -1056,19 +1107,61 @@ class DatabaseService {
   }
 
   Future<void> checkAndCreateAdminUser() async {
-    final db = await database;
-    final adminUser = await getUserByUsername('admin');
-    
-    if (adminUser == null) {
-      await createUser({
-        'username': 'admin',
-        'password': AuthService.instance.hashPassword('Account@2024'),
-        'full_name': 'System Administrator',
-        'email': 'admin@example.com',
-        'role': ROLE_ADMIN,
-        'created_at': DateTime.now().toIso8601String(),
-        'permissions': PERMISSION_FULL_ACCESS,
-      });
+    try {
+      print('Checking for admin user...');
+      final db = await database;
+      
+      // Check if admin user exists
+      final adminUser = await getUserByUsername('admin');
+      
+      if (adminUser == null) {
+        print('Admin user not found, creating...');
+        // Create admin user with proper credentials
+        final adminData = {
+          'username': 'admin',
+          'password': AuthService.instance.hashPassword('admin123'),
+          'full_name': 'System Administrator',
+          'email': 'admin@example.com',
+          'role': ROLE_ADMIN,
+          'created_at': DateTime.now().toIso8601String(),
+          'permissions': PERMISSION_FULL_ACCESS,
+        };
+        
+        await db.transaction((txn) async {
+          try {
+            await txn.insert(
+              tableUsers,
+              adminData,
+              conflictAlgorithm: ConflictAlgorithm.ignore,
+            );
+            print('Admin user created successfully');
+          } catch (e) {
+            print('Error creating admin user in transaction: $e');
+            rethrow;
+          }
+        });
+      } else {
+        print('Admin user already exists');
+        // Ensure admin user has correct role and permissions
+        if (adminUser['role'] != ROLE_ADMIN || adminUser['permissions'] != PERMISSION_FULL_ACCESS) {
+          print('Updating admin user permissions...');
+          await db.update(
+            tableUsers,
+            {
+              'role': ROLE_ADMIN,
+              'permissions': PERMISSION_FULL_ACCESS,
+              'updated_at': DateTime.now().toIso8601String(),
+            },
+            where: 'username = ?',
+            whereArgs: ['admin'],
+          );
+          print('Admin user permissions updated');
+        }
+      }
+    } catch (e, stackTrace) {
+      print('Error checking/creating admin user: $e');
+      print('Stack trace: $stackTrace');
+      throw Exception('Failed to check/create admin user: $e');
     }
   }
 
@@ -1413,9 +1506,10 @@ class DatabaseService {
   // Update getOrderItems to handle both Map and OrderItem responses
   Future<List<Map<String, dynamic>>> getOrderItems(
     int orderId, {
-    String? status
+    String? status,
+    DatabaseExecutor? executor,
   }) async {
-    final db = await database;
+    final db = executor ?? await database;
     try {
       String query = '''
         SELECT 
@@ -1440,8 +1534,7 @@ class DatabaseService {
       
       query += ' ORDER BY oi.id';
       
-      final results = await db.rawQuery(query, args);
-      return results;
+      return await db.rawQuery(query, args);
     } catch (e) {
       print('Error getting order items: $e');
       return [];
@@ -1580,14 +1673,6 @@ class DatabaseService {
               'sub_unit_name': item.subUnitName,
               'status': 'COMPLETED'
             });
-
-            // Update order status
-            await db.update(
-              tableOrders,
-              {'status': 'INVOICED'},
-              where: 'id = ?',
-              whereArgs: [item.orderId],
-            );
           }
         }
 
@@ -1621,10 +1706,11 @@ class DatabaseService {
   Future<List<Map<String, dynamic>>> getOrdersByCustomerId(
     int customerId, {
     String? status,
-    Transaction? txn,
+    DateTime? startDate,
+    DateTime? endDate,
+    DatabaseExecutor? executor,
   }) async {
-    final db = await database;
-    final queryExecutor = txn ?? db;
+    final db = executor ?? await database;
 
     final query = '''
       SELECT 
@@ -1636,15 +1722,21 @@ class DatabaseService {
         o.customer_name
       FROM $tableOrders o
       WHERE o.customer_id = ? 
-      AND o.status != 'INVOICED'
+      AND o.status IN ('PENDING', 'COMPLETED')
       ${status != null ? 'AND o.status = ?' : ''}
+      ${startDate != null ? 'AND date(o.created_at) >= date(?)' : ''}
+      ${endDate != null ? 'AND date(o.created_at) <= date(?)' : ''}
       ORDER BY o.created_at DESC
     ''';
 
-    return await queryExecutor.rawQuery(
-      query, 
-      status != null ? [customerId, status] : [customerId],
-    );
+    final args = [
+      customerId,
+      if (status != null) status,
+      if (startDate != null) startDate.toIso8601String(),
+      if (endDate != null) endDate.toIso8601String(),
+    ];
+
+    return await db.rawQuery(query, args);
   }
 
   // Simple method to get invoices with basic filtering
@@ -1652,36 +1744,34 @@ class DatabaseService {
     DateTime? startDate,
     DateTime? endDate,
     String? searchQuery,
+    DatabaseExecutor? executor,
   }) async {
-    final db = await database;
-    String query = '''
-      SELECT i.*, c.name as customer_name 
-      FROM invoices i
-      LEFT JOIN customers c ON i.customer_id = c.id
-      WHERE 1=1
-    ''';
-
-    List<dynamic> arguments = [];
-
+    final db = executor ?? await database;
+    
+    String whereClause = '1=1';
+    List<dynamic> whereArgs = [];
+    
     if (startDate != null) {
-      query += ' AND date(i.created_at) >= date(?)';
-      arguments.add(startDate.toIso8601String());
+      whereClause += ' AND date(created_at) >= date(?)';
+      whereArgs.add(startDate.toIso8601String());
     }
-
+    
     if (endDate != null) {
-      query += ' AND date(i.created_at) <= date(?)';
-      arguments.add(endDate.toIso8601String());
+      whereClause += ' AND date(created_at) <= date(?)';
+      whereArgs.add(endDate.toIso8601String());
     }
-
+    
     if (searchQuery != null && searchQuery.isNotEmpty) {
-      query += ' AND (i.invoice_number LIKE ? OR c.name LIKE ?)';
-      arguments.add('%$searchQuery%');
-      arguments.add('%$searchQuery%');
+      whereClause += ' AND (invoice_number LIKE ? OR customer_name LIKE ?)';
+      whereArgs.addAll(['%$searchQuery%', '%$searchQuery%']);
     }
-
-    query += ' ORDER BY i.created_at DESC';
-
-    return await db.rawQuery(query, arguments);
+    
+    return await db.query(
+      tableInvoices,
+      where: whereClause,
+      whereArgs: whereArgs,
+      orderBy: 'created_at DESC',
+    );
   }
 
   Future<void> _migrateCustomerData(Database db) async {

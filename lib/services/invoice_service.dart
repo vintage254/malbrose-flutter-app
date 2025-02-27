@@ -28,12 +28,18 @@ class InvoiceService {
   static Future<Uint8List> generateInvoicePdf(Invoice invoice, Customer customer) async {
     final pdf = pw.Document();
     final logo = await _getLogoImage();
-    final font = await PdfGoogleFonts.nunitoRegular();
-    final boldFont = await PdfGoogleFonts.nunitoBold();
+    
+    // Use Roboto font which has better Unicode support
+    final font = await PdfGoogleFonts.robotoRegular();
+    final boldFont = await PdfGoogleFonts.robotoBold();
 
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
+        theme: pw.ThemeData.withFont(
+          base: font,
+          bold: boldFont,
+        ),
         build: (context) {
           final List<pw.Widget> children = [];
           
@@ -46,7 +52,7 @@ class InvoiceService {
 
           if (invoice.hasCompletedItems) {
             children.addAll([
-              _buildSectionTitle('Completed Orders', boldFont, PdfColors.blue900),
+              _buildSectionTitle('Completed Orders', boldFont, PdfColors.green700),
               pw.SizedBox(height: 10),
               _buildItemsTable(invoice.completedItems!, font),
               pw.SizedBox(height: 20),
@@ -55,7 +61,7 @@ class InvoiceService {
 
           if (invoice.hasPendingItems) {
             children.addAll([
-              _buildSectionTitle('Pending Orders', boldFont, PdfColors.orange),
+              _buildSectionTitle('Pending Orders', boldFont, PdfColors.orange700),
               pw.SizedBox(height: 10),
               _buildItemsTable(invoice.pendingItems!, font),
               pw.SizedBox(height: 20),
@@ -306,20 +312,37 @@ class InvoiceService {
     );
   }
 
-  Future<Invoice> generateInvoice(int customerId, {Transaction? txn}) async {
+  Future<Invoice> generateInvoice(
+    int customerId, {
+    DateTime? startDate,
+    DateTime? endDate,
+    Transaction? txn
+  }) async {
     if (txn != null) {
-      return await _generateInvoiceWithExecutor(customerId, txn);
+      return await _generateInvoiceWithExecutor(
+        customerId, 
+        txn,
+        startDate: startDate,
+        endDate: endDate,
+      );
     }
     // If no transaction provided, create one
     return await DatabaseService.instance.withTransaction((transaction) async {
-      return await _generateInvoiceWithExecutor(customerId, transaction);
+      return await _generateInvoiceWithExecutor(
+        customerId, 
+        transaction,
+        startDate: startDate,
+        endDate: endDate,
+      );
     });
   }
 
   Future<Invoice> _generateInvoiceWithExecutor(
     int customerId, 
-    DatabaseExecutor executor
-  ) async {
+    DatabaseExecutor executor, {
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
     try {
       final customerResult = await executor.query(
         'customers',
@@ -334,29 +357,15 @@ class InvoiceService {
       
       final customer = customerResult.first;
       
-      final orders = await executor.rawQuery('''
-        SELECT 
-          o.id,
-          o.status,
-          oi.id as item_id,
-          COALESCE(oi.product_id, 0) as product_id,
-          COALESCE(oi.quantity, 0) as quantity,
-          COALESCE(oi.unit_price, 0.0) as unit_price,
-          COALESCE(oi.selling_price, 0.0) as selling_price,
-          COALESCE(oi.is_sub_unit, 0) as is_sub_unit,
-          oi.sub_unit_name,
-          COALESCE(p.product_name, 'Unknown Product') as product_name,
-          p.sub_unit_price,
-          p.sub_unit_quantity
-        FROM orders o
-        LEFT JOIN order_items oi ON o.id = oi.order_id
-        LEFT JOIN products p ON oi.product_id = p.id
-        WHERE o.customer_id = ? AND o.status != 'INVOICED'
-        ORDER BY o.created_at DESC
-      ''', [customerId]);
+      final orders = await DatabaseService.instance.getOrdersByCustomerId(
+        customerId,
+        startDate: startDate,
+        endDate: endDate,
+        executor: executor,
+      );
 
       if (orders.isEmpty) {
-        throw Exception('No uninvoiced orders found for this customer');
+        throw Exception('No orders found for this customer in the selected date range');
       }
 
       double completedAmount = 0;
@@ -366,21 +375,28 @@ class InvoiceService {
 
       for (final order in orders) {
         try {
-          final item = OrderItem.fromMap(order);
-          final isSubUnit = order['is_sub_unit'] == 1;
-          final subUnitPrice = (order['sub_unit_price'] as num?)?.toDouble();
-          
-          final actualPrice = isSubUnit && subUnitPrice != null ? 
-              subUnitPrice : item.sellingPrice;
-          
-          final totalAmount = actualPrice * item.quantity;
+          final orderItems = await DatabaseService.instance.getOrderItems(
+            order['order_id'] as int,
+            executor: executor,
+          );
 
-          if (order['status'] == 'COMPLETED') {
-            completedItems.add(item);
-            completedAmount += totalAmount;
-          } else {
-            pendingItems.add(item);
-            pendingAmount += totalAmount;
+          for (final itemData in orderItems) {
+            final item = OrderItem.fromMap(itemData);
+            final isSubUnit = itemData['is_sub_unit'] == 1;
+            final subUnitPrice = (itemData['sub_unit_price'] as num?)?.toDouble();
+            
+            final actualPrice = isSubUnit && subUnitPrice != null ? 
+                subUnitPrice : item.sellingPrice;
+            
+            final totalAmount = actualPrice * item.quantity;
+
+            if (order['status'] == 'COMPLETED') {
+              completedItems.add(item);
+              completedAmount += totalAmount;
+            } else {
+              pendingItems.add(item);
+              pendingAmount += totalAmount;
+            }
           }
         } catch (e) {
           print('Error processing order item: $e');
@@ -393,6 +409,16 @@ class InvoiceService {
         throw Exception('No valid items found for invoice');
       }
 
+      // Calculate invoice status based on items
+      String invoiceStatus;
+      if (completedItems.isEmpty) {
+        invoiceStatus = 'PENDING';
+      } else if (pendingItems.isEmpty) {
+        invoiceStatus = 'COMPLETED';
+      } else {
+        invoiceStatus = 'PARTIAL';
+      }
+
       final invoiceNumber = await _generateInvoiceNumber(executor);
       
       return Invoice(
@@ -402,7 +428,7 @@ class InvoiceService {
         totalAmount: completedAmount + pendingAmount,
         completedAmount: completedAmount,
         pendingAmount: pendingAmount,
-        status: 'PENDING',
+        status: invoiceStatus,
         paymentStatus: 'PENDING',
         createdAt: DateTime.now(),
         dueDate: DateTime.now().add(const Duration(days: 30)),
@@ -459,7 +485,58 @@ class InvoiceService {
       orderBy: 'created_at DESC',
     );
 
-    return invoices.map((map) => Invoice.fromMap(map)).toList();
+    final List<Invoice> result = [];
+    
+    for (final invoiceMap in invoices) {
+      final invoice = Invoice.fromMap(invoiceMap);
+      
+      // Load invoice items
+      final items = await executor.rawQuery('''
+        SELECT 
+          ii.*,
+          p.product_name,
+          p.buying_price,
+          p.sub_unit_quantity,
+          p.sub_unit_price
+        FROM invoice_items ii
+        JOIN products p ON ii.product_id = p.id
+        WHERE ii.invoice_id = ?
+        ORDER BY ii.id
+      ''', [invoice.id]);
+
+      final completedItems = <OrderItem>[];
+      final pendingItems = <OrderItem>[];
+
+      for (final item in items) {
+        final orderItem = OrderItem(
+          id: item['id'] as int?,
+          orderId: item['order_id'] as int,
+          productId: item['product_id'] as int,
+          quantity: item['quantity'] as int,
+          unitPrice: (item['unit_price'] as num).toDouble(),
+          sellingPrice: (item['selling_price'] as num).toDouble(),
+          adjustedPrice: (item['adjusted_price'] as num?)?.toDouble() ?? 
+                        (item['selling_price'] as num).toDouble(),
+          totalAmount: (item['total_amount'] as num).toDouble(),
+          productName: item['product_name'] as String,
+          isSubUnit: (item['is_sub_unit'] as int?) == 1,
+          subUnitName: item['sub_unit_name'] as String?,
+        );
+
+        if (item['status'] == 'COMPLETED') {
+          completedItems.add(orderItem);
+        } else {
+          pendingItems.add(orderItem);
+        }
+      }
+
+      result.add(invoice.copyWith(
+        completedItems: completedItems,
+        pendingItems: pendingItems,
+      ));
+    }
+
+    return result;
   }
 
   Future<Invoice> createInvoiceWithItems(Invoice invoice, {Transaction? txn}) async {
@@ -536,15 +613,6 @@ class InvoiceService {
           'status': status,
         },
       );
-
-      if (status == 'COMPLETED') {
-        await executor.update(
-          DatabaseService.tableOrders,
-          {'status': 'INVOICED'},
-          where: 'id = ?',
-          whereArgs: [item.orderId],
-        );
-      }
     }
   }
 
@@ -632,5 +700,23 @@ class InvoiceService {
       print('Error loading logo: $e');
       return null;
     }
+  }
+
+  Future<List<Map<String, dynamic>>> getInvoiceItems(int invoiceId, {Transaction? txn}) async {
+    final executor = txn ?? await DatabaseService.instance.database;
+    
+    return await executor.rawQuery('''
+      SELECT 
+        ii.*,
+        p.product_name,
+        p.buying_price,
+        p.sub_unit_quantity,
+        p.sub_unit_price,
+        p.sub_unit_name
+      FROM invoice_items ii
+      JOIN products p ON ii.product_id = p.id
+      WHERE ii.invoice_id = ?
+      ORDER BY ii.id
+    ''', [invoiceId]);
   }
 } 

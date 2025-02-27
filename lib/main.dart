@@ -16,57 +16,76 @@ import 'package:my_flutter_app/screens/sales_report_screen.dart';
 import 'package:my_flutter_app/services/database.dart';
 
 void main() async {
-  // Initialize FFI
-  sqfliteFfiInit();
-  // Set the databaseFactory to use FFI
-  databaseFactory = databaseFactoryFfi;
+  try {
+    // Ensure Flutter bindings are initialized first
+    WidgetsFlutterBinding.ensureInitialized();
+    print('Flutter bindings initialized');
 
-  WidgetsFlutterBinding.ensureInitialized();
-  
-  // Initialize database and check for admin user
-  await DatabaseService.instance.checkAndCreateAdminUser();
-  
-  // Add required columns if they don't exist
-  await DatabaseService.instance.addUsernameColumnToActivityLogs();
-  await DatabaseService.instance.addUpdatedAtColumnToProducts();
-  await DatabaseService.instance.addStatusColumnToOrders();
-  
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider<OrderService>.value(
-          value: OrderService.instance,
+    // Initialize FFI
+    sqfliteFfiInit();
+    print('SQLite FFI initialized');
+    
+    // Set the databaseFactory to use FFI
+    databaseFactory = databaseFactoryFfi;
+    print('Database factory set');
+    
+    // Initialize database and check for admin user
+    await DatabaseService.instance.checkAndCreateAdminUser();
+    print('Admin user checked');
+    
+    // Add required columns if they don't exist
+    await DatabaseService.instance.addUsernameColumnToActivityLogs();
+    await DatabaseService.instance.addUpdatedAtColumnToProducts();
+    await DatabaseService.instance.addStatusColumnToOrders();
+    print('Database columns updated');
+    
+    runApp(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<OrderService>.value(
+            value: OrderService.instance,
+          ),
+        ],
+        child: MaterialApp(
+          title: 'Malbrose Hardware Store',
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.orange),
+            useMaterial3: true,
+          ),
+          home: const HomeScreen(),
+          routes: {
+            '/main': (context) => const MainScreen(),
+            '/orders': (context) => const OrderScreen(),
+            '/sales': (context) => const SalesScreen(),
+            '/products': (context) => const ProductManagementScreen(),
+            '/users': (context) => const UserManagementScreen(),
+            '/activity': (context) => const ActivityLogScreen(),
+            '/creditors': (context) => const CreditorsScreen(),
+            '/debtors': (context) => const DebtorsScreen(),
+            '/invoices': (context) => const InvoicesScreen(),
+            '/sales-report': (context) => const SalesReportScreen(),
+          },
         ),
-      ],
-      child: const MyApp(),
-    ),
-  );
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Malbrose Hardware Store',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.orange),
-        useMaterial3: true,
       ),
-      home: const HomeScreen(),
-      routes: {
-        '/main': (context) => const MainScreen(),
-        '/orders': (context) => const OrderScreen(),
-        '/sales': (context) => const SalesScreen(),
-        '/products': (context) => const ProductManagementScreen(),
-        '/users': (context) => const UserManagementScreen(),
-        '/activity': (context) => const ActivityLogScreen(),
-        '/creditors': (context) => const CreditorsScreen(),
-        '/debtors': (context) => const DebtorsScreen(),
-        '/invoices': (context) => const InvoicesScreen(),
-        '/sales-report': (context) => const SalesReportScreen(),
-      },
+    );
+  } catch (e, stackTrace) {
+    print('Error during app initialization: $e');
+    print('Stack trace: $stackTrace');
+    
+    // Show error UI instead of crashing
+    runApp(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: Text(
+              'Error initializing app: $e\nPlease restart the application.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.red),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
