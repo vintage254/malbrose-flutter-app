@@ -25,6 +25,8 @@ class DatabaseService {
   static const String tableOrderItems = 'order_items';
   static const String tableCustomers = 'customers';
   static const String tableInvoices = 'invoices';
+  static const String tableCustomerReports = 'customer_reports';
+  static const String tableReportItems = 'report_items';
 
   // Add these constants at the top of the DatabaseService class
   static const String actionCreateOrder = 'create_order';
@@ -37,6 +39,9 @@ class DatabaseService {
   static const String actionUpdateDebtor = 'update_debtor';
   static const String actionLogin = 'login';
   static const String actionLogout = 'logout';
+  static const String actionCreateCustomerReport = 'create_customer_report';
+  static const String actionUpdateCustomerReport = 'update_customer_report';
+  static const String actionPrintCustomerReport = 'print_customer_report';
 
   // Add these admin privilege constants at the top of DatabaseService class
   static const String ROLE_ADMIN = 'ADMIN';
@@ -269,6 +274,45 @@ class DatabaseService {
         created_at TEXT NOT NULL,
         due_date TEXT,
         FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
+      )
+    ''');
+    
+    // Create customer reports table with proper relations
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableCustomerReports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_number TEXT NOT NULL,
+        customer_id INTEGER NOT NULL,
+        customer_name TEXT,
+        total_amount REAL NOT NULL,
+        completed_amount REAL NOT NULL,
+        pending_amount REAL NOT NULL,
+        status TEXT NOT NULL,
+        payment_status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        due_date TEXT,
+        FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
+      )
+    ''');
+    
+    // Create report items table with proper relations
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableReportItems (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_id INTEGER NOT NULL,
+        order_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity INTEGER NOT NULL,
+        unit_price REAL NOT NULL,
+        selling_price REAL NOT NULL,
+        adjusted_price REAL,
+        total_amount REAL NOT NULL,
+        is_sub_unit INTEGER DEFAULT 0,
+        sub_unit_name TEXT,
+        status TEXT NOT NULL,
+        FOREIGN KEY (report_id) REFERENCES $tableCustomerReports (id),
+        FOREIGN KEY (order_id) REFERENCES $tableOrders (id),
+        FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
       )
     ''');
   }
@@ -1819,5 +1863,166 @@ class DatabaseService {
         rethrow;
       }
     });
+  }
+
+  // Customer Reports related methods
+  Future<List<Map<String, dynamic>>> getCustomerReports({
+    DateTime? startDate,
+    DateTime? endDate,
+    String? searchQuery,
+  }) async {
+    final db = await database;
+    
+    String whereClause = '';
+    List<dynamic> whereArgs = [];
+    
+    if (startDate != null && endDate != null) {
+      whereClause += 'date(created_at) BETWEEN date(?) AND date(?)';
+      whereArgs.addAll([
+        startDate.toIso8601String(),
+        endDate.toIso8601String(),
+      ]);
+    }
+    
+    if (searchQuery != null && searchQuery.isNotEmpty) {
+      if (whereClause.isNotEmpty) {
+        whereClause += ' AND ';
+      }
+      whereClause += '(customer_name LIKE ? OR report_number LIKE ?)';
+      whereArgs.addAll(['%$searchQuery%', '%$searchQuery%']);
+    }
+    
+    final query = '''
+      SELECT * FROM $tableCustomerReports
+      ${whereClause.isNotEmpty ? 'WHERE $whereClause' : ''}
+      ORDER BY created_at DESC
+    ''';
+    
+    try {
+      return await db.rawQuery(query, whereArgs);
+    } catch (e) {
+      print('Error getting customer reports: $e');
+      return [];
+    }
+  }
+  
+  Future<int> saveCustomerReport(Map<String, dynamic> reportData) async {
+    final db = await database;
+    final currentUser = AuthService.instance.currentUser;
+    
+    return await withTransaction((txn) async {
+      try {
+        final reportId = await txn.insert(
+          tableCustomerReports,
+          reportData,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        
+        // Log the activity
+        if (currentUser != null) {
+          final action = reportData['id'] == null 
+              ? actionCreateCustomerReport 
+              : actionUpdateCustomerReport;
+          
+          await logActivity({
+            'user_id': currentUser.id!,
+            'action': action,
+            'details': 'Report #${reportData['report_number']} for ${reportData['customer_name']}',
+            'timestamp': DateTime.now().toIso8601String(),
+            'username': currentUser.username,
+          });
+        }
+        
+        return reportId;
+      } catch (e) {
+        print('Error saving customer report: $e');
+        rethrow;
+      }
+    });
+  }
+  
+  Future<int> createReportWithItems(Map<String, dynamic> reportData, List<Map<String, dynamic>> items) async {
+    final db = await database;
+    final currentUser = AuthService.instance.currentUser;
+    
+    return await withTransaction((txn) async {
+      try {
+        // Insert the report
+        final reportId = await txn.insert(
+          tableCustomerReports,
+          reportData,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        
+        // Insert all report items
+        for (var item in items) {
+          item['report_id'] = reportId;
+          await txn.insert(
+            tableReportItems,
+            item,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+        
+        // Log the activity
+        if (currentUser != null) {
+          await logActivity({
+            'user_id': currentUser.id!,
+            'action': actionCreateCustomerReport,
+            'details': 'Created report #${reportData['report_number']} for ${reportData['customer_name']}',
+            'timestamp': DateTime.now().toIso8601String(),
+            'username': currentUser.username,
+          });
+        }
+        
+        return reportId;
+      } catch (e) {
+        print('Error creating report with items: $e');
+        rethrow;
+      }
+    });
+  }
+  
+  Future<List<Map<String, dynamic>>> getReportItems(int reportId, {String? status}) async {
+    final db = await database;
+    
+    String whereClause = 'report_id = ?';
+    List<dynamic> whereArgs = [reportId];
+    
+    if (status != null) {
+      whereClause += ' AND status = ?';
+      whereArgs.add(status);
+    }
+    
+    try {
+      return await db.rawQuery('''
+        SELECT ri.*, p.product_name 
+        FROM $tableReportItems ri
+        JOIN $tableProducts p ON ri.product_id = p.id
+        WHERE $whereClause
+        ORDER BY ri.id ASC
+      ''', whereArgs);
+    } catch (e) {
+      print('Error getting report items: $e');
+      return [];
+    }
+  }
+  
+  Future<Map<String, dynamic>?> getCustomerReportById(int reportId) async {
+    final db = await database;
+    
+    try {
+      final reports = await db.query(
+        tableCustomerReports,
+        where: 'id = ?',
+        whereArgs: [reportId],
+        limit: 1,
+      );
+      
+      return reports.isNotEmpty ? reports.first : null;
+    } catch (e) {
+      print('Error getting customer report by id: $e');
+      return null;
+    }
   }
 }

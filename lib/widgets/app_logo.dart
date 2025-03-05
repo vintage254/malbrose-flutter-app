@@ -15,9 +15,22 @@ class AppLogo extends StatelessWidget {
       width: size,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(size / 4),
-        image: const DecorationImage(
-          image: AssetImage('assets/images/logo.png'),
+        color: Colors.orange.shade100,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(size / 4),
+        child: Image.asset(
+          'assets/images/logo.png',
           fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('Error loading logo: $error');
+            debugPrint('Stack trace: $stackTrace');
+            return Icon(
+              Icons.store,
+              size: size * 0.6,
+              color: Colors.orange.shade900,
+            );
+          },
         ),
       ),
     );

@@ -25,7 +25,7 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
       {'title': 'Products', 'icon': Icons.inventory, 'route': '/products'},
       {'title': 'Creditors', 'icon': Icons.account_balance_wallet, 'route': '/creditors'},
       {'title': 'Debtors', 'icon': Icons.money_off, 'route': '/debtors'},
-      {'title': 'Invoices', 'icon': Icons.receipt_long, 'route': '/invoices'},
+      {'title': 'Customer Reports', 'icon': Icons.receipt_long, 'route': '/customer-reports'},
     ];
 
     // Add admin-only menu items

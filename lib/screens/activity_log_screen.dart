@@ -40,6 +40,9 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
     'update_creditor',
     'create_debtor',
     'update_debtor',
+    'create_customer_report',
+    'update_customer_report',
+    'print_customer_report',
     'login',
     'logout',
   ];
