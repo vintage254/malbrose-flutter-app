@@ -11,9 +11,11 @@ import 'package:my_flutter_app/screens/home_screen.dart';
 import 'package:my_flutter_app/screens/main_screen.dart';
 import 'package:my_flutter_app/screens/creditors_screen.dart';
 import 'package:my_flutter_app/screens/debtors_screen.dart';
-import 'package:my_flutter_app/screens/invoices_screen.dart';
+import 'package:my_flutter_app/screens/customer_reports_screen.dart';
 import 'package:my_flutter_app/screens/sales_report_screen.dart';
 import 'package:my_flutter_app/services/database.dart';
+import 'package:path/path.dart';
+import 'dart:io';
 
 void main() async {
   // Initialize FFI
@@ -23,13 +25,26 @@ void main() async {
 
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize database and check for admin user
-  await DatabaseService.instance.checkAndCreateAdminUser();
-  
-  // Add required columns if they don't exist
-  await DatabaseService.instance.addUsernameColumnToActivityLogs();
-  await DatabaseService.instance.addUpdatedAtColumnToProducts();
-  await DatabaseService.instance.addStatusColumnToOrders();
+  try {
+    // Ensure database directory exists with proper permissions
+    final dbPath = await getDatabasesPath();
+    final dbDir = Directory(dbPath);
+    if (!await dbDir.exists()) {
+      await dbDir.create(recursive: true);
+    }
+    
+    // Initialize database and check for admin user
+    await DatabaseService.instance.checkAndCreateAdminUser();
+    
+    // Add required columns if they don't exist
+    await DatabaseService.instance.addUsernameColumnToActivityLogs();
+    await DatabaseService.instance.addUpdatedAtColumnToProducts();
+    await DatabaseService.instance.addStatusColumnToOrders();
+  } catch (e) {
+    print('Error initializing database: $e');
+    // Continue with app startup even if database initialization fails
+    // The app will show appropriate error messages when database operations fail
+  }
   
   runApp(
     MultiProvider(
@@ -64,7 +79,7 @@ class MyApp extends StatelessWidget {
         '/activity': (context) => const ActivityLogScreen(),
         '/creditors': (context) => const CreditorsScreen(),
         '/debtors': (context) => const DebtorsScreen(),
-        '/invoices': (context) => const InvoicesScreen(),
+        '/customer-reports': (context) => const CustomerReportsScreen(),
         '/sales-report': (context) => const SalesReportScreen(),
       },
     );

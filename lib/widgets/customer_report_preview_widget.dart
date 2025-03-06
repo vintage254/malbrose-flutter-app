@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
-import 'package:my_flutter_app/models/invoice_model.dart';
+import 'package:my_flutter_app/models/customer_report_model.dart';
 import 'package:my_flutter_app/models/customer_model.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 
-class InvoicePreviewWidget extends StatelessWidget {
-  final Invoice invoice;
+class CustomerReportPreviewWidget extends StatelessWidget {
+  final CustomerReport report;
   final Customer customer;
 
-  const InvoicePreviewWidget({
+  const CustomerReportPreviewWidget({
     super.key,
-    required this.invoice,
+    required this.report,
     required this.customer,
   });
 
@@ -26,25 +26,26 @@ class InvoicePreviewWidget extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Invoice Preview',
+                'Customer Report Preview',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const Divider(),
-              _buildInfoRow('Invoice Number:', invoice.invoiceNumber),
+              _buildInfoRow('Report Number:', report.reportNumber),
               _buildInfoRow('Customer:', customer.name),
-              _buildInfoRow('Date:', DateFormat('MMM dd, yyyy').format(invoice.createdAt)),
-              if (invoice.dueDate != null)
-                _buildInfoRow('Due Date:', DateFormat('MMM dd, yyyy').format(invoice.dueDate!)),
-              _buildInfoRow('Status:', invoice.status),
+              _buildInfoRow('Date:', DateFormat('MMM dd, yyyy').format(report.createdAt)),
+              if (report.dueDate != null)
+                _buildInfoRow('Due Date:', DateFormat('MMM dd, yyyy').format(report.dueDate!)),
+              _buildInfoRow('Status:', report.status),
+              _buildInfoRow('Payment Status:', report.paymentStatus ?? 'PENDING'),
               const SizedBox(height: defaultPadding),
               
               // Completed Orders Section
-              if (invoice.completedItems != null && invoice.completedItems!.isNotEmpty)
-                _buildOrdersSection('Completed Orders', invoice.completedItems!, invoice.completedAmount),
+              if (report.completedItems != null && report.completedItems!.isNotEmpty)
+                _buildOrdersSection('Completed Orders', report.completedItems!, report.completedAmount),
               
               // Pending Orders Section
-              if (invoice.pendingItems != null && invoice.pendingItems!.isNotEmpty)
-                _buildOrdersSection('Pending Orders', invoice.pendingItems!, invoice.pendingAmount),
+              if (report.pendingItems != null && report.pendingItems!.isNotEmpty)
+                _buildOrdersSection('Pending Orders', report.pendingItems!, report.pendingAmount),
               
               const SizedBox(height: defaultPadding),
               Align(
@@ -53,7 +54,7 @@ class InvoicePreviewWidget extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      'Total Amount: KSH ${invoice.totalAmount.toStringAsFixed(2)}',
+                      'Total Amount: KSH ${report.totalAmount.toStringAsFixed(2)}',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 18,
@@ -175,20 +176,51 @@ class InvoicePreviewWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildItemRow(OrderItem item) {
-    return ListTile(
-      title: Text(item.displayName),
-      subtitle: Text(
-        '${item.quantity}${item.isSubUnit ? " ${item.subUnitName ?? 'pieces'}" : ""}'
-      ),
-      trailing: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text('KSH ${item.effectivePrice.toStringAsFixed(2)}'),
-          Text('KSH ${item.totalAmount.toStringAsFixed(2)}'),
-        ],
-      ),
+  Widget _buildStatusChip(String status) {
+    Color color;
+    switch (status.toUpperCase()) {
+      case 'COMPLETED':
+        color = Colors.green;
+        break;
+      case 'PENDING':
+        color = Colors.orange;
+        break;
+      case 'CANCELLED':
+        color = Colors.red;
+        break;
+      default:
+        color = Colors.grey;
+    }
+
+    return Chip(
+      label: Text(status),
+      backgroundColor: color.withOpacity(0.2),
+      labelStyle: TextStyle(color: color),
+    );
+  }
+
+  Widget _buildPaymentStatusChip(String? paymentStatus) {
+    if (paymentStatus == null) return const SizedBox.shrink();
+    
+    Color color;
+    switch (paymentStatus.toUpperCase()) {
+      case 'PAID':
+        color = Colors.green;
+        break;
+      case 'PENDING':
+        color = Colors.orange;
+        break;
+      case 'OVERDUE':
+        color = Colors.red;
+        break;
+      default:
+        color = Colors.grey;
+    }
+
+    return Chip(
+      label: Text(paymentStatus),
+      backgroundColor: color.withOpacity(0.2),
+      labelStyle: TextStyle(color: color),
     );
   }
 } 

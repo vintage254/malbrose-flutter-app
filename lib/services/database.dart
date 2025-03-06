@@ -7,8 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert'; // For utf8 encoding
 import 'package:synchronized/synchronized.dart';
-import 'package:my_flutter_app/models/invoice_model.dart';
 import '../models/customer_model.dart';
+import 'dart:io';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
@@ -24,8 +24,8 @@ class DatabaseService {
   static const String tableDebtors = 'debtors';
   static const String tableOrderItems = 'order_items';
   static const String tableCustomers = 'customers';
-  static const String tableInvoices = 'invoices';
-  static const String tableInvoiceItems = 'invoice_items';
+  static const String tableCustomerReports = 'customer_reports';
+  static const String tableReportItems = 'report_items';
 
   // Add these constants at the top of the DatabaseService class
   static const String actionCreateOrder = 'create_order';
@@ -38,6 +38,9 @@ class DatabaseService {
   static const String actionUpdateDebtor = 'update_debtor';
   static const String actionLogin = 'login';
   static const String actionLogout = 'logout';
+  static const String actionCreateCustomerReport = 'create_customer_report';
+  static const String actionUpdateCustomerReport = 'update_customer_report';
+  static const String actionPrintCustomerReport = 'print_customer_report';
 
   // Add these admin privilege constants at the top of DatabaseService class
   static const String ROLE_ADMIN = 'ADMIN';
@@ -65,41 +68,53 @@ class DatabaseService {
     final path = join(databasePath, 'malbrose_db.db');
 
     try {
-      // Delete existing database if it's corrupted
+      // Ensure the directory exists with proper permissions
+      final dbDir = Directory(databasePath);
+      if (!await dbDir.exists()) {
+        await dbDir.create(recursive: true);
+      }
+
+      // Check if database exists and is not corrupted
       if (await databaseExists(path)) {
         try {
           final db = await openDatabase(path, readOnly: true);
           await db.close();
         } catch (e) {
-          print('Database corrupted, recreating...');
-          await deleteDatabase(path);
+          print('Database corrupted or permission issue, recreating...');
+          try {
+            await deleteDatabase(path);
+          } catch (deleteError) {
+            print('Error deleting database: $deleteError');
+            // If we can't delete, try to create a new database with a different name
+            final newPath = join(databasePath, 'malbrose_db_new.db');
+            return await _openDatabase(newPath);
+          }
         }
       }
 
       // Open database with write permissions
-      final db = await openDatabase(
-        path,
-        version: 20,  // Increment version to trigger migration
-        onCreate: _createTables,
-        onUpgrade: _onUpgrade,
-        readOnly: false,
-        singleInstance: true,
-        onConfigure: (db) async {
-          await db.execute('PRAGMA journal_mode=WAL');
-          await db.execute('PRAGMA synchronous=NORMAL');
-          await db.execute('PRAGMA busy_timeout=10000');
-        },
-      );
-      
-      // Verify write access
-      await db.execute('PRAGMA journal_mode=WAL'); // Enable Write-Ahead Logging
-      await db.execute('PRAGMA foreign_keys=ON');
-      
-      return db;
+      return await _openDatabase(path);
     } catch (e) {
       print('Database initialization error: $e');
       throw Exception('Failed to initialize the database: $e');
     }
+  }
+
+  Future<Database> _openDatabase(String path) async {
+    return await openDatabase(
+      path,
+      version: 21,  // Increment version to trigger migration
+      onCreate: _createTables,
+      onUpgrade: _onUpgrade,
+      readOnly: false,
+      singleInstance: true,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA journal_mode=WAL');
+        await db.execute('PRAGMA synchronous=NORMAL');
+        await db.execute('PRAGMA busy_timeout=10000');
+        await db.execute('PRAGMA foreign_keys=ON');
+      },
+    );
   }
 
   Future<void> _createTables(Database db, int version) async {
@@ -255,12 +270,12 @@ class DatabaseService {
         FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
       )
     ''');
-
-    // Create invoices table with proper relations
+    
+    // Create customer reports table with proper relations
     await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableInvoices (
+      CREATE TABLE IF NOT EXISTS $tableCustomerReports (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoice_number TEXT NOT NULL,
+        report_number TEXT NOT NULL,
         customer_id INTEGER NOT NULL,
         customer_name TEXT NOT NULL,
         total_amount REAL NOT NULL,
@@ -274,11 +289,11 @@ class DatabaseService {
       )
     ''');
 
-    // Update invoice items table with proper schema
+    // Create report items table with proper schema
     await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableInvoiceItems (
+      CREATE TABLE IF NOT EXISTS $tableReportItems (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoice_id INTEGER NOT NULL,
+        report_id INTEGER NOT NULL,
         order_id INTEGER NOT NULL,
         product_id INTEGER NOT NULL,
         quantity INTEGER NOT NULL,
@@ -287,9 +302,8 @@ class DatabaseService {
         total_amount REAL NOT NULL,
         is_sub_unit INTEGER NOT NULL DEFAULT 0,
         sub_unit_name TEXT,
-        sub_unit_quantity REAL,
         status TEXT NOT NULL,
-        FOREIGN KEY (invoice_id) REFERENCES $tableInvoices (id) ON DELETE CASCADE,
+        FOREIGN KEY (report_id) REFERENCES $tableCustomerReports (id) ON DELETE CASCADE,
         FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
       )
@@ -367,20 +381,31 @@ class DatabaseService {
       // Add payment_status column if it doesn't exist
       try {
         await db.execute(
-          'ALTER TABLE $tableInvoices ADD COLUMN payment_status TEXT NOT NULL DEFAULT "PENDING"'
+          'ALTER TABLE $tableOrders ADD COLUMN payment_status TEXT NOT NULL DEFAULT "PENDING"'
         );
       } catch (e) {
         print('Column might already exist: $e');
       }
     }
+    
+    if (oldVersion < 21) {
+      // Drop invoice tables if they exist
+      try {
+        await db.execute('DROP TABLE IF EXISTS invoice_items');
+        await db.execute('DROP TABLE IF EXISTS invoices');
+      } catch (e) {
+        print('Error dropping invoice tables: $e');
+      }
+    }
+    
     try {
-      // Check if sub_unit_quantity column exists in invoice_items
-      var tableInfo = await db.rawQuery('PRAGMA table_info($tableInvoiceItems)');
+      // Check if sub_unit_quantity column exists in order_items
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableOrderItems)');
       bool hasSubUnitQuantity = tableInfo.any((column) => column['name'] == 'sub_unit_quantity');
       
       if (!hasSubUnitQuantity) {
         await db.execute(
-          'ALTER TABLE $tableInvoiceItems ADD COLUMN sub_unit_quantity REAL'
+          'ALTER TABLE $tableOrderItems ADD COLUMN sub_unit_quantity REAL'
         );
       }
 
@@ -608,19 +633,23 @@ class DatabaseService {
     );
   }
 
-  Future<void> logActivity(Map<String, dynamic> activity) async {
+  Future<void> logActivity(
+    int userId,
+    String username,
+    String action,
+    String actionType,
+    String details
+  ) async {
     final db = await database;
     try {
-      // Get the username for the current user
-      final user = await getUserById(activity['user_id'] as int);
-      if (user == null) {
-        throw Exception('User not found for logging activity');
-      }
-
-      // Add username to the activity log
-      activity['username'] = user['username'] as String;
-      
-      await db.insert(tableActivityLogs, activity);
+      await db.insert(tableActivityLogs, {
+        'user_id': userId,
+        'username': username,
+        'action': action,
+        'action_type': actionType,
+        'details': details,
+        'timestamp': DateTime.now().toIso8601String(),
+      });
     } catch (e) {
       print('Error logging activity: $e');
       rethrow;
@@ -879,13 +908,13 @@ class DatabaseService {
 
     // Log the activity
     if (currentUser != null) {
-      await logActivity({
-        'user_id': currentUser.id!,
-        'action': 'update_product',
-        'details': 'Updated product ID: ${product['id']}',
-        'timestamp': DateTime.now().toIso8601String(),
-        'username': currentUser.username,
-      });
+      await logActivity(
+        currentUser.id!,
+        currentUser.username,
+        'update_product',
+        'Update product',
+        'Updated product ID: ${product['id']}'
+      );
     }
   }
 
@@ -935,13 +964,13 @@ class DatabaseService {
       // Log stock update
       final currentUser = AuthService.instance.currentUser;
       if (currentUser != null) {
-        await logActivity({
-          'user_id': currentUser.id!,
-          'action': isDeducting ? 'deduct_stock' : 'add_stock',
-          'details': '${isDeducting ? 'Deducted' : 'Added'} ${quantity} ${isSubUnit ? product['sub_unit_name'] ?? 'pieces' : 'units'} of ${product['product_name']}. New quantity: ${finalQuantity}',
-          'timestamp': DateTime.now().toIso8601String(),
-          'username': currentUser.username,
-        });
+        await logActivity(
+          currentUser.id!,
+          currentUser.username,
+          isDeducting ? 'deduct_stock' : 'add_stock',
+          'Stock update',
+          '${isDeducting ? 'Deducted' : 'Added'} ${quantity} ${isSubUnit ? product['sub_unit_name'] ?? 'pieces' : 'units'} of ${product['product_name']}. New quantity: ${finalQuantity}'
+        );
       }
     });
   }
@@ -1512,7 +1541,7 @@ class DatabaseService {
     };
   }
 
-  Future<List<Map<String, dynamic>>> getCustomerInvoiceData({
+  Future<List<Map<String, dynamic>>> getCustomerReportData({
     required int customerId,
     DateTime? startDate,
     DateTime? endDate,
@@ -1551,72 +1580,6 @@ class DatabaseService {
     });
   }
 
-  Future<List<Map<String, dynamic>>> getAllInvoices() async {
-    final db = await database;
-    return await db.query('invoices', orderBy: 'created_at DESC');
-  }
-
-  // Simplified invoice creation with proper transaction handling
-  Future<Invoice> createInvoiceWithItems(Invoice invoice, {Transaction? txn}) async {
-    return await withTransaction((transaction) async {
-      final db = txn ?? transaction;
-      
-      try {
-        // Insert invoice
-        final invoiceId = await db.insert(tableInvoices, invoice.toMap());
-        
-        // Insert completed items
-        if (invoice.completedItems != null) {
-          for (var item in invoice.completedItems!) {
-            await db.insert(tableInvoiceItems, {
-              'invoice_id': invoiceId,
-              'order_id': item.orderId,
-              'product_id': item.productId,
-              'quantity': item.quantity,
-              'unit_price': item.unitPrice,
-              'selling_price': item.sellingPrice,
-              'total_amount': item.totalAmount,
-              'is_sub_unit': item.isSubUnit ? 1 : 0,
-              'sub_unit_name': item.subUnitName,
-              'status': 'COMPLETED'
-            });
-
-            // Update order status
-            await db.update(
-              tableOrders,
-              {'status': 'INVOICED'},
-              where: 'id = ?',
-              whereArgs: [item.orderId],
-            );
-          }
-        }
-
-        // Insert pending items
-        if (invoice.pendingItems != null) {
-          for (var item in invoice.pendingItems!) {
-            await db.insert(tableInvoiceItems, {
-              'invoice_id': invoiceId,
-              'order_id': item.orderId,
-              'product_id': item.productId,
-              'quantity': item.quantity,
-              'unit_price': item.unitPrice,
-              'selling_price': item.sellingPrice,
-              'total_amount': item.totalAmount,
-              'is_sub_unit': item.isSubUnit ? 1 : 0,
-              'sub_unit_name': item.subUnitName,
-              'status': 'PENDING'
-            });
-          }
-        }
-
-        return invoice.copyWith(id: invoiceId);
-      } catch (e) {
-        print('Error creating invoice: $e');
-        rethrow;
-      }
-    });
-  }
-
   // Simplified method to get orders by customer
   Future<List<Map<String, dynamic>>> getOrdersByCustomerId(
     int customerId, {
@@ -1636,7 +1599,7 @@ class DatabaseService {
         o.customer_name
       FROM $tableOrders o
       WHERE o.customer_id = ? 
-      AND o.status != 'INVOICED'
+      AND o.status != 'REPORTED'
       ${status != null ? 'AND o.status = ?' : ''}
       ORDER BY o.created_at DESC
     ''';
@@ -1645,43 +1608,6 @@ class DatabaseService {
       query, 
       status != null ? [customerId, status] : [customerId],
     );
-  }
-
-  // Simple method to get invoices with basic filtering
-  Future<List<Map<String, dynamic>>> getInvoices({
-    DateTime? startDate,
-    DateTime? endDate,
-    String? searchQuery,
-  }) async {
-    final db = await database;
-    String query = '''
-      SELECT i.*, c.name as customer_name 
-      FROM invoices i
-      LEFT JOIN customers c ON i.customer_id = c.id
-      WHERE 1=1
-    ''';
-
-    List<dynamic> arguments = [];
-
-    if (startDate != null) {
-      query += ' AND date(i.created_at) >= date(?)';
-      arguments.add(startDate.toIso8601String());
-    }
-
-    if (endDate != null) {
-      query += ' AND date(i.created_at) <= date(?)';
-      arguments.add(endDate.toIso8601String());
-    }
-
-    if (searchQuery != null && searchQuery.isNotEmpty) {
-      query += ' AND (i.invoice_number LIKE ? OR c.name LIKE ?)';
-      arguments.add('%$searchQuery%');
-      arguments.add('%$searchQuery%');
-    }
-
-    query += ' ORDER BY i.created_at DESC';
-
-    return await db.rawQuery(query, arguments);
   }
 
   Future<void> _migrateCustomerData(Database db) async {
@@ -1876,5 +1802,214 @@ class DatabaseService {
         rethrow;
       }
     });
+  }
+
+  // Customer Report related methods
+  Future<void> createCustomerReportWithItems(Map<String, dynamic> reportData, List<Map<String, dynamic>> items) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      // Insert report
+      final reportId = await txn.insert(tableCustomerReports, reportData);
+      
+      // Insert report items
+      for (var item in items) {
+        item['report_id'] = reportId;
+        await txn.insert(tableReportItems, item);
+      }
+      
+      // Log activity
+      final currentUser = await getCurrentUser();
+      if (currentUser != null) {
+        await logActivity(
+          currentUser['id'] as int,
+          currentUser['username'] as String,
+          actionCreateCustomerReport,
+          'Create customer report',
+          'Created customer report #${reportData['report_number']} for ${reportData['customer_name']}'
+        );
+      }
+    });
+  }
+  
+  Future<List<Map<String, dynamic>>> getCustomerReports({
+    int? customerId,
+    String? status,
+    DateTime? startDate,
+    DateTime? endDate,
+  }) async {
+    final db = await database;
+    String whereClause = '';
+    List<dynamic> whereArgs = [];
+    
+    if (customerId != null) {
+      whereClause += 'customer_id = ?';
+      whereArgs.add(customerId);
+    }
+    
+    if (status != null) {
+      if (whereClause.isNotEmpty) whereClause += ' AND ';
+      whereClause += 'status = ?';
+      whereArgs.add(status);
+    }
+    
+    if (startDate != null && endDate != null) {
+      if (whereClause.isNotEmpty) whereClause += ' AND ';
+      whereClause += 'date(created_at) BETWEEN date(?) AND date(?)';
+      whereArgs.addAll([
+        startDate.toIso8601String(),
+        endDate.toIso8601String(),
+      ]);
+    }
+    
+    final reports = await db.query(
+      tableCustomerReports,
+      where: whereClause.isNotEmpty ? whereClause : null,
+      whereArgs: whereArgs.isNotEmpty ? whereArgs : null,
+      orderBy: 'created_at DESC',
+    );
+    
+    return reports;
+  }
+  
+  Future<List<Map<String, dynamic>>> getReportItems(int reportId) async {
+    final db = await database;
+    return await db.query(
+      tableReportItems,
+      where: 'report_id = ?',
+      whereArgs: [reportId],
+    );
+  }
+  
+  Future<List<Map<String, dynamic>>> getDetailedReportItems(int reportId) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT 
+        ri.*,
+        p.product_name,
+        p.sub_unit_price,
+        p.sub_unit_quantity
+      FROM $tableReportItems ri
+      LEFT JOIN $tableProducts p ON ri.product_id = p.id
+      WHERE ri.report_id = ?
+    ''', [reportId]);
+  }
+  
+  Future<void> saveCustomerReport(Map<String, dynamic> reportData) async {
+    final db = await database;
+    
+    if (reportData.containsKey('id')) {
+      final id = reportData['id'];
+      reportData.remove('id');
+      
+      await db.update(
+        tableCustomerReports,
+        reportData,
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      
+      // Log activity
+      final currentUser = await getCurrentUser();
+      if (currentUser != null) {
+        await logActivity(
+          currentUser['id'] as int,
+          currentUser['username'] as String,
+          actionUpdateCustomerReport,
+          'Update customer report',
+          'Updated customer report #${reportData['report_number']}'
+        );
+      }
+    } else {
+      await db.insert(tableCustomerReports, reportData);
+      
+      // Log activity
+      final currentUser = await getCurrentUser();
+      if (currentUser != null) {
+        await logActivity(
+          currentUser['id'] as int,
+          currentUser['username'] as String,
+          actionCreateCustomerReport,
+          'Create customer report',
+          'Created customer report #${reportData['report_number']} for ${reportData['customer_name']}'
+        );
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> getCustomerDetails(int customerId) async {
+    final db = await database;
+    try {
+      final result = await db.rawQuery('''
+        SELECT 
+          c.id,
+          c.name,
+          c.phone,
+          c.email,
+          c.address,
+          COUNT(DISTINCT o.id) as total_orders,
+          SUM(CASE WHEN o.status = 'COMPLETED' THEN o.total_amount ELSE 0 END) as total_completed_sales,
+          SUM(CASE WHEN o.status = 'PENDING' THEN o.total_amount ELSE 0 END) as pending_payments,
+          MAX(o.created_at) as last_order_date
+        FROM customers c
+        LEFT JOIN orders o ON c.id = o.customer_id
+        WHERE c.id = ?
+        GROUP BY c.id
+      ''', [customerId]);
+      
+      if (result.isNotEmpty) {
+        return result.first;
+      }
+      return {};
+    } catch (e) {
+      print('Error getting customer details: $e');
+      return {};
+    }
+  }
+
+  Future<Map<String, dynamic>> getProductInventoryDetails(int productId) async {
+    final db = await database;
+    final product = await db.query(
+      tableProducts,
+      where: 'id = ?',
+      whereArgs: [productId],
+      limit: 1,
+    );
+    
+    if (product.isEmpty) {
+      return {};
+    }
+
+    final wholeUnits = (product.first['quantity'] as num).toDouble();
+    final subUnitsPerUnit = (product.first['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
+    
+    final completeUnits = wholeUnits.floor();
+    final remainingSubUnits = ((wholeUnits - completeUnits) * subUnitsPerUnit).round();
+
+    return {
+      'whole_units': completeUnits,
+      'remaining_sub_units': remainingSubUnits,
+      'sub_units_per_unit': subUnitsPerUnit.toInt(),
+      'product_name': product.first['product_name'],
+      'sub_unit_name': product.first['sub_unit_name'],
+    };
+  }
+
+  Future<List<Map<String, dynamic>>> getCustomerOrders(int customerId) async {
+    final db = await database;
+    return await db.query(
+      tableOrders,
+      where: 'customer_id = ?',
+      whereArgs: [customerId],
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  // Add the getCurrentUser method
+  Future<Map<String, dynamic>?> getCurrentUser() async {
+    final currentUser = AuthService.instance.currentUser;
+    if (currentUser != null) {
+      return await getUserById(currentUser.id!);
+    }
+    return null;
   }
 }

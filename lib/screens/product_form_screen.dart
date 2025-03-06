@@ -368,12 +368,13 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       }
 
       // Log the activity
-          await DatabaseService.instance.logActivity({
-        'user_id': currentUser.id,
-        'action': widget.product != null ? 'update_product' : 'create_product',
-        'details': '${widget.product != null ? 'Updated' : 'Created'} product: ${_productNameController.text}',
-            'timestamp': DateTime.now().toIso8601String(),
-          });
+      await DatabaseService.instance.logActivity(
+        currentUser.id!,
+        currentUser.username,
+        widget.product != null ? 'update_product' : 'create_product',
+        widget.product != null ? 'Update product' : 'Create product',
+        '${widget.product != null ? 'Updated' : 'Created'} product: ${_productNameController.text}'
+      );
 
         if (!mounted) return;
         Navigator.pop(context, true);

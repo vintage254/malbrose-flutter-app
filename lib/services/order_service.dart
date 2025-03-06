@@ -99,4 +99,32 @@ class OrderService extends ChangeNotifier {
   void notifyOrderUpdate() {
     refreshStats();
   }
+
+  Future<List<Order>> getOrdersByStatus(String status) async {
+    final db = await DatabaseService.instance.database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'orders',
+      where: 'status = ?',
+      whereArgs: [status],
+      orderBy: 'created_at DESC',
+    );
+
+    return List.generate(maps.length, (i) {
+      return Order.fromMap(maps[i]);
+    });
+  }
+
+  Future<List<Order>> getUnreportedOrders() async {
+    final db = await DatabaseService.instance.database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'orders',
+      where: 'status != ?',
+      whereArgs: ['REPORTED'],
+      orderBy: 'created_at DESC',
+    );
+
+    return List.generate(maps.length, (i) {
+      return Order.fromMap(maps[i]);
+    });
+  }
 } 

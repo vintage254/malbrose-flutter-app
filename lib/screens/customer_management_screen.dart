@@ -137,7 +137,7 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
   void _showCustomerDetails(Customer customer) async {
     final details = await DatabaseService.instance.getCustomerDetails(customer.id!);
     final orders = await DatabaseService.instance.getCustomerOrders(customer.id!);
-    final invoices = await DatabaseService.instance.getCustomerInvoices(customer.id!);
+    final reports = await DatabaseService.instance.getCustomerReports(customerId: customer.id!);
 
     if (!mounted) return;
 
@@ -191,17 +191,17 @@ class _CustomerManagementScreenState extends State<CustomerManagementScreen> {
                   trailing: Text(order['status']),
                 )),
               ],
-              if (invoices.isNotEmpty) ...[
+              if (reports.isNotEmpty) ...[
                 const Divider(),
-                const Text('Recent Invoices', style: TextStyle(fontWeight: FontWeight.bold)),
-                ...invoices.take(5).map((invoice) => ListTile(
+                const Text('Recent Customer Reports', style: TextStyle(fontWeight: FontWeight.bold)),
+                ...reports.take(5).map((report) => ListTile(
                   dense: true,
-                  title: Text('Invoice #${invoice['invoice_number']}'),
+                  title: Text('Report #${report['report_number']}'),
                   subtitle: Text(
-                    'Amount: \$${invoice['total_amount'].toStringAsFixed(2)}\n'
-                    'Date: ${DateFormat('MMM dd, yyyy').format(DateTime.parse(invoice['created_at']))}',
+                    'Amount: \$${report['total_amount'].toStringAsFixed(2)}\n'
+                    'Date: ${DateFormat('MMM dd, yyyy').format(DateTime.parse(report['created_at']))}',
                   ),
-                  trailing: Text(invoice['status']),
+                  trailing: Text(report['status']),
                 )),
               ],
             ],

@@ -1,7 +1,7 @@
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'package:my_flutter_app/models/invoice_model.dart';
+import 'package:my_flutter_app/models/customer_report_model.dart';
 import 'package:my_flutter_app/models/customer_model.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:intl/intl.dart';
@@ -11,21 +11,33 @@ import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:sqflite/sqflite.dart';
 
-class InvoiceService {
-  static final InvoiceService instance = InvoiceService._internal();
-  InvoiceService._internal();
+class CustomerReportService {
+  static final CustomerReportService instance = CustomerReportService._internal();
+  CustomerReportService._internal();
 
-  Future<void> generateAndPrintInvoice(Invoice invoice, Customer customer) async {
+  Future<void> generateAndPrintCustomerReport(CustomerReport report, Customer customer) async {
     try {
-      final pdf = await generateInvoicePdf(invoice, customer);
+      final pdf = await generateCustomerReportPdf(report, customer);
       await Printing.layoutPdf(onLayout: (format) async => pdf);
+      
+      // Log the print activity
+      final currentUser = await DatabaseService.instance.getCurrentUser();
+      if (currentUser != null) {
+        await DatabaseService.instance.logActivity(
+          currentUser['id'] as int,
+          currentUser['username'] as String,
+          DatabaseService.actionPrintCustomerReport,
+          'Print customer report',
+          'Printed customer report #${report.reportNumber} for ${customer.name}'
+        );
+      }
     } catch (e) {
-      print('Error generating invoice PDF: $e');
+      print('Error generating customer report PDF: $e');
       rethrow;
     }
   }
 
-  static Future<Uint8List> generateInvoicePdf(Invoice invoice, Customer customer) async {
+  static Future<Uint8List> generateCustomerReportPdf(CustomerReport report, Customer customer) async {
     final pdf = pw.Document();
     final logo = await _getLogoImage();
     final font = await PdfGoogleFonts.nunitoRegular();
@@ -38,36 +50,36 @@ class InvoiceService {
           final List<pw.Widget> children = [];
           
           children.addAll([
-            _buildHeader(invoice, logo, font, boldFont),
+            _buildHeader(report, logo, font, boldFont),
             pw.SizedBox(height: 40),
             _buildCustomerInfo(customer, font, boldFont),
             pw.SizedBox(height: 20),
           ]);
 
-          if (invoice.hasCompletedItems) {
+          if (report.hasCompletedItems) {
             children.addAll([
               _buildSectionTitle('Completed Orders', boldFont, PdfColors.blue900),
               pw.SizedBox(height: 10),
-              _buildItemsTable(invoice.completedItems!, font),
+              _buildItemsTable(report.completedItems!, font),
               pw.SizedBox(height: 20),
             ]);
           }
 
-          if (invoice.hasPendingItems) {
+          if (report.hasPendingItems) {
             children.addAll([
               _buildSectionTitle('Pending Orders', boldFont, PdfColors.orange),
               pw.SizedBox(height: 10),
-              _buildItemsTable(invoice.pendingItems!, font),
+              _buildItemsTable(report.pendingItems!, font),
               pw.SizedBox(height: 20),
             ]);
           }
 
           children.addAll([
-            _buildSummaryRow('Subtotal:', invoice.totalAmount, font, boldFont),
-            _buildSummaryRow('VAT (16%):', invoice.totalAmount * 0.16, font, boldFont),
+            _buildSummaryRow('Subtotal:', report.totalAmount, font, boldFont),
+            _buildSummaryRow('VAT (16%):', report.totalAmount * 0.16, font, boldFont),
             _buildSummaryRow(
               'Total Amount:',
-              invoice.totalAmount * 1.16,
+              report.totalAmount * 1.16,
               font,
               boldFont,
               isTotal: true,
@@ -84,7 +96,7 @@ class InvoiceService {
   }
 
   static pw.Widget _buildHeader(
-    Invoice invoice,
+    CustomerReport report,
     pw.ImageProvider? logo,
     pw.Font font,
     pw.Font boldFont,
@@ -114,21 +126,21 @@ class InvoiceService {
           crossAxisAlignment: pw.CrossAxisAlignment.end,
           children: [
             pw.Text(
-              'INVOICE',
+              'CUSTOMER REPORT',
               style: pw.TextStyle(
                 font: boldFont,
                 fontSize: 24,
                 color: PdfColors.orange,
               ),
             ),
-            _buildText('Invoice #: ${invoice.invoiceNumber}', font),
+            _buildText('Report #: ${report.reportNumber}', font),
             _buildText(
-              'Date: ${DateFormat('MMM dd, yyyy').format(invoice.createdAt)}',
+              'Date: ${DateFormat('MMM dd, yyyy').format(report.createdAt)}',
               font,
             ),
-            if (invoice.dueDate != null)
+            if (report.dueDate != null)
               _buildText(
-                'Due Date: ${DateFormat('MMM dd, yyyy').format(invoice.dueDate!)}',
+                'Due Date: ${DateFormat('MMM dd, yyyy').format(report.dueDate!)}',
                 font,
               ),
           ],
@@ -152,7 +164,7 @@ class InvoiceService {
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
           pw.Text(
-            'Bill To:',
+            'Customer:',
             style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
           ),
           pw.SizedBox(height: 5),
@@ -286,7 +298,7 @@ class InvoiceService {
           ),
           pw.SizedBox(height: 10),
           pw.Text(
-            'For any questions about this invoice, please contact:',
+            'For any questions about this report, please contact:',
             style: pw.TextStyle(
               font: font,
               fontSize: 12,
@@ -306,17 +318,17 @@ class InvoiceService {
     );
   }
 
-  Future<Invoice> generateInvoice(int customerId, {Transaction? txn}) async {
+  Future<CustomerReport> generateCustomerReport(int customerId, {Transaction? txn}) async {
     if (txn != null) {
-      return await _generateInvoiceWithExecutor(customerId, txn);
+      return await _generateCustomerReportWithExecutor(customerId, txn);
     }
     // If no transaction provided, create one
     return await DatabaseService.instance.withTransaction((transaction) async {
-      return await _generateInvoiceWithExecutor(customerId, transaction);
+      return await _generateCustomerReportWithExecutor(customerId, transaction);
     });
   }
 
-  Future<Invoice> _generateInvoiceWithExecutor(
+  Future<CustomerReport> _generateCustomerReportWithExecutor(
     int customerId, 
     DatabaseExecutor executor
   ) async {
@@ -351,12 +363,12 @@ class InvoiceService {
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN products p ON oi.product_id = p.id
-        WHERE o.customer_id = ? AND o.status != 'INVOICED'
+        WHERE o.customer_id = ? AND o.status != 'REPORTED'
         ORDER BY o.created_at DESC
       ''', [customerId]);
 
       if (orders.isEmpty) {
-        throw Exception('No uninvoiced orders found for this customer');
+        throw Exception('No unreported orders found for this customer');
       }
 
       double completedAmount = 0;
@@ -390,13 +402,13 @@ class InvoiceService {
       }
 
       if (completedItems.isEmpty && pendingItems.isEmpty) {
-        throw Exception('No valid items found for invoice');
+        throw Exception('No valid items found for customer report');
       }
 
-      final invoiceNumber = await _generateInvoiceNumber(executor);
+      final reportNumber = await generateReportNumber(executor);
       
-      return Invoice(
-        invoiceNumber: invoiceNumber,
+      return CustomerReport(
+        reportNumber: reportNumber,
         customerId: customerId,
         customerName: customer['name'] as String? ?? 'Unknown Customer',
         totalAmount: completedAmount + pendingAmount,
@@ -410,27 +422,27 @@ class InvoiceService {
         pendingItems: pendingItems,
       );
     } catch (e) {
-      print('Error generating invoice: $e');
+      print('Error generating customer report: $e');
       rethrow;
     }
   }
 
-  Future<String> _generateInvoiceNumber(DatabaseExecutor executor) async {
+  Future<String> generateReportNumber(DatabaseExecutor executor) async {
     final now = DateTime.now();
-    final prefix = 'INV';
+    final prefix = 'REP';
     final date = DateFormat('yyyyMMdd').format(now);
     
     final result = await executor.rawQuery('''
-      SELECT invoice_number 
-      FROM invoices 
+      SELECT report_number 
+      FROM customer_reports 
       WHERE date(created_at) = date(?)
-      ORDER BY invoice_number DESC 
+      ORDER BY report_number DESC 
       LIMIT 1
     ''', [now.toIso8601String()]);
 
     int sequence = 1;
     if (result.isNotEmpty) {
-      final lastNumber = result.first['invoice_number'] as String;
+      final lastNumber = result.first['report_number'] as String;
       final lastSequence = int.tryParse(lastNumber.split('-').last) ?? 0;
       sequence = lastSequence + 1;
     }
@@ -438,92 +450,104 @@ class InvoiceService {
     return '$prefix-$date-${sequence.toString().padLeft(4, '0')}';
   }
 
-  Future<List<Invoice>> getCustomerInvoices(int customerId, {Transaction? txn}) async {
+  Future<List<CustomerReport>> getCustomerReports(int customerId, {Transaction? txn}) async {
     if (txn != null) {
-      return await _getCustomerInvoicesWithExecutor(customerId, txn);
+      return await _getCustomerReportsWithExecutor(customerId, txn);
     }
     // If no transaction provided, create one
     return await DatabaseService.instance.withTransaction((transaction) async {
-      return await _getCustomerInvoicesWithExecutor(customerId, transaction);
+      return await _getCustomerReportsWithExecutor(customerId, transaction);
     });
   }
 
-  Future<List<Invoice>> _getCustomerInvoicesWithExecutor(
+  Future<List<CustomerReport>> _getCustomerReportsWithExecutor(
     int customerId, 
     DatabaseExecutor executor
   ) async {
-    final invoices = await executor.query(
-      'invoices',
+    final reports = await executor.query(
+      DatabaseService.tableCustomerReports,
       where: 'customer_id = ?',
       whereArgs: [customerId],
       orderBy: 'created_at DESC',
     );
 
-    return invoices.map((map) => Invoice.fromMap(map)).toList();
+    return reports.map((map) => CustomerReport.fromMap(map)).toList();
   }
 
-  Future<Invoice> createInvoiceWithItems(Invoice invoice, {Transaction? txn}) async {
+  Future<CustomerReport> createCustomerReportWithItems(CustomerReport report, {Transaction? txn}) async {
     if (txn != null) {
-      return await _createInvoiceWithExecutor(invoice, txn);
+      return await _createCustomerReportWithExecutor(report, txn);
     }
     // If no transaction provided, create one
     return await DatabaseService.instance.withTransaction((transaction) async {
-      return await _createInvoiceWithExecutor(invoice, transaction);
+      return await _createCustomerReportWithExecutor(report, transaction);
     });
   }
 
-  Future<Invoice> _createInvoiceWithExecutor(Invoice invoice, DatabaseExecutor executor) async {
+  Future<CustomerReport> _createCustomerReportWithExecutor(CustomerReport report, DatabaseExecutor executor) async {
     try {
-      // Insert invoice with payment status
-      final Map<String, dynamic> invoiceMap = invoice.toMap();
+      // Insert report with payment status
+      final Map<String, dynamic> reportMap = report.toMap();
       
       // Ensure payment_status is set
-      if (!invoiceMap.containsKey('payment_status')) {
-        invoiceMap['payment_status'] = 'PENDING';
+      if (!reportMap.containsKey('payment_status')) {
+        reportMap['payment_status'] = 'PENDING';
       }
 
-      final invoiceId = await executor.insert(
-        DatabaseService.tableInvoices, 
-        invoiceMap
+      final reportId = await executor.insert(
+        DatabaseService.tableCustomerReports, 
+        reportMap
       );
       
       // Process items...
-      if (invoice.hasCompletedItems) {
-        await _processInvoiceItems(
+      if (report.hasCompletedItems) {
+        await _processReportItems(
           executor,
-          invoiceId,
-          invoice.completedItems!,
+          reportId,
+          report.completedItems!,
           'COMPLETED'
         );
       }
 
-      if (invoice.hasPendingItems) {
-        await _processInvoiceItems(
+      if (report.hasPendingItems) {
+        await _processReportItems(
           executor,
-          invoiceId,
-          invoice.pendingItems!,
+          reportId,
+          report.pendingItems!,
           'PENDING'
         );
       }
 
-      return invoice.copyWith(id: invoiceId);
+      // Log the activity
+      final currentUser = await DatabaseService.instance.getCurrentUser();
+      if (currentUser != null) {
+        await DatabaseService.instance.logActivity(
+          currentUser['id'] as int,
+          currentUser['username'] as String,
+          DatabaseService.actionCreateCustomerReport,
+          'Create customer report',
+          'Created customer report #${report.reportNumber} for ${report.customerName}'
+        );
+      }
+
+      return report.copyWith(id: reportId);
     } catch (e) {
-      print('Error creating invoice: $e');
+      print('Error creating customer report: $e');
       rethrow;
     }
   }
 
-  Future<void> _processInvoiceItems(
+  Future<void> _processReportItems(
     DatabaseExecutor executor,
-    int invoiceId,
+    int reportId,
     List<OrderItem> items,
     String status,
   ) async {
     for (var item in items) {
       await executor.insert(
-        DatabaseService.tableInvoiceItems,
+        DatabaseService.tableReportItems,
         {
-          'invoice_id': invoiceId,
+          'report_id': reportId,
           'order_id': item.orderId,
           'product_id': item.productId,
           'quantity': item.quantity,
@@ -532,7 +556,6 @@ class InvoiceService {
           'total_amount': item.totalAmount,
           'is_sub_unit': item.isSubUnit ? 1 : 0,
           'sub_unit_name': item.subUnitName,
-          'sub_unit_quantity': item.subUnitQuantity,
           'status': status,
         },
       );
@@ -540,7 +563,7 @@ class InvoiceService {
       if (status == 'COMPLETED') {
         await executor.update(
           DatabaseService.tableOrders,
-          {'status': 'INVOICED'},
+          {'status': 'REPORTED'},
           where: 'id = ?',
           whereArgs: [item.orderId],
         );
@@ -548,75 +571,99 @@ class InvoiceService {
     }
   }
 
-  Future<void> updateInvoiceStatus(int invoiceId, String status, {Transaction? txn}) async {
+  Future<void> updateReportStatus(int reportId, String status, {Transaction? txn}) async {
     if (txn != null) {
-      await _updateInvoiceStatusWithExecutor(invoiceId, status, txn);
+      await _updateReportStatusWithExecutor(reportId, status, txn);
     } else {
       await DatabaseService.instance.withTransaction((transaction) async {
-        await _updateInvoiceStatusWithExecutor(invoiceId, status, transaction);
+        await _updateReportStatusWithExecutor(reportId, status, transaction);
       });
     }
   }
 
-  Future<void> _updateInvoiceStatusWithExecutor(
-    int invoiceId, 
+  Future<void> _updateReportStatusWithExecutor(
+    int reportId, 
     String status, 
     DatabaseExecutor executor
   ) async {
     await executor.update(
-      'invoices',
+      DatabaseService.tableCustomerReports,
       {'status': status},
       where: 'id = ?',
-      whereArgs: [invoiceId],
+      whereArgs: [reportId],
     );
+
+    // Log the activity
+    final currentUser = await DatabaseService.instance.getCurrentUser();
+    if (currentUser != null) {
+      await DatabaseService.instance.logActivity(
+        currentUser['id'] as int,
+        currentUser['username'] as String,
+        DatabaseService.actionUpdateCustomerReport,
+        'Update customer report',
+        'Updated customer report #$reportId status to $status'
+      );
+    }
   }
 
-  Future<void> updatePaymentStatus(int invoiceId, String paymentStatus, {Transaction? txn}) async {
+  Future<void> updatePaymentStatus(int reportId, String paymentStatus, {Transaction? txn}) async {
     if (txn != null) {
-      await _updatePaymentStatusWithExecutor(invoiceId, paymentStatus, txn);
+      await _updatePaymentStatusWithExecutor(reportId, paymentStatus, txn);
     } else {
       await DatabaseService.instance.withTransaction((transaction) async {
-        await _updatePaymentStatusWithExecutor(invoiceId, paymentStatus, transaction);
+        await _updatePaymentStatusWithExecutor(reportId, paymentStatus, transaction);
       });
     }
   }
 
   Future<void> _updatePaymentStatusWithExecutor(
-    int invoiceId, 
+    int reportId, 
     String paymentStatus, 
     DatabaseExecutor executor
   ) async {
     await executor.update(
-      'invoices',
+      DatabaseService.tableCustomerReports,
       {'payment_status': paymentStatus},
       where: 'id = ?',
-      whereArgs: [invoiceId],
+      whereArgs: [reportId],
     );
+
+    // Log the activity
+    final currentUser = await DatabaseService.instance.getCurrentUser();
+    if (currentUser != null) {
+      await DatabaseService.instance.logActivity(
+        currentUser['id'] as int,
+        currentUser['username'] as String,
+        DatabaseService.actionUpdateCustomerReport,
+        'Update customer report',
+        'Updated customer report #$reportId payment status to $paymentStatus'
+      );
+    }
   }
 
-  Future<void> deleteInvoice(int invoiceId, {Transaction? txn}) async {
+  Future<void> deleteCustomerReport(int reportId, {Transaction? txn}) async {
     if (txn != null) {
-      await _deleteInvoiceWithExecutor(invoiceId, txn);
+      await _deleteCustomerReportWithExecutor(reportId, txn);
     } else {
       await DatabaseService.instance.withTransaction((transaction) async {
-        await _deleteInvoiceWithExecutor(invoiceId, transaction);
+        await _deleteCustomerReportWithExecutor(reportId, transaction);
       });
     }
   }
 
-  Future<void> _deleteInvoiceWithExecutor(int invoiceId, DatabaseExecutor executor) async {
-    // Delete invoice items first
+  Future<void> _deleteCustomerReportWithExecutor(int reportId, DatabaseExecutor executor) async {
+    // Delete report items first
     await executor.delete(
-      DatabaseService.tableInvoiceItems,
-      where: 'invoice_id = ?',
-      whereArgs: [invoiceId],
+      DatabaseService.tableReportItems,
+      where: 'report_id = ?',
+      whereArgs: [reportId],
     );
 
-    // Then delete the invoice
+    // Then delete the report
     await executor.delete(
-      DatabaseService.tableInvoices,
+      DatabaseService.tableCustomerReports,
       where: 'id = ?',
-      whereArgs: [invoiceId],
+      whereArgs: [reportId],
     );
   }
 

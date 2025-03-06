@@ -280,12 +280,13 @@ class _SalesScreenState extends State<SalesScreen> {
       await DatabaseService.instance.updateOrder(updatedOrder);
       
       // Log sale completion
-      await DatabaseService.instance.logActivity({
-        'user_id': AuthService.instance.currentUser!.id!,
-        'action': 'complete_sale',
-        'details': 'Completed sale #${updatedOrder.orderNumber}, amount: ${updatedOrder.totalAmount}',
-        'timestamp': DateTime.now().toIso8601String(),
-      });
+      await DatabaseService.instance.logActivity(
+        AuthService.instance.currentUser!.id!,
+        AuthService.instance.currentUser!.username,
+        "complete_sale",
+        "Complete sale",
+        'Completed sale #${updatedOrder.orderNumber}, amount: ${updatedOrder.totalAmount}'
+      );
       
       // Refresh orders list
       await _loadPendingOrders();

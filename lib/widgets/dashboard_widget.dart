@@ -138,10 +138,10 @@ class DashboardWidgetState extends State<DashboardWidget> {
                 SizedBox(
                   width: cardWidth,
                   child: _ActionCard(
-                    title: 'Invoices',
+                    title: 'Customer Reports',
                     icon: Icons.receipt_long,
                     color: Colors.purple,
-                    onPressed: () => Navigator.pushNamed(context, '/invoices'),
+                    onPressed: () => Navigator.pushNamed(context, '/customer-reports'),
                   ),
                 ),
               ],

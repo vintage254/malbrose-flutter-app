@@ -1,8 +1,8 @@
 import 'package:my_flutter_app/models/order_model.dart';
 
-class Invoice {
+class CustomerReport {
   final int? id;
-  final String invoiceNumber;
+  final String reportNumber;
   final int customerId;
   final String customerName;
   final double totalAmount;
@@ -15,9 +15,9 @@ class Invoice {
   final List<OrderItem>? completedItems;
   final List<OrderItem>? pendingItems;
 
-  Invoice({
+  CustomerReport({
     this.id,
-    required this.invoiceNumber,
+    required this.reportNumber,
     required this.customerId,
     required this.customerName,
     required this.totalAmount,
@@ -41,7 +41,7 @@ class Invoice {
   Map<String, dynamic> toMap() {
     return {
       if (id != null) 'id': id,
-      'invoice_number': invoiceNumber,
+      'report_number': reportNumber,
       'customer_id': customerId,
       'customer_name': customerName,
       'total_amount': totalAmount,
@@ -54,10 +54,10 @@ class Invoice {
     };
   }
 
-  factory Invoice.fromMap(Map<String, dynamic> map) {
-    return Invoice(
+  factory CustomerReport.fromMap(Map<String, dynamic> map) {
+    return CustomerReport(
       id: map['id'] != null ? (map['id'] as num).toInt() : null,
-      invoiceNumber: map['invoice_number'] as String,
+      reportNumber: map['report_number'] as String,
       customerId: (map['customer_id'] as num).toInt(),
       customerName: (map['customer_name'] as String?) ?? 'Unknown Customer',
       totalAmount: (map['total_amount'] as num?)?.toDouble() ?? 0.0,
@@ -75,9 +75,9 @@ class Invoice {
     );
   }
 
-  Invoice copyWith({
+  CustomerReport copyWith({
     int? id,
-    String? invoiceNumber,
+    String? reportNumber,
     int? customerId,
     String? customerName,
     double? totalAmount,
@@ -90,9 +90,9 @@ class Invoice {
     List<OrderItem>? completedItems,
     List<OrderItem>? pendingItems,
   }) {
-    return Invoice(
+    return CustomerReport(
       id: id ?? this.id,
-      invoiceNumber: invoiceNumber ?? this.invoiceNumber,
+      reportNumber: reportNumber ?? this.reportNumber,
       customerId: customerId ?? this.customerId,
       customerName: customerName ?? this.customerName,
       totalAmount: totalAmount ?? this.totalAmount,
@@ -106,4 +106,4 @@ class Invoice {
       pendingItems: pendingItems ?? this.pendingItems,
     );
   }
-} 
+}

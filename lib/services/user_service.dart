@@ -23,14 +23,13 @@ class UserService {
       await DatabaseService.instance.updateUser(userData);
       
       // Log activity
-      await DatabaseService.instance.logActivity({
-        'user_id': currentUser.id!,
-        'username': currentUser.username,
-        'action': 'UPDATE_USER',
-        'action_type': 'UPDATE',
-        'details': 'Updated user: ${user.username}',
-        'timestamp': DateTime.now().toIso8601String(),
-      });
+      await DatabaseService.instance.logActivity(
+        currentUser.id!,
+        currentUser.username,
+        'UPDATE_USER',
+        'UPDATE',
+        'Updated user: ${user.username}'
+      );
     } catch (e) {
       print('Error updating user: $e');
       rethrow;
@@ -59,14 +58,13 @@ class UserService {
       }
       
       // Log activity
-      await DatabaseService.instance.logActivity({
-        'user_id': currentUser.id!,
-        'username': currentUser.username,
-        'action': 'CREATE_USER',
-        'action_type': 'CREATE',
-        'details': 'Created new user: ${user.username}',
-        'timestamp': DateTime.now().toIso8601String(),
-      });
+      await DatabaseService.instance.logActivity(
+        currentUser.id!,
+        currentUser.username,
+        'CREATE_USER',
+        'CREATE',
+        'Created new user: ${user.username}'
+      );
     } catch (e) {
       print('Error creating user: $e');
       rethrow;
@@ -84,14 +82,13 @@ class UserService {
       await DatabaseService.instance.deleteUser(userId);
       
       // Log activity
-      await DatabaseService.instance.logActivity({
-        'user_id': currentUser.id!,
-        'username': currentUser.username,
-        'action': 'DELETE_USER',
-        'action_type': 'DELETE',
-        'details': 'Deleted user: ${userToDelete['username']}',
-        'timestamp': DateTime.now().toIso8601String(),
-      });
+      await DatabaseService.instance.logActivity(
+        currentUser.id!,
+        currentUser.username,
+        'DELETE_USER',
+        'DELETE',
+        'Deleted user: ${userToDelete['username']}'
+      );
     } catch (e) {
       print('Error deleting user: $e');
       rethrow;

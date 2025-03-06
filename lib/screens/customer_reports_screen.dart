@@ -1,34 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/customer_model.dart';
-import 'package:my_flutter_app/models/invoice_model.dart';
+import 'package:my_flutter_app/models/customer_report_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
-import 'package:my_flutter_app/services/invoice_service.dart';
+import 'package:my_flutter_app/services/customer_report_service.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/models/order_model.dart';
-import 'package:my_flutter_app/widgets/invoice_preview_widget.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import 'package:my_flutter_app/widgets/customer_report_preview_widget.dart';
 import 'dart:async';
 
-class InvoicesScreen extends StatefulWidget {
-  const InvoicesScreen({super.key});
+class CustomerReportsScreen extends StatefulWidget {
+  const CustomerReportsScreen({super.key});
 
   @override
-  State<InvoicesScreen> createState() => _InvoicesScreenState();
+  State<CustomerReportsScreen> createState() => _CustomerReportsScreenState();
 }
 
-class _InvoicesScreenState extends State<InvoicesScreen> {
+class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
   final TextEditingController _searchController = TextEditingController();
   DateTime? _startDate;
   DateTime? _endDate;
   Customer? _selectedCustomer;
-  List<Invoice> _invoiceData = [];
+  List<CustomerReport> _reportData = [];
   bool _isLoading = false;
   List<Customer> _customers = [];
-  List<Invoice> _invoices = [];
+  List<CustomerReport> _reports = [];
   Timer? _debounceTimer;
   String _searchQuery = '';
 
@@ -43,7 +40,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
     try {
       await Future.wait([
         _loadCustomers(),
-        _loadInvoices(),
+        _loadReports(),
       ]);
     } finally {
       setState(() => _isLoading = false);
@@ -72,24 +69,24 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
     }
   }
 
-  Future<void> _loadInvoices() async {
+  Future<void> _loadReports() async {
     if (_selectedCustomer == null) return;
     
     setState(() => _isLoading = true);
     try {
       await DatabaseService.instance.withTransaction((txn) async {
-        final invoices = await InvoiceService.instance.getCustomerInvoices(
+        final reports = await CustomerReportService.instance.getCustomerReports(
           _selectedCustomer!.id!,
           txn: txn
         );
         if (mounted) {
-          setState(() => _invoices = invoices);
+          setState(() => _reports = reports);
         }
       });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading invoices: $e')),
+          SnackBar(content: Text('Error loading reports: $e')),
         );
       }
     } finally {
@@ -141,38 +138,38 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
         _startDate = picked.start;
         _endDate = picked.end;
       });
-      _loadInvoices();
+      _loadReports();
     }
   }
 
-  Future<void> _generateInvoice() async {
+  Future<void> _generateCustomerReport() async {
     if (_selectedCustomer == null) return;
 
     setState(() => _isLoading = true);
     try {
       await DatabaseService.instance.withTransaction((txn) async {
-        final invoice = await InvoiceService.instance.generateInvoice(
+        final report = await CustomerReportService.instance.generateCustomerReport(
           _selectedCustomer!.id!,
           txn: txn
         );
         
-        await InvoiceService.instance.createInvoiceWithItems(
-          invoice, 
+        await CustomerReportService.instance.createCustomerReportWithItems(
+          report, 
           txn: txn
         );
       });
 
-      await _loadInvoices();
+      await _loadReports();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invoice generated successfully')),
+          const SnackBar(content: Text('Customer report generated successfully')),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error generating invoice: $e')),
+          SnackBar(content: Text('Error generating customer report: $e')),
         );
       }
     } finally {
@@ -219,12 +216,13 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                           }).toList(),
                           onChanged: (Customer? customer) {
                             setState(() => _selectedCustomer = customer);
+                            _loadReports();
                           },
                         ),
                       ),
                       const SizedBox(width: defaultPadding),
                       ElevatedButton.icon(
-                        onPressed: _isLoading ? null : _generateInvoice,
+                        onPressed: _isLoading ? null : _generateCustomerReport,
                         icon: _isLoading 
                           ? const SizedBox(
                               width: 20,
@@ -235,14 +233,14 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                               ),
                             )
                           : const Icon(Icons.add),
-                        label: const Text('New Invoice'),
+                        label: const Text('New Customer Report'),
                       ),
                     ],
                   ),
                   const SizedBox(height: defaultPadding),
                   if (_isLoading)
                     const Center(child: CircularProgressIndicator())
-                  else if (_invoices.isEmpty)
+                  else if (_reports.isEmpty)
                     Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -255,8 +253,8 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                           const SizedBox(height: 16),
                           Text(
                             _selectedCustomer != null
-                              ? 'No invoices found for ${_selectedCustomer!.name}'
-                              : 'Select a customer to view invoices',
+                              ? 'No customer reports found for ${_selectedCustomer!.name}'
+                              : 'Select a customer to view reports',
                             style: Theme.of(context).textTheme.titleMedium?.copyWith(
                               color: Colors.grey,
                             ),
@@ -267,13 +265,13 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
                   else
                     Expanded(
                       child: ListView.builder(
-                        itemCount: _invoices.length,
+                        itemCount: _reports.length,
                         itemBuilder: (context, index) {
-                          final invoice = _invoices[index];
-                          return InvoicePreviewWidget(
-                            invoice: invoice,
+                          final report = _reports[index];
+                          return CustomerReportPreviewWidget(
+                            report: report,
                             customer: _customers.firstWhere(
-                              (c) => c.id == invoice.customerId,
+                              (c) => c.id == report.customerId,
                             ),
                           );
                         },
@@ -301,27 +299,27 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
     }
   }
 
-  Future<void> _printInvoice(Invoice invoice, Customer customer) async {
+  Future<void> _printCustomerReport(CustomerReport report, Customer customer) async {
     try {
-      await InvoiceService.instance.generateAndPrintInvoice(invoice, customer);
+      await CustomerReportService.instance.generateAndPrintCustomerReport(report, customer);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error printing invoice: $e')),
+          SnackBar(content: Text('Error printing customer report: $e')),
         );
       }
     }
   }
 
-  void _showInvoiceDetails(Invoice invoice, Customer customer) {
+  void _showReportDetails(CustomerReport report, Customer customer) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Invoice #${invoice.invoiceNumber}'),
+        title: Text('Customer Report #${report.reportNumber}'),
         content: SizedBox(
           width: 600,
-          child: InvoicePreviewWidget(
-            invoice: invoice,
+          child: CustomerReportPreviewWidget(
+            report: report,
             customer: customer,
           ),
         ),
@@ -331,7 +329,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
             child: const Text('Close'),
           ),
           ElevatedButton.icon(
-            onPressed: () => _printInvoice(invoice, customer),
+            onPressed: () => _printCustomerReport(report, customer),
             icon: const Icon(Icons.print),
             label: const Text('Print'),
           ),

@@ -42,12 +42,13 @@ class AuthService {
           await _saveSession(user.id!);
           
           // Add activity log for login
-          await DatabaseService.instance.logActivity({
-            'user_id': user.id!,
-            'action': 'login',
-            'details': 'User logged in successfully',
-            'timestamp': DateTime.now().toIso8601String(),
-          });
+          await DatabaseService.instance.logActivity(
+            user.id!,
+            user.username,
+            'login',
+            'Login',
+            'User logged in successfully'
+          );
           
           return _currentUser;
         }
@@ -62,23 +63,22 @@ class AuthService {
   Future<void> logout() async {
     if (_currentUser != null) {
       try {
-        await DatabaseService.instance.logActivity({
-          'user_id': _currentUser!.id!,
-          'username': _currentUser!.username,
-          'action': 'LOGOUT',
-          'action_type': 'LOGOUT',
-          'details': 'User logged out',
-          'timestamp': DateTime.now().toIso8601String(),
-        });
+        await DatabaseService.instance.logActivity(
+          _currentUser!.id!,
+          _currentUser!.username,
+          'LOGOUT',
+          'LOGOUT',
+          'User logged out'
+        );
+        
+        // Clear session
+        await _clearSession();
+        _currentUser = null;
       } catch (e) {
-        print('Error logging activity: $e');
-        // Continue with logout even if logging fails
+        print('Logout error: $e');
+        rethrow;
       }
     }
-    
-    _currentUser = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('user_id');
   }
 
   Future<void> _saveSession(int userId) async {
@@ -103,5 +103,10 @@ class AuthService {
       print('Error restoring session: $e');
       return null;
     }
+  }
+
+  Future<void> _clearSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('user_id');
   }
 } 
