@@ -46,90 +46,93 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
     final currentUser = AuthService.instance.currentUser;
     final menuItems = _getMenuItems();
 
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.amber.withOpacity(0.7),
-            Colors.orange.shade900,
-          ],
+    return SizedBox(
+      width: 250, // Fixed width for the side menu
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.amber.withOpacity(0.7),
+              Colors.orange.shade900,
+            ],
+          ),
         ),
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(defaultPadding),
-            child: Text(
-              'Welcome, ${currentUser?.username ?? "Guest"}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(defaultPadding),
+              child: Text(
+                'Welcome, ${currentUser?.username ?? "Guest"}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-          ),
-          const Divider(color: Colors.white60),
-          Expanded(
-            child: ListView.builder(
-              itemCount: menuItems.length,
-              itemBuilder: (context, index) {
-                final item = menuItems[index];
-                return _buildMenuItem(
-                  context,
-                  item['title'] as String,
-                  item['icon'] as IconData,
-                  () => Navigator.pushNamed(context, item['route'] as String),
-                );
+            const Divider(color: Colors.white60),
+            Expanded(
+              child: ListView.builder(
+                itemCount: menuItems.length,
+                itemBuilder: (context, index) {
+                  final item = menuItems[index];
+                  return _buildMenuItem(
+                    context,
+                    item['title'] as String,
+                    item['icon'] as IconData,
+                    () => Navigator.pushNamed(context, item['route'] as String),
+                  );
+                },
+              ),
+            ),
+            const Divider(color: Colors.white60),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Colors.white),
+              title: const Text(
+                'Logout',
+                style: TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              onTap: () async {
+                try {
+                  // Show loading dialog
+                  showDialog(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) => const Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                  );
+
+                  await AuthService.instance.logout();
+                  
+                  if (!context.mounted) return;
+                  
+                  // Close loading dialog
+                  Navigator.pop(context);
+                  
+                  // Navigate to home screen
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const HomeScreen()),
+                    (route) => false,
+                  );
+                } catch (e) {
+                  if (!context.mounted) return;
+                  
+                  // Close loading dialog if it's showing
+                  Navigator.pop(context);
+                  
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error logging out: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
               },
             ),
-          ),
-          const Divider(color: Colors.white60),
-          ListTile(
-            leading: const Icon(Icons.logout, color: Colors.white),
-            title: const Text(
-              'Logout',
-              style: TextStyle(color: Colors.white, fontSize: 14),
-            ),
-            onTap: () async {
-              try {
-                // Show loading dialog
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (context) => const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                );
-
-                await AuthService.instance.logout();
-                
-                if (!context.mounted) return;
-                
-                // Close loading dialog
-                Navigator.pop(context);
-                
-                // Navigate to home screen
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const HomeScreen()),
-                  (route) => false,
-                );
-              } catch (e) {
-                if (!context.mounted) return;
-                
-                // Close loading dialog if it's showing
-                Navigator.pop(context);
-                
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Error logging out: $e'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
-            },
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -140,6 +143,7 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
       title: Text(
         title,
         style: const TextStyle(color: Colors.white, fontSize: 14),
+        overflow: TextOverflow.ellipsis,
       ),
       onTap: onTap,
     );

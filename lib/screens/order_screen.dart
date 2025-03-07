@@ -3,6 +3,7 @@ import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/product_model.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/models/cart_item_model.dart';
+import 'package:my_flutter_app/models/customer_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
@@ -187,6 +188,11 @@ class _OrderScreenState extends State<OrderScreen> {
               onRemoveItem: _removeFromCart,
               onPlaceOrder: _handlePlaceOrder,
               onClearCart: _clearCart,
+              onCustomerNameChanged: (name) {
+                setState(() {
+                  _customerNameController.text = name;
+                });
+              },
             ),
           ),
         ],
@@ -343,41 +349,63 @@ class _OrderScreenState extends State<OrderScreen> {
     try {
       setState(() => _isLoading = true);
       
-      final orderNumber = 'ORD${DateTime.now().millisecondsSinceEpoch}';
+      // Generate a more consistent order number with date prefix for better tracking
       final now = DateTime.now();
+      final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
+      final orderNumber = 'ORD-$datePrefix-$timeComponent';
+      
       final currentUser = AuthService.instance.currentUser;
       if (currentUser == null) throw Exception('User not logged in');
 
-      final db = await DatabaseService.instance.database;
+      final customerName = _customerNameController.text.trim();
+      print('OrderScreen - Customer name: "$customerName"');
       
-      await db.transaction((txn) async {
-        // First create the order
-        final orderId = await txn.insert('orders', {
-          'order_number': orderNumber,
-          'customer_name': _customerNameController.text.trim(),
-          'total_amount': _cartItems.fold<double>(0, (sum, item) => sum + item.total),
-          'status': 'PENDING',
-          'payment_status': 'PENDING',
-          'created_by': currentUser.id!,
-          'created_at': now.toIso8601String(),
-          'order_date': now.toIso8601String(),
-        });
+      if (customerName.isEmpty) {
+        throw Exception('Customer name is required');
+      }
+      
+      // First check if customer exists and get their ID
+      int? customerId;
+      final customerData = await DatabaseService.instance.getCustomerByName(customerName);
+      if (customerData != null) {
+        customerId = customerData['id'] as int;
+      } else {
+        // Create a new customer if they don't exist
+        final customer = Customer(
+          name: customerName,
+          createdAt: DateTime.now(),
+        );
+        customerId = await DatabaseService.instance.createCustomer(customer);
+      }
 
-        // Then create the order items
-        for (final item in _cartItems) {
-          await txn.insert('order_items', {
-            'order_id': orderId,
-            'product_id': item.product.id!,
-            'quantity': item.quantity,
-            'unit_price': item.product.buyingPrice,
-            'selling_price': item.product.sellingPrice,
-            'total_amount': item.total,
-            'product_name': item.product.productName,
-            'is_sub_unit': item.isSubUnit ? 1 : 0,
-            'sub_unit_name': item.subUnitName,
-          });
-        }
-      });
+      // Create order with proper customer information
+      final order = Order(
+        orderNumber: orderNumber,
+        customerId: customerId,
+        customerName: customerName,
+        totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
+        orderStatus: 'PENDING',
+        paymentStatus: 'PENDING',
+        createdBy: currentUser.id!,
+        createdAt: now,
+        orderDate: now,
+        items: _cartItems.map((item) => OrderItem(
+          orderId: 0, // Will be set when order is created
+          productId: item.product.id!,
+          quantity: item.quantity,
+          unitPrice: item.product.buyingPrice,
+          sellingPrice: item.product.sellingPrice,
+          totalAmount: item.total,
+          productName: item.product.productName,
+          isSubUnit: item.isSubUnit,
+          subUnitName: item.subUnitName,
+          subUnitQuantity: item.subUnitQuantity?.toDouble(),
+        )).toList(),
+      );
+
+      // Use the DatabaseService to handle the transaction
+      await DatabaseService.instance.createOrder(order);
 
       setState(() {
         _cartItems.clear();

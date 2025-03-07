@@ -16,6 +16,7 @@ class OrderCartPanel extends StatefulWidget {
   final Function(int)? onRemoveItem;
   final VoidCallback? onPlaceOrder;
   final VoidCallback? onClearCart;
+  final Function(String)? onCustomerNameChanged;
 
   const OrderCartPanel({
     super.key,
@@ -26,6 +27,7 @@ class OrderCartPanel extends StatefulWidget {
     this.onRemoveItem,
     this.onPlaceOrder,
     this.onClearCart,
+    this.onCustomerNameChanged,
   });
 
   @override
@@ -42,9 +44,20 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
   @override
   void initState() {
     super.initState();
-    _customerNameController = TextEditingController(text: widget.customerName);
+    _customerNameController = TextEditingController(text: widget.customerName ?? '');
     _loadInitialCustomer();
     _loadCustomers();
+  }
+
+  @override
+  void didUpdateWidget(OrderCartPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Update the controller text if the widget's customerName changes
+    if (widget.customerName != oldWidget.customerName && 
+        widget.customerName != null && 
+        widget.customerName != _customerNameController.text) {
+      _customerNameController.text = widget.customerName!;
+    }
   }
 
   Future<void> _loadInitialCustomer() async {
@@ -118,6 +131,9 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         _selectedCustomer = customer.copyWith(id: customerId);
         _customerNameController.text = name;
       });
+      if (widget.onCustomerNameChanged != null) {
+        widget.onCustomerNameChanged!(name);
+      }
     } catch (e) {
       if (mounted) {
         if (e.toString().contains('UNIQUE constraint failed')) {
@@ -144,48 +160,137 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
   }
 
   Future<void> _placeOrder() async {
-    if (widget.initialItems.isEmpty) return;
-
-    try {
-      String customerName = _customerNameController.text.trim();
-      if (customerName.isEmpty) {
-        throw Exception('Customer name is required');
-      }
-
-      final orderNumber = 'ORD-${DateTime.now().millisecondsSinceEpoch}';
-      final currentUser = AuthService.instance.currentUser;
-      if (currentUser == null) {
-        throw Exception('User not logged in');
-      }
-      
-      // Create order with customer information
-      final order = Order(
-        orderNumber: orderNumber,
-        customerId: _selectedCustomer?.id,
-        customerName: customerName,
-        totalAmount: _total,
-        orderStatus: 'PENDING',
-        paymentStatus: 'PENDING',
-        createdBy: currentUser.id!,
-        createdAt: DateTime.now(),
-        orderDate: DateTime.now(),
-        items: widget.initialItems.map((item) => _createOrderItem(item)).toList(),
-      );
-
-      // Let DatabaseService handle the transaction
-      await DatabaseService.instance.createOrder(order);
-      
-      if (widget.onPlaceOrder != null) {
-        widget.onPlaceOrder!();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error placing order: ${e.toString()}'),
-            backgroundColor: Colors.red,
+    int retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount <= maxRetries) {
+      try {
+        // Get the customer name from the controller
+        final customerName = _customerNameController.text.trim();
+        print('Customer name from controller: "$customerName"');
+        
+        if (customerName.isEmpty) {
+          throw Exception('Customer name is required');
+        }
+        
+        // Show loading dialog
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const AlertDialog(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Processing order...'),
+              ],
+            ),
           ),
         );
+        
+        // If onPlaceOrder callback is provided, let the parent handle order creation
+        if (widget.onPlaceOrder != null) {
+          // Close loading dialog
+          if (mounted) {
+            Navigator.of(context, rootNavigator: true).pop();
+          }
+          
+          // Call the onPlaceOrder callback
+          widget.onPlaceOrder!();
+          
+          // Success - break out of retry loop
+          break;
+        }
+        
+        // Otherwise, create the order here
+        // First check if customer exists and get their ID
+        int? customerId;
+        final customerData = await DatabaseService.instance.getCustomerByName(customerName);
+        if (customerData != null) {
+          customerId = customerData['id'] as int;
+        } else {
+          // Create a new customer if they don't exist
+          final customer = Customer(
+            name: customerName,
+            createdAt: DateTime.now(),
+          );
+          customerId = await DatabaseService.instance.createCustomer(customer);
+        }
+
+        // Generate a more consistent order number with date prefix for better tracking
+        // Add milliseconds for even more uniqueness
+        final now = DateTime.now();
+        final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+        final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
+        final orderNumber = 'ORD-$datePrefix-$timeComponent';
+        final currentUser = AuthService.instance.currentUser;
+        if (currentUser == null) {
+          throw Exception('User not logged in');
+        }
+        
+        // Create order with customer information
+        final order = Order(
+          orderNumber: orderNumber,
+          customerId: customerId,
+          customerName: customerName,
+          totalAmount: _total,
+          orderStatus: 'PENDING',
+          paymentStatus: 'PENDING',
+          createdBy: currentUser.id!,
+          createdAt: now, // Use the same timestamp throughout
+          orderDate: now,
+          items: widget.initialItems.map((item) => _createOrderItem(item)).toList(),
+        );
+
+        // Let DatabaseService handle the transaction
+        await DatabaseService.instance.createOrder(order);
+        
+        // Close loading dialog
+        if (mounted) {
+          Navigator.of(context, rootNavigator: true).pop();
+        }
+        
+        // Success - break out of retry loop
+        break;
+      } catch (e) {
+        print('Error placing order (attempt ${retryCount + 1}): $e');
+        
+        // If we've reached max retries, show error and break
+        if (retryCount >= maxRetries) {
+          // Close loading dialog
+          if (mounted) {
+            Navigator.of(context, rootNavigator: true).pop();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error placing order: ${e.toString()}'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          break;
+        }
+        
+        // If it's a database lock error, retry with exponential backoff
+        if (e.toString().contains('locked') || e.toString().contains('busy')) {
+          // Exponential backoff for retries
+          final delay = 500 * (1 << retryCount);
+          print('Retrying order placement in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          retryCount++;
+        } else {
+          // For other errors, show message and break
+          if (mounted) {
+            Navigator.of(context, rootNavigator: true).pop();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error placing order: ${e.toString()}'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          break;
+        }
       }
     }
   }
@@ -220,6 +325,12 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
 
   @override
   Widget build(BuildContext context) {
+    // Ensure customer name is synchronized with parent widget
+    if (widget.customerName != null && widget.customerName!.isNotEmpty && 
+        widget.customerName != _customerNameController.text) {
+      _customerNameController.text = widget.customerName!;
+    }
+    
     return Material(
       type: MaterialType.transparency,
       child: Container(
@@ -246,7 +357,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
             const SizedBox(height: defaultPadding),
             // Customer Autocomplete
             Autocomplete<Customer>(
-              initialValue: TextEditingValue(text: widget.customerName ?? ''),
+              initialValue: TextEditingValue(text: _customerNameController.text),
               optionsBuilder: (TextEditingValue textEditingValue) {
                 if (textEditingValue.text.isEmpty) {
                   return _customers;
@@ -259,9 +370,17 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                   _selectedCustomer = customer;
                   _customerNameController.text = customer.name;
                 });
+                if (widget.onCustomerNameChanged != null) {
+                  widget.onCustomerNameChanged!(customer.name);
+                }
               },
               displayStringForOption: (Customer customer) => customer.name,
               fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+                // Sync the controller with our _customerNameController
+                if (controller.text != _customerNameController.text) {
+                  controller.text = _customerNameController.text;
+                }
+                
                 return TextField(
                   controller: controller,
                   focusNode: focusNode,
@@ -288,6 +407,9 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                   onChanged: (value) {
                     _customerNameController.text = value;
                     _onCustomerSearchChanged(value);
+                    if (widget.onCustomerNameChanged != null) {
+                      widget.onCustomerNameChanged!(value);
+                    }
                   },
                 );
               },

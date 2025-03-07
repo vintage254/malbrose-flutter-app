@@ -91,6 +91,8 @@ class OrderItem {
   final String productName;
   final bool isSubUnit;
   final String? subUnitName;
+  String? orderNumber;
+  DateTime? orderDate;
   final double? subUnitQuantity;
   final double? adjustedPrice;
 
@@ -103,8 +105,10 @@ class OrderItem {
     required this.sellingPrice,
     required this.totalAmount,
     required this.productName,
-    required this.isSubUnit,
+    this.isSubUnit = false,
     this.subUnitName,
+    this.orderNumber,
+    this.orderDate,
     this.subUnitQuantity,
     this.adjustedPrice,
   });
@@ -136,6 +140,8 @@ class OrderItem {
       productName: (map['product_name'] as String?) ?? 'Unknown Product',
       isSubUnit: map['is_sub_unit'] == 1,
       subUnitName: map['sub_unit_name'] as String?,
+      orderNumber: map['order_number'] as String?,
+      orderDate: map['order_date'] != null ? DateTime.parse(map['order_date'] as String) : null,
       subUnitQuantity: (map['sub_unit_quantity'] as num?)?.toDouble(),
       adjustedPrice: (map['adjusted_price'] as num?)?.toDouble(),
     );

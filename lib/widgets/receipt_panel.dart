@@ -73,27 +73,31 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       padding: const EdgeInsets.all(defaultPadding),
       child: Column(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Order #${widget.order.orderNumber}',
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-              if (widget.order.orderStatus == 'PENDING')
-                ElevatedButton.icon(
-                  onPressed: () => _navigateToEdit(context),
-                  icon: const Icon(Icons.edit),
-                  label: const Text('Edit Order'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Order #${widget.order.orderNumber}',
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
                   ),
+                  overflow: TextOverflow.ellipsis,
                 ),
-            ],
+                if (widget.order.orderStatus == 'PENDING')
+                  ElevatedButton.icon(
+                    onPressed: () => _navigateToEdit(context),
+                    icon: const Icon(Icons.edit),
+                    label: const Text('Edit Order'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                    ),
+                  ),
+              ],
+            ),
           ),
           const SizedBox(height: defaultPadding),
           Text('Customer: ${widget.order.customerName ?? "N/A"}'),

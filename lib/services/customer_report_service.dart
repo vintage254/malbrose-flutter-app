@@ -49,12 +49,48 @@ class CustomerReportService {
         build: (context) {
           final List<pw.Widget> children = [];
           
+          // Add report header with date range
           children.addAll([
             _buildHeader(report, logo, font, boldFont),
             pw.SizedBox(height: 40),
             _buildCustomerInfo(customer, font, boldFont),
+            pw.SizedBox(height: 10),
+            _buildDateRangeInfo(report.startDate, report.endDate, font, boldFont),
             pw.SizedBox(height: 20),
           ]);
+
+          // Add payment status if available
+          if (report.paymentStatus != null) {
+            children.add(
+              pw.Container(
+                padding: const pw.EdgeInsets.all(10),
+                decoration: pw.BoxDecoration(
+                  color: report.paymentStatus?.toUpperCase() == 'PAID' ? 
+                    PdfColors.green100 : PdfColors.orange100,
+                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(5)),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.center,
+                  children: [
+                    pw.Text(
+                      'Payment Status: ',
+                      style: pw.TextStyle(font: boldFont, fontSize: 12),
+                    ),
+                    pw.Text(
+                      report.paymentStatus ?? 'Unknown',
+                      style: pw.TextStyle(
+                        font: boldFont, 
+                        fontSize: 12,
+                        color: report.paymentStatus?.toUpperCase() == 'PAID' ? 
+                          PdfColors.green800 : PdfColors.orange800,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            );
+            children.add(pw.SizedBox(height: 20));
+          }
 
           if (report.hasCompletedItems) {
             children.addAll([
@@ -74,12 +110,13 @@ class CustomerReportService {
             ]);
           }
 
+          // Add financial summary
           children.addAll([
-            _buildSummaryRow('Subtotal:', report.totalAmount, font, boldFont),
-            _buildSummaryRow('VAT (16%):', report.totalAmount * 0.16, font, boldFont),
+            _buildSummaryRow('Completed Orders Total:', report.completedAmount, font, boldFont),
+            _buildSummaryRow('Pending Orders Total:', report.pendingAmount, font, boldFont),
             _buildSummaryRow(
               'Total Amount:',
-              report.totalAmount * 1.16,
+              report.totalAmount,
               font,
               boldFont,
               isTotal: true,
@@ -93,6 +130,33 @@ class CustomerReportService {
     );
 
     return pdf.save();
+  }
+
+  static pw.Widget _buildDateRangeInfo(DateTime? startDate, DateTime? endDate, pw.Font font, pw.Font boldFont) {
+    final dateFormat = DateFormat('MMM dd, yyyy');
+    final startDateStr = startDate != null ? dateFormat.format(startDate) : 'All time';
+    final endDateStr = endDate != null ? dateFormat.format(endDate) : 'Present';
+    
+    return pw.Container(
+      padding: const pw.EdgeInsets.all(10),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.grey100,
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(5)),
+      ),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.center,
+        children: [
+          pw.Text(
+            'Report Period: ',
+            style: pw.TextStyle(font: boldFont, fontSize: 12),
+          ),
+          pw.Text(
+            '$startDateStr to $endDateStr',
+            style: pw.TextStyle(font: font, fontSize: 12),
+          ),
+        ],
+      ),
+    );
   }
 
   static pw.Widget _buildHeader(
@@ -138,11 +202,6 @@ class CustomerReportService {
               'Date: ${DateFormat('MMM dd, yyyy').format(report.createdAt)}',
               font,
             ),
-            if (report.dueDate != null)
-              _buildText(
-                'Due Date: ${DateFormat('MMM dd, yyyy').format(report.dueDate!)}',
-                font,
-              ),
           ],
         ),
       ],
@@ -193,21 +252,73 @@ class CustomerReportService {
   }
 
   static pw.Widget _buildItemsTable(List<OrderItem> items, pw.Font font) {
-    return pw.Table(
-      border: pw.TableBorder.all(color: PdfColors.grey300),
-      columnWidths: {
-        0: const pw.FlexColumnWidth(4),
-        1: const pw.FlexColumnWidth(2),
-        2: const pw.FlexColumnWidth(2),
-        3: const pw.FlexColumnWidth(2),
-      },
-      children: [
-        // Table Header
-        _buildTableHeader(font),
-        // Table Items
-        ...items.map((item) => _buildTableRow(item, font)),
-      ],
-    );
+    // Group items by order number
+    final Map<String, List<OrderItem>> itemsByOrder = {};
+    for (final item in items) {
+      final orderNumber = item.orderNumber ?? 'Unknown';
+      if (!itemsByOrder.containsKey(orderNumber)) {
+        itemsByOrder[orderNumber] = [];
+      }
+      itemsByOrder[orderNumber]!.add(item);
+    }
+    
+    // Build a list of widgets for each order
+    final List<pw.Widget> orderWidgets = [];
+    
+    itemsByOrder.forEach((orderNumber, orderItems) {
+      final orderDate = orderItems.isNotEmpty && orderItems.first.orderDate != null
+          ? DateFormat('MMM dd, yyyy').format(orderItems.first.orderDate!)
+          : 'Unknown date';
+      
+      // Calculate order total
+      final orderTotal = orderItems.fold<double>(
+          0, (sum, item) => sum + item.totalAmount);
+      
+      // Add order header
+      orderWidgets.add(
+        pw.Container(
+          padding: const pw.EdgeInsets.all(8),
+          color: PdfColors.grey200,
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(
+                'Order #$orderNumber - $orderDate',
+                style: pw.TextStyle(font: font, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.Text(
+                'Total: KSH ${orderTotal.toStringAsFixed(2)}',
+                style: pw.TextStyle(font: font, fontWeight: pw.FontWeight.bold),
+              ),
+            ],
+          ),
+        )
+      );
+      
+      // Add order items table
+      orderWidgets.add(
+        pw.Table(
+          border: pw.TableBorder.all(color: PdfColors.grey300),
+          columnWidths: {
+            0: const pw.FlexColumnWidth(4),
+            1: const pw.FlexColumnWidth(2),
+            2: const pw.FlexColumnWidth(2),
+            3: const pw.FlexColumnWidth(2),
+          },
+          children: [
+            // Table Header
+            _buildTableHeader(font),
+            // Table Items
+            ...orderItems.map((item) => _buildTableRow(item, font)),
+          ],
+        )
+      );
+      
+      // Add spacing between orders
+      orderWidgets.add(pw.SizedBox(height: 10));
+    });
+    
+    return pw.Column(children: orderWidgets);
   }
 
   static pw.TableRow _buildTableHeader(pw.Font font) {
@@ -218,11 +329,14 @@ class CustomerReportService {
         _buildTableCell('Quantity', font, isHeader: true),
         _buildTableCell('Unit Price', font, isHeader: true),
         _buildTableCell('Total', font, isHeader: true),
+        _buildTableCell('Status', font, isHeader: true),
       ],
     );
   }
 
   static pw.TableRow _buildTableRow(OrderItem item, pw.Font font) {
+    final status = item.orderId > 0 ? 'COMPLETED' : 'PENDING';
+    
     return pw.TableRow(
       children: [
         _buildTableCell(item.displayName, font),
@@ -232,6 +346,7 @@ class CustomerReportService {
         ),
         _buildTableCell('KSH ${item.effectivePrice.toStringAsFixed(2)}', font),
         _buildTableCell('KSH ${item.totalAmount.toStringAsFixed(2)}', font),
+        _buildTableCell(status, font, textColor: status == 'COMPLETED' ? PdfColors.green : PdfColors.orange),
       ],
     );
   }
@@ -240,6 +355,7 @@ class CustomerReportService {
     String text,
     pw.Font font, {
     bool isHeader = false,
+    PdfColor? textColor,
   }) {
     return pw.Padding(
       padding: const pw.EdgeInsets.all(8),
@@ -247,7 +363,7 @@ class CustomerReportService {
         text,
         style: pw.TextStyle(
           font: font,
-          color: isHeader ? PdfColors.white : PdfColors.black,
+          color: isHeader ? PdfColors.white : (textColor ?? PdfColors.black),
           fontWeight: isHeader ? pw.FontWeight.bold : pw.FontWeight.normal,
         ),
       ),
@@ -318,20 +434,67 @@ class CustomerReportService {
     );
   }
 
-  Future<CustomerReport> generateCustomerReport(int customerId, {Transaction? txn}) async {
-    if (txn != null) {
-      return await _generateCustomerReportWithExecutor(customerId, txn);
+  Future<CustomerReport> generateCustomerReport(
+    int customerId, {
+    DateTime? startDate,
+    DateTime? endDate,
+    Transaction? txn
+  }) async {
+    int retryCount = 0;
+    const maxRetries = 2;
+    
+    while (true) {
+      try {
+        // Pre-fetch current user outside of transaction to avoid nested database calls
+        final currentUser = await DatabaseService.instance.getCurrentUser();
+        
+        if (txn != null) {
+          return await _generateCustomerReportWithExecutor(
+            customerId, 
+            txn,
+            startDate: startDate,
+            endDate: endDate,
+            currentUser: currentUser
+          );
+        }
+        
+        // If no transaction provided, create one with timeout handling
+        return await DatabaseService.instance.withTransaction((transaction) async {
+          return await _generateCustomerReportWithExecutor(
+            customerId, 
+            transaction,
+            startDate: startDate,
+            endDate: endDate,
+            currentUser: currentUser
+          );
+        });
+      } catch (e) {
+        print('Error in generateCustomerReport (attempt ${retryCount + 1}): $e');
+        
+        // Check if we should retry
+        if (retryCount >= maxRetries) {
+          rethrow; // Don't retry if max retries reached
+        }
+        
+        // Exponential backoff with jitter to prevent thundering herd
+        final baseDelay = 500 * (1 << retryCount);
+        final jitter = (baseDelay * 0.2 * (DateTime.now().millisecondsSinceEpoch % 10) / 10).toInt();
+        final delay = baseDelay + jitter;
+        
+        print('Retrying report generation in $delay ms...');
+        await Future.delayed(Duration(milliseconds: delay));
+        retryCount++;
+      }
     }
-    // If no transaction provided, create one
-    return await DatabaseService.instance.withTransaction((transaction) async {
-      return await _generateCustomerReportWithExecutor(customerId, transaction);
-    });
   }
 
   Future<CustomerReport> _generateCustomerReportWithExecutor(
     int customerId, 
-    DatabaseExecutor executor
-  ) async {
+    DatabaseExecutor executor, {
+    DateTime? startDate,
+    DateTime? endDate,
+    Map<String, dynamic>? currentUser
+  }) async {
     try {
       final customerResult = await executor.query(
         'customers',
@@ -346,15 +509,32 @@ class CustomerReportService {
       
       final customer = customerResult.first;
       
+      // Build query with date range if provided
+      String dateRangeClause = '';
+      List<dynamic> queryArgs = [customerId];
+      
+      if (startDate != null) {
+        dateRangeClause += ' AND date(o.created_at) >= date(?)';
+        queryArgs.add(startDate.toIso8601String());
+      }
+      
+      if (endDate != null) {
+        dateRangeClause += ' AND date(o.created_at) <= date(?)';
+        queryArgs.add(endDate.toIso8601String());
+      }
+      
       final orders = await executor.rawQuery('''
         SELECT 
           o.id,
+          o.order_number,
+          o.created_at,
           o.status,
           oi.id as item_id,
           COALESCE(oi.product_id, 0) as product_id,
           COALESCE(oi.quantity, 0) as quantity,
           COALESCE(oi.unit_price, 0.0) as unit_price,
           COALESCE(oi.selling_price, 0.0) as selling_price,
+          COALESCE(oi.total_amount, 0.0) as total_amount,
           COALESCE(oi.is_sub_unit, 0) as is_sub_unit,
           oi.sub_unit_name,
           COALESCE(p.product_name, 'Unknown Product') as product_name,
@@ -363,12 +543,12 @@ class CustomerReportService {
         FROM orders o
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN products p ON oi.product_id = p.id
-        WHERE o.customer_id = ? AND o.status != 'REPORTED'
+        WHERE o.customer_id = ? $dateRangeClause
         ORDER BY o.created_at DESC
-      ''', [customerId]);
+      ''', queryArgs);
 
       if (orders.isEmpty) {
-        throw Exception('No unreported orders found for this customer');
+        throw Exception('No orders found for this customer in the specified time period');
       }
 
       double completedAmount = 0;
@@ -379,6 +559,13 @@ class CustomerReportService {
       for (final order in orders) {
         try {
           final item = OrderItem.fromMap(order);
+          
+          // Add order number and date to the item for better reporting
+          item.orderNumber = order['order_number'] as String? ?? 'Unknown';
+          item.orderDate = order['created_at'] != null 
+              ? DateTime.parse(order['created_at'] as String)
+              : DateTime.now();
+          
           final isSubUnit = order['is_sub_unit'] == 1;
           final subUnitPrice = (order['sub_unit_price'] as num?)?.toDouble();
           
@@ -390,7 +577,7 @@ class CustomerReportService {
           if (order['status'] == 'COMPLETED') {
             completedItems.add(item);
             completedAmount += totalAmount;
-          } else {
+          } else if (order['status'] == 'PENDING') {
             pendingItems.add(item);
             pendingAmount += totalAmount;
           }
@@ -406,21 +593,39 @@ class CustomerReportService {
       }
 
       final reportNumber = await generateReportNumber(executor);
+      final now = DateTime.now();
       
-      return CustomerReport(
+      // Create the report object
+      final report = CustomerReport(
         reportNumber: reportNumber,
         customerId: customerId,
         customerName: customer['name'] as String? ?? 'Unknown Customer',
         totalAmount: completedAmount + pendingAmount,
         completedAmount: completedAmount,
         pendingAmount: pendingAmount,
-        status: 'PENDING',
-        paymentStatus: 'PENDING',
-        createdAt: DateTime.now(),
-        dueDate: DateTime.now().add(const Duration(days: 30)),
+        createdAt: now,
+        startDate: startDate,
+        endDate: endDate,
         completedItems: completedItems,
         pendingItems: pendingItems,
       );
+      
+      // Log the report generation if user is available
+      if (currentUser != null) {
+        await executor.insert(
+          DatabaseService.tableActivityLogs,
+          {
+            'user_id': currentUser['id'] as int,
+            'username': currentUser['username'] as String,
+            'action': DatabaseService.actionCreateCustomerReport,
+            'action_type': 'Generate customer report',
+            'details': 'Generated customer report #${report.reportNumber} for ${customer['name']}',
+            'timestamp': now.toIso8601String(),
+          },
+        );
+      }
+      
+      return report;
     } catch (e) {
       print('Error generating customer report: $e');
       rethrow;
@@ -428,36 +633,42 @@ class CustomerReportService {
   }
 
   Future<String> generateReportNumber(DatabaseExecutor executor) async {
-    final now = DateTime.now();
-    final prefix = 'REP';
-    final date = DateFormat('yyyyMMdd').format(now);
-    
-    final result = await executor.rawQuery('''
-      SELECT report_number 
-      FROM customer_reports 
-      WHERE date(created_at) = date(?)
-      ORDER BY report_number DESC 
-      LIMIT 1
-    ''', [now.toIso8601String()]);
-
-    int sequence = 1;
-    if (result.isNotEmpty) {
-      final lastNumber = result.first['report_number'] as String;
-      final lastSequence = int.tryParse(lastNumber.split('-').last) ?? 0;
-      sequence = lastSequence + 1;
+    try {
+      final now = DateTime.now();
+      final prefix = 'REP';
+      final date = DateFormat('yyyyMMdd').format(now);
+      final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+      
+      // Add a time component to make the report number more unique
+      // This helps prevent collisions when multiple reports are generated in quick succession
+      return '$prefix-$date-$timeComponent';
+    } catch (e) {
+      print('Error generating report number: $e');
+      // Fallback to a simpler format if there's an error
+      return 'REP-${DateTime.now().millisecondsSinceEpoch}';
     }
-
-    return '$prefix-$date-${sequence.toString().padLeft(4, '0')}';
   }
 
   Future<List<CustomerReport>> getCustomerReports(int customerId, {Transaction? txn}) async {
-    if (txn != null) {
-      return await _getCustomerReportsWithExecutor(customerId, txn);
+    try {
+      if (txn != null) {
+        return await _getCustomerReportsWithExecutor(customerId, txn);
+      }
+      // If no transaction provided, create one with timeout handling
+      return await DatabaseService.instance.withTransaction((transaction) async {
+        return await _getCustomerReportsWithExecutor(customerId, transaction);
+      });
+    } catch (e) {
+      print('Error in getCustomerReports: $e');
+      // If we get a database lock error, try again with a delay
+      if (e.toString().contains('locked')) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        return await DatabaseService.instance.withTransaction((transaction) async {
+          return await _getCustomerReportsWithExecutor(customerId, transaction);
+        });
+      }
+      rethrow;
     }
-    // If no transaction provided, create one
-    return await DatabaseService.instance.withTransaction((transaction) async {
-      return await _getCustomerReportsWithExecutor(customerId, transaction);
-    });
   }
 
   Future<List<CustomerReport>> _getCustomerReportsWithExecutor(
@@ -475,16 +686,93 @@ class CustomerReportService {
   }
 
   Future<CustomerReport> createCustomerReportWithItems(CustomerReport report, {Transaction? txn}) async {
-    if (txn != null) {
-      return await _createCustomerReportWithExecutor(report, txn);
+    int retryCount = 0;
+    const maxRetries = 2;
+    
+    while (true) {
+      try {
+        // If transaction is provided, use it directly
+        if (txn != null) {
+          // Check if report already exists within the provided transaction
+          final existingReportCheck = await txn.query(
+            DatabaseService.tableCustomerReports,
+            where: 'report_number = ?',
+            whereArgs: [report.reportNumber],
+            limit: 1,
+          );
+          
+          if (existingReportCheck.isNotEmpty) {
+            return CustomerReport.fromMap(existingReportCheck.first);
+          }
+          
+          return await _createCustomerReportWithExecutor(report, txn);
+        }
+        
+        // If no transaction provided, do a quick check outside transaction first
+        final db = await DatabaseService.instance.database;
+        final existingReport = await db.query(
+          DatabaseService.tableCustomerReports,
+          where: 'report_number = ?',
+          whereArgs: [report.reportNumber],
+          limit: 1,
+        );
+        
+        if (existingReport.isNotEmpty) {
+          print('Report with number ${report.reportNumber} already exists, returning existing report');
+          return CustomerReport.fromMap(existingReport.first);
+        }
+        
+        // Pre-fetch current user outside of transaction to avoid nested database calls
+        final currentUser = await DatabaseService.instance.getCurrentUser();
+        
+        // Create a transaction with timeout handling
+        return await DatabaseService.instance.withTransaction((transaction) async {
+          // Double-check within transaction that report doesn't already exist
+          final existingReportCheck = await transaction.query(
+            DatabaseService.tableCustomerReports,
+            where: 'report_number = ?',
+            whereArgs: [report.reportNumber],
+            limit: 1,
+          );
+          
+          if (existingReportCheck.isNotEmpty) {
+            return CustomerReport.fromMap(existingReportCheck.first);
+          }
+          
+          // Create the report with the transaction and pre-fetched user
+          final result = await _createCustomerReportWithExecutor(
+            report, 
+            transaction,
+            currentUser: currentUser
+          );
+          
+          return result;
+        });
+      } catch (e) {
+        print('Error in createCustomerReportWithItems (attempt ${retryCount + 1}): $e');
+        
+        // Check if we should retry
+        if (retryCount >= maxRetries) {
+          rethrow; // Don't retry if max retries reached
+        }
+        
+        // Exponential backoff with jitter
+        final baseDelay = 500 * (1 << retryCount);
+        final jitter = (baseDelay * 0.2 * (DateTime.now().millisecondsSinceEpoch % 10) / 10).toInt();
+        final delay = baseDelay + jitter;
+        
+        print('Retrying report creation in $delay ms...');
+        await Future.delayed(Duration(milliseconds: delay));
+        retryCount++;
+      }
     }
-    // If no transaction provided, create one
-    return await DatabaseService.instance.withTransaction((transaction) async {
-      return await _createCustomerReportWithExecutor(report, transaction);
-    });
   }
 
-  Future<CustomerReport> _createCustomerReportWithExecutor(CustomerReport report, DatabaseExecutor executor) async {
+  Future<CustomerReport> _createCustomerReportWithExecutor(
+    CustomerReport report, 
+    DatabaseExecutor executor, 
+    {Map<String, dynamic>? currentUser} // Accept pre-fetched user
+  ) async {
     try {
       // Insert report with payment status
       final Map<String, dynamic> reportMap = report.toMap();
@@ -499,75 +787,81 @@ class CustomerReportService {
         reportMap
       );
       
-      // Process items...
+      // Use batch operations for better performance and reduced locking
+      final batch = executor.batch();
+      
+      // Process completed items
       if (report.hasCompletedItems) {
-        await _processReportItems(
-          executor,
-          reportId,
-          report.completedItems!,
-          'COMPLETED'
-        );
+        for (final item in report.completedItems!) {
+          // Add report item
+          batch.insert(
+            DatabaseService.tableReportItems,
+            {
+              'report_id': reportId,
+              'order_id': item.orderId,
+              'product_id': item.productId,
+              'product_name': item.productName,
+              'quantity': item.quantity,
+              'unit_price': item.unitPrice,
+              'selling_price': item.sellingPrice,
+              'total_amount': item.totalAmount,
+              'status': 'COMPLETED',
+              'is_sub_unit': item.isSubUnit ? 1 : 0,
+              'sub_unit_name': item.subUnitName,
+              'created_at': DateTime.now().toIso8601String(),
+            },
+          );
+          
+          // We don't change the order status when creating a report
+          // This ensures the original order status is preserved
+        }
       }
 
+      // Process pending items
       if (report.hasPendingItems) {
-        await _processReportItems(
-          executor,
-          reportId,
-          report.pendingItems!,
-          'PENDING'
-        );
+        for (final item in report.pendingItems!) {
+          batch.insert(
+            DatabaseService.tableReportItems,
+            {
+              'report_id': reportId,
+              'order_id': item.orderId,
+              'product_id': item.productId,
+              'product_name': item.productName,
+              'quantity': item.quantity,
+              'unit_price': item.unitPrice,
+              'selling_price': item.sellingPrice,
+              'total_amount': item.totalAmount,
+              'status': 'PENDING',
+              'is_sub_unit': item.isSubUnit ? 1 : 0,
+              'sub_unit_name': item.subUnitName,
+              'created_at': DateTime.now().toIso8601String(),
+            },
+          );
+        }
       }
-
-      // Log the activity
-      final currentUser = await DatabaseService.instance.getCurrentUser();
+      
+      // Add activity log to the batch if user is available
       if (currentUser != null) {
-        await DatabaseService.instance.logActivity(
-          currentUser['id'] as int,
-          currentUser['username'] as String,
-          DatabaseService.actionCreateCustomerReport,
-          'Create customer report',
-          'Created customer report #${report.reportNumber} for ${report.customerName}'
+        batch.insert(
+          DatabaseService.tableActivityLogs,
+          {
+            'user_id': currentUser['id'] as int,
+            'username': currentUser['username'] as String,
+            'action': DatabaseService.actionCreateCustomerReport,
+            'action_type': 'Create customer report',
+            'details': 'Created customer report #${report.reportNumber} for ${report.customerName}',
+            'timestamp': DateTime.now().toIso8601String(),
+          },
         );
       }
+      
+      // Execute all operations in a single batch
+      await batch.commit(noResult: true);
 
       return report.copyWith(id: reportId);
     } catch (e) {
       print('Error creating customer report: $e');
       rethrow;
-    }
-  }
-
-  Future<void> _processReportItems(
-    DatabaseExecutor executor,
-    int reportId,
-    List<OrderItem> items,
-    String status,
-  ) async {
-    for (var item in items) {
-      await executor.insert(
-        DatabaseService.tableReportItems,
-        {
-          'report_id': reportId,
-          'order_id': item.orderId,
-          'product_id': item.productId,
-          'quantity': item.quantity,
-          'unit_price': item.unitPrice,
-          'selling_price': item.sellingPrice,
-          'total_amount': item.totalAmount,
-          'is_sub_unit': item.isSubUnit ? 1 : 0,
-          'sub_unit_name': item.subUnitName,
-          'status': status,
-        },
-      );
-
-      if (status == 'COMPLETED') {
-        await executor.update(
-          DatabaseService.tableOrders,
-          {'status': 'REPORTED'},
-          where: 'id = ?',
-          whereArgs: [item.orderId],
-        );
-      }
     }
   }
 

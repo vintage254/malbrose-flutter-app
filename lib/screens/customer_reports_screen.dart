@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/customer_model.dart';
-import 'package:my_flutter_app/models/customer_report_model.dart';
+import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
-import 'package:my_flutter_app/services/customer_report_service.dart';
 import 'package:intl/intl.dart';
-import 'package:my_flutter_app/models/order_model.dart';
-import 'package:my_flutter_app/widgets/customer_report_preview_widget.dart';
+import 'package:my_flutter_app/widgets/dynamic_customer_report_widget.dart';
 import 'dart:async';
 
 class CustomerReportsScreen extends StatefulWidget {
@@ -22,32 +20,36 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
   DateTime? _startDate;
   DateTime? _endDate;
   Customer? _selectedCustomer;
-  List<CustomerReport> _reportData = [];
   bool _isLoading = false;
   List<Customer> _customers = [];
-  List<CustomerReport> _reports = [];
+  List<Map<String, dynamic>> _orders = [];
+  List<Map<String, dynamic>> _orderItems = [];
   Timer? _debounceTimer;
   String _searchQuery = '';
+  bool _reportGenerated = false;
+  double _completedAmount = 0.0;
+  double _pendingAmount = 0.0;
+  double _totalAmount = 0.0;
 
   @override
   void initState() {
     super.initState();
-    _loadInitialData();
+    _loadCustomers();
+    
+    // Set default date range to last 30 days
+    _endDate = DateTime.now();
+    _startDate = _endDate!.subtract(const Duration(days: 30));
   }
 
-  Future<void> _loadInitialData() async {
-    setState(() => _isLoading = true);
-    try {
-      await Future.wait([
-        _loadCustomers(),
-        _loadReports(),
-      ]);
-    } finally {
-      setState(() => _isLoading = false);
-    }
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _debounceTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadCustomers() async {
+    setState(() => _isLoading = true);
     try {
       final customersData = await DatabaseService.instance.getAllCustomers();
       if (mounted) {
@@ -66,29 +68,6 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
           SnackBar(content: Text('Error loading customers: $e')),
         );
       }
-    }
-  }
-
-  Future<void> _loadReports() async {
-    if (_selectedCustomer == null) return;
-    
-    setState(() => _isLoading = true);
-    try {
-      await DatabaseService.instance.withTransaction((txn) async {
-        final reports = await CustomerReportService.instance.getCustomerReports(
-          _selectedCustomer!.id!,
-          txn: txn
-        );
-        if (mounted) {
-          setState(() => _reports = reports);
-        }
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading reports: $e')),
-        );
-      }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -96,21 +75,75 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
     }
   }
 
-  List<OrderItem> _mapOrderItems(List<Map<String, dynamic>> items) {
-    return items.map((item) => OrderItem(
-      id: item['id'] as int?,
-      orderId: item['order_id'] as int,
-      productId: item['product_id'] as int,
-      quantity: item['quantity'] as int,
-      unitPrice: (item['unit_price'] as num).toDouble(),
-      sellingPrice: (item['selling_price'] as num).toDouble(),
-      adjustedPrice: (item['adjusted_price'] as num?)?.toDouble() ?? 
-                    (item['selling_price'] as num).toDouble(),
-      totalAmount: (item['total_amount'] as num).toDouble(),
-      productName: item['product_name'] as String,
-      isSubUnit: (item['is_sub_unit'] as int?) == 1,
-      subUnitName: item['sub_unit_name'] as String?,
-    )).toList();
+  Future<void> _loadCustomerOrders() async {
+    if (_selectedCustomer == null) return;
+    
+    setState(() {
+      _isLoading = true;
+      _reportGenerated = false;
+      _orders = [];
+      _orderItems = [];
+    });
+    
+    try {
+      // Get all orders for the selected customer
+      final orders = await DatabaseService.instance.getCustomerOrders(_selectedCustomer!.id!);
+      
+      // Filter orders by date range if specified
+      final filteredOrders = orders.where((order) {
+        if (_startDate == null && _endDate == null) return true;
+        
+        final orderDate = DateTime.parse(order['created_at'] as String);
+        
+        if (_startDate != null && _endDate != null) {
+          return orderDate.isAfter(_startDate!) && 
+                 orderDate.isBefore(_endDate!.add(const Duration(days: 1)));
+        } else if (_startDate != null) {
+          return orderDate.isAfter(_startDate!);
+        } else if (_endDate != null) {
+          return orderDate.isBefore(_endDate!.add(const Duration(days: 1)));
+        }
+        
+        return true;
+      }).toList();
+      
+      // Get order items for each order
+      List<Map<String, dynamic>> allOrderItems = [];
+      double completedAmount = 0.0;
+      double pendingAmount = 0.0;
+      
+      for (final order in filteredOrders) {
+        final items = await DatabaseService.instance.getOrderItems(order['id'] as int);
+        allOrderItems.addAll(items);
+        
+        // Calculate totals based on order status
+        final orderTotal = (order['total_amount'] as num).toDouble();
+        if (order['status'] == 'COMPLETED') {
+          completedAmount += orderTotal;
+        } else {
+          pendingAmount += orderTotal;
+        }
+      }
+      
+      if (mounted) {
+        setState(() {
+          _orders = filteredOrders;
+          _orderItems = allOrderItems;
+          _completedAmount = completedAmount;
+          _pendingAmount = pendingAmount;
+          _totalAmount = completedAmount + pendingAmount;
+          _reportGenerated = true;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading customer orders: $e')),
+        );
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   void _onSearchChanged(String query) {
@@ -138,43 +171,10 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
         _startDate = picked.start;
         _endDate = picked.end;
       });
-      _loadReports();
-    }
-  }
-
-  Future<void> _generateCustomerReport() async {
-    if (_selectedCustomer == null) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await DatabaseService.instance.withTransaction((txn) async {
-        final report = await CustomerReportService.instance.generateCustomerReport(
-          _selectedCustomer!.id!,
-          txn: txn
-        );
-        
-        await CustomerReportService.instance.createCustomerReportWithItems(
-          report, 
-          txn: txn
-        );
-      });
-
-      await _loadReports();
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Customer report generated successfully')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error generating customer report: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
+      // If a customer is already selected, reload the orders with the new date range
+      if (_selectedCustomer != null) {
+        _loadCustomerOrders();
       }
     }
   }
@@ -183,100 +183,152 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Expanded(
-            flex: 1,
-            child: SideMenuWidget(),
-          ),
+          const SideMenuWidget(),
           Expanded(
-            flex: 4,
             child: Padding(
               padding: const EdgeInsets.all(defaultPadding),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<Customer>(
-                          value: _selectedCustomer,
-                          decoration: InputDecoration(
-                            labelText: 'Select Customer',
-                            prefixIcon: const Icon(Icons.person),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                          items: _customers.map((customer) {
-                            return DropdownMenuItem(
-                              value: customer,
-                              child: Text(customer.name),
-                            );
-                          }).toList(),
-                          onChanged: (Customer? customer) {
-                            setState(() => _selectedCustomer = customer);
-                            _loadReports();
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: defaultPadding),
-                      ElevatedButton.icon(
-                        onPressed: _isLoading ? null : _generateCustomerReport,
-                        icon: _isLoading 
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.add),
-                        label: const Text('New Customer Report'),
-                      ),
-                    ],
+                  Text(
+                    'Customer Reports',
+                    style: Theme.of(context).textTheme.headlineMedium,
                   ),
                   const SizedBox(height: defaultPadding),
-                  if (_isLoading)
-                    const Center(child: CircularProgressIndicator())
-                  else if (_reports.isEmpty)
-                    Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.receipt_long_outlined,
-                            size: 64,
-                            color: Colors.grey,
+                  // Wrap the row in a SingleChildScrollView to prevent overflow
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 300,
+                          child: TextField(
+                            controller: _searchController,
+                            decoration: const InputDecoration(
+                              labelText: 'Search Customers',
+                              prefixIcon: Icon(Icons.search),
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: _onSearchChanged,
                           ),
-                          const SizedBox(height: 16),
-                          Text(
-                            _selectedCustomer != null
-                              ? 'No customer reports found for ${_selectedCustomer!.name}'
-                              : 'Select a customer to view reports',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              color: Colors.grey,
+                        ),
+                        const SizedBox(width: defaultPadding),
+                        ElevatedButton.icon(
+                          onPressed: _selectDateRange,
+                          icon: const Icon(Icons.date_range),
+                          label: Text(_startDate != null && _endDate != null
+                              ? '${DateFormat('MMM d, y').format(_startDate!)} - ${DateFormat('MMM d, y').format(_endDate!)}'
+                              : 'Select Date Range'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: defaultPadding,
+                              vertical: defaultPadding / 2,
                             ),
                           ),
-                        ],
-                      ),
-                    )
-                  else
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: _reports.length,
-                        itemBuilder: (context, index) {
-                          final report = _reports[index];
-                          return CustomerReportPreviewWidget(
-                            report: report,
-                            customer: _customers.firstWhere(
-                              (c) => c.id == report.customerId,
+                        ),
+                        const SizedBox(width: defaultPadding),
+                        ElevatedButton.icon(
+                          onPressed: _selectedCustomer != null
+                              ? _loadCustomerOrders
+                              : null,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Generate Report'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: defaultPadding,
+                              vertical: defaultPadding / 2,
                             ),
-                          );
-                        },
-                      ),
+                          ),
+                        ),
+                      ],
                     ),
+                  ),
+                  const SizedBox(height: defaultPadding),
+                  Expanded(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Customer selection panel
+                        SizedBox(
+                          width: 300,
+                          child: Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(defaultPadding),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Select Customer',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  const SizedBox(height: defaultPadding / 2),
+                                  _isLoading
+                                      ? const Center(
+                                          child: CircularProgressIndicator(),
+                                        )
+                                      : Expanded(
+                                          child: ListView.builder(
+                                            itemCount: _customers.length,
+                                            itemBuilder: (context, index) {
+                                              final customer = _customers[index];
+                                              return ListTile(
+                                                title: Text(customer.name),
+                                                subtitle: Text(
+                                                    'Orders: ${customer.totalOrders}'),
+                                                selected: _selectedCustomer?.id ==
+                                                    customer.id,
+                                                onTap: () {
+                                                  setState(() {
+                                                    _selectedCustomer = customer;
+                                                  });
+                                                },
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: defaultPadding),
+                        // Report display area
+                        Expanded(
+                          child: _isLoading
+                              ? const Center(child: CircularProgressIndicator())
+                              : !_reportGenerated
+                                  ? const Center(
+                                      child: Text(
+                                        'Select a customer and date range, then click "Generate Report"',
+                                        style: TextStyle(fontSize: 16),
+                                      ),
+                                    )
+                                  : _orders.isEmpty
+                                      ? const Center(
+                                          child: Text(
+                                            'No orders found for the selected customer and date range',
+                                            style: TextStyle(fontSize: 16),
+                                          ),
+                                        )
+                                      : DynamicCustomerReportWidget(
+                                          customer: _selectedCustomer!,
+                                          orders: _orders,
+                                          orderItems: _orderItems,
+                                          startDate: _startDate,
+                                          endDate: _endDate,
+                                          completedAmount: _completedAmount,
+                                          pendingAmount: _pendingAmount,
+                                          totalAmount: _totalAmount,
+                                        ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -284,64 +336,5 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
         ],
       ),
     );
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status.toUpperCase()) {
-      case 'PAID':
-        return Colors.green;
-      case 'PENDING':
-        return Colors.orange;
-      case 'OVERDUE':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  Future<void> _printCustomerReport(CustomerReport report, Customer customer) async {
-    try {
-      await CustomerReportService.instance.generateAndPrintCustomerReport(report, customer);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error printing customer report: $e')),
-        );
-      }
-    }
-  }
-
-  void _showReportDetails(CustomerReport report, Customer customer) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Customer Report #${report.reportNumber}'),
-        content: SizedBox(
-          width: 600,
-          child: CustomerReportPreviewWidget(
-            report: report,
-            customer: customer,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () => _printCustomerReport(report, customer),
-            icon: const Icon(Icons.print),
-            label: const Text('Print'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    _debounceTimer?.cancel();
-    super.dispose();
   }
 } 

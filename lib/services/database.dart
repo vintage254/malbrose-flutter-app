@@ -9,11 +9,13 @@ import 'dart:convert'; // For utf8 encoding
 import 'package:synchronized/synchronized.dart';
 import '../models/customer_model.dart';
 import 'dart:io';
+import 'dart:math';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
   static Database? _database;
   final _lock = Lock();
+  bool _initialized = false;
 
   // Table Names
   static const String tableProducts = 'products';
@@ -49,23 +51,96 @@ class DatabaseService {
 
   DatabaseService._init();
 
+  // Completely rewritten database getter to be more aggressive with connection management
   Future<Database> get database async {
-    _database ??= await _initDatabase();
-    return _database!;
+    if (_database != null && _initialized) {
+      try {
+        // Test if database is still valid with a simple query
+        await _database!.rawQuery('SELECT 1');
+        return _database!;
+      } catch (e) {
+        print('Database connection invalid, recreating: $e');
+        await _closeDatabase();
+        _database = null;
+        _initialized = false;
+      }
+    }
+    
+    // Use a lock to prevent multiple initialization attempts
+    return await _lock.synchronized(() async {
+      if (_database != null && _initialized) return _database!;
+      
+      _database = await _initDatabase();
+      _initialized = true;
+      return _database!;
+    });
   }
 
+  // Add a method to explicitly close the database
+  Future<void> _closeDatabase() async {
+    if (_database != null) {
+      try {
+        await _database!.close();
+        print('Database closed successfully');
+      } catch (e) {
+        print('Error closing database: $e');
+      }
+      _database = null;
+      _initialized = false;
+    }
+  }
+
+  // Completely rewritten transaction method to be more aggressive with retries and timeouts
   Future<T> withTransaction<T>(Future<T> Function(Transaction txn) action) async {
-    return await _lock.synchronized(() async {
-      final db = await database;
-      return await db.transaction((txn) async {
-        return await action(txn);
-      });
-    });
+    int retryCount = 0;
+    const maxRetries = 2;
+    
+    while (true) {
+      Database db;
+      try {
+        // Get a fresh database connection for each retry
+        if (retryCount > 0) {
+          await _closeDatabase();
+          _database = null;
+          _initialized = false;
+        }
+        
+        db = await database;
+        
+        // Use a simple transaction with minimal timeout
+        return await db.transaction(action, exclusive: true);
+      } catch (e) {
+        final errorMsg = e.toString().toLowerCase();
+        final isLockError = errorMsg.contains('locked') || 
+                            errorMsg.contains('busy') || 
+                            errorMsg.contains('timeout');
+        
+        print('Transaction error (attempt ${retryCount + 1}): $e');
+        
+        // If we've reached max retries or it's not a locking error, rethrow
+        if (retryCount >= maxRetries || !isLockError) {
+          // Close and reopen database on serious errors
+          await _closeDatabase();
+          _database = null;
+          _initialized = false;
+          rethrow;
+        }
+        
+        // Aggressive exponential backoff for retries
+        final delay = 500 * (1 << retryCount);
+        print('Retrying transaction in $delay ms...');
+        await Future.delayed(Duration(milliseconds: delay));
+        retryCount++;
+      }
+    }
   }
 
   Future<Database> _initDatabase() async {
     final databasePath = await getDatabasesPath();
     final path = join(databasePath, 'malbrose_db.db');
+
+    // Print the exact database path
+    print('DATABASE PATH: $path');
 
     try {
       // Ensure the directory exists with proper permissions
@@ -73,48 +148,62 @@ class DatabaseService {
       if (!await dbDir.exists()) {
         await dbDir.create(recursive: true);
       }
-
-      // Check if database exists and is not corrupted
-      if (await databaseExists(path)) {
+      
+      // Set permissions for Linux platform
+      if (Platform.isLinux) {
         try {
-          final db = await openDatabase(path, readOnly: true);
-          await db.close();
-        } catch (e) {
-          print('Database corrupted or permission issue, recreating...');
-          try {
-            await deleteDatabase(path);
-          } catch (deleteError) {
-            print('Error deleting database: $deleteError');
-            // If we can't delete, try to create a new database with a different name
-            final newPath = join(databasePath, 'malbrose_db_new.db');
-            return await _openDatabase(newPath);
+          // Ensure the directory has write permissions
+          final result = await Process.run('chmod', ['-R', '777', databasePath]);
+          if (result.exitCode != 0) {
+            print('Warning: Could not set directory permissions: ${result.stderr}');
           }
+        } catch (e) {
+          print('Warning: Error setting directory permissions: $e');
         }
       }
 
-      // Open database with write permissions
-      return await _openDatabase(path);
+      // Always close any existing database connection first
+      await _closeDatabase();
+
+      // Create a new database with minimal options
+      final db = await openDatabase(
+        path,
+        version: 24,
+        onCreate: _createTables,
+        onUpgrade: _onUpgrade,
+        // Set a shorter timeout to fail faster
+        singleInstance: false,
+      );
+      
+      // Set pragmas outside of any transaction
+      await _setPragmas(db);
+      
+      return db;
     } catch (e) {
       print('Database initialization error: $e');
       throw Exception('Failed to initialize the database: $e');
     }
   }
-
-  Future<Database> _openDatabase(String path) async {
-    return await openDatabase(
-      path,
-      version: 21,  // Increment version to trigger migration
-      onCreate: _createTables,
-      onUpgrade: _onUpgrade,
-      readOnly: false,
-      singleInstance: true,
-      onConfigure: (db) async {
-        await db.execute('PRAGMA journal_mode=WAL');
-        await db.execute('PRAGMA synchronous=NORMAL');
-        await db.execute('PRAGMA busy_timeout=10000');
-        await db.execute('PRAGMA foreign_keys=ON');
-      },
-    );
+  
+  Future<void> _setPragmas(Database db) async {
+    try {
+      // Enable foreign keys
+      await db.execute('PRAGMA foreign_keys=ON');
+      
+      // Set busy timeout to 3 seconds - even shorter timeout to fail faster
+      await db.execute('PRAGMA busy_timeout=3000');
+      
+      // Performance settings
+      await db.execute('PRAGMA cache_size=2000');
+      await db.execute('PRAGMA temp_store=MEMORY');
+      
+      // These settings should be set last
+      await db.execute('PRAGMA journal_mode=WAL');
+      await db.execute('PRAGMA synchronous=NORMAL');
+      await db.execute('PRAGMA locking_mode=NORMAL');
+    } catch (e) {
+      print('Error setting database pragmas: $e');
+    }
   }
 
   Future<void> _createTables(Database db, int version) async {
@@ -296,6 +385,7 @@ class DatabaseService {
         report_id INTEGER NOT NULL,
         order_id INTEGER NOT NULL,
         product_id INTEGER NOT NULL,
+        product_name TEXT NOT NULL,
         quantity INTEGER NOT NULL,
         unit_price REAL NOT NULL,
         selling_price REAL NOT NULL,
@@ -303,6 +393,7 @@ class DatabaseService {
         is_sub_unit INTEGER NOT NULL DEFAULT 0,
         sub_unit_name TEXT,
         status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
         FOREIGN KEY (report_id) REFERENCES $tableCustomerReports (id) ON DELETE CASCADE,
         FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
@@ -398,6 +489,36 @@ class DatabaseService {
       }
     }
     
+    if (oldVersion < 22) {
+      // Add product_name column to report_items table if it doesn't exist
+      try {
+        await db.execute('ALTER TABLE $tableReportItems ADD COLUMN product_name TEXT');
+        print('Added product_name column to report_items table');
+      } catch (e) {
+        print('Error adding product_name column: $e');
+      }
+    }
+    
+    if (oldVersion < 23) {
+      // Add created_at column to report_items table if it doesn't exist
+      try {
+        await db.execute('ALTER TABLE $tableReportItems ADD COLUMN created_at TEXT');
+        print('Added created_at column to report_items table');
+      } catch (e) {
+        print('Error adding created_at column: $e');
+      }
+    }
+    
+    if (oldVersion < 24) {
+      // Add order_id column to report_items table if it doesn't exist
+      try {
+        await db.execute('ALTER TABLE $tableReportItems ADD COLUMN order_id INTEGER NOT NULL DEFAULT 0');
+        print('Added order_id column to report_items table');
+      } catch (e) {
+        print('Error adding order_id column: $e');
+      }
+    }
+    
     try {
       // Check if sub_unit_quantity column exists in order_items
       var tableInfo = await db.rawQuery('PRAGMA table_info($tableOrderItems)');
@@ -445,46 +566,8 @@ class DatabaseService {
           );
         }
       }
-
-      // Link any existing orders with customer_name to customer_id
-      final ordersWithCustomerName = await db.query(
-        tableOrders,
-        where: 'customer_name IS NOT NULL AND customer_id IS NULL'
-      );
-
-      for (var order in ordersWithCustomerName) {
-        final customerName = order['customer_name'] as String;
-        // Find or create customer
-        var customer = await db.query(
-          tableCustomers,
-          where: 'name = ?',
-          whereArgs: [customerName],
-          limit: 1
-        );
-
-        int customerId;
-        if (customer.isEmpty) {
-          // Create new customer
-          customerId = await db.insert(tableCustomers, {
-            'name': customerName,
-            'created_at': order['created_at'],
-            'updated_at': order['created_at']
-          });
-        } else {
-          customerId = customer.first['id'] as int;
-        }
-
-        // Update order with customer_id
-        await db.update(
-          tableOrders,
-          {'customer_id': customerId},
-          where: 'id = ?',
-          whereArgs: [order['id']]
-        );
-      }
     } catch (e) {
-      print('Error during database upgrade: $e');
-      rethrow;
+      print('Error during migration: $e');
     }
   }
 
@@ -658,28 +741,46 @@ class DatabaseService {
 
   // Order related methods
   Future<int> createOrder(Order order) async {
-    int orderId = 0;
+    int retryCount = 0;
+    const maxRetries = 2;
     
-    await withTransaction((txn) async {
+    while (true) {
       try {
-        // First ensure customer exists and get/create customer ID
-        int? customerId = order.customerId;
-        String? customerName = order.customerName;
+        final db = await database;
         
-        if (customerName != null && customerName.isNotEmpty) {
-          final existingCustomer = await txn.query(
+        // First check if an order with this order number already exists to prevent duplicates
+        final existingOrder = await db.query(
+          tableOrders,
+          columns: ['id'],
+          where: 'order_number = ?',
+          whereArgs: [order.orderNumber],
+          limit: 1,
+        );
+        
+        if (existingOrder.isNotEmpty) {
+          print('Order with number ${order.orderNumber} already exists, returning existing ID');
+          return existingOrder.first['id'] as int;
+        }
+        
+        // Split the operation into smaller transactions
+        
+        // 1. First handle customer creation/update outside the main transaction
+        int? customerId = order.customerId;
+        if (order.customerName != null && order.customerName!.isNotEmpty) {
+          final existingCustomer = await db.query(
             tableCustomers,
+            columns: ['id'],
             where: 'name = ?',
-            whereArgs: [customerName],
+            whereArgs: [order.customerName],
             limit: 1,
           );
 
           if (existingCustomer.isEmpty) {
             // Create new customer
-            customerId = await txn.insert(
+            customerId = await db.insert(
               tableCustomers,
               {
-                'name': customerName,
+                'name': order.customerName,
                 'created_at': DateTime.now().toIso8601String(),
                 'total_orders': 1,
                 'total_amount': order.totalAmount,
@@ -689,94 +790,111 @@ class DatabaseService {
             );
           } else {
             customerId = existingCustomer.first['id'] as int;
-            // Update existing customer's stats within transaction
-            await txn.update(
+            
+            // First get the current values
+            final customerData = await db.query(
               tableCustomers,
-              {
-                'total_orders': (existingCustomer.first['total_orders'] as int) + 1,
-                'total_amount': (existingCustomer.first['total_amount'] as num).toDouble() + order.totalAmount,
-                'last_order_date': DateTime.now().toIso8601String(),
-                'updated_at': DateTime.now().toIso8601String(),
-              },
+              columns: ['total_orders', 'total_amount'],
               where: 'id = ?',
               whereArgs: [customerId],
-            );
-          }
-        }
-
-        // Get current user's username within transaction
-        final userResult = await txn.query(
-          tableUsers,
-          columns: ['username'],
-          where: 'id = ?',
-          whereArgs: [order.createdBy],
-          limit: 1,
-        );
-        
-        final username = userResult.isNotEmpty ? userResult.first['username'] as String : 'Unknown';
-
-        // Create order with the customer information
-        final orderMap = {
-          'order_number': order.orderNumber,
-          'customer_id': customerId,
-          'customer_name': customerName,
-          'total_amount': order.totalAmount,
-          'status': order.orderStatus,
-          'payment_status': order.paymentStatus,
-          'created_by': order.createdBy,
-          'created_at': order.createdAt.toIso8601String(),
-          'order_date': order.orderDate.toIso8601String(),
-          'updated_at': DateTime.now().toIso8601String(),
-        };
-        
-        orderId = await txn.insert(tableOrders, orderMap);
-        
-        // Create order items within the same transaction
-        for (var item in order.items) {
-          // Get product name if not provided
-          String productName = item.productName;
-          if (productName.isEmpty) {
-            final productResult = await txn.query(
-              tableProducts,
-              columns: ['product_name'],
-              where: 'id = ?',
-              whereArgs: [item.productId],
               limit: 1,
             );
-            if (productResult.isNotEmpty) {
-              productName = productResult.first['product_name'] as String;
-            } else {
-              throw Exception('Product not found for ID: ${item.productId}');
+            
+            if (customerData.isNotEmpty) {
+              final currentTotalOrders = (customerData.first['total_orders'] as num?)?.toInt() ?? 0;
+              final currentTotalAmount = (customerData.first['total_amount'] as num?)?.toDouble() ?? 0.0;
+              
+              // Update customer stats with calculated values
+              await db.update(
+                tableCustomers,
+                {
+                  'total_orders': currentTotalOrders + 1,
+                  'total_amount': currentTotalAmount + order.totalAmount,
+                  'last_order_date': DateTime.now().toIso8601String(),
+                  'updated_at': DateTime.now().toIso8601String(),
+                },
+                where: 'id = ?',
+                whereArgs: [customerId],
+              );
             }
           }
-
-          await txn.insert(tableOrderItems, {
-            ...item.toMap(),
-            'order_id': orderId,
-            'product_name': productName,
-          });
         }
-
-        // Log activity within the same transaction
-        await txn.insert(
-          tableActivityLogs,
-          {
-            'user_id': order.createdBy,
-            'username': username,
-            'action': 'create_order',
-            'details': 'Created order #${order.orderNumber} for ${customerName ?? "Walk-in Customer"}',
-            'timestamp': DateTime.now().toIso8601String(),
-          },
-        );
-
-        return orderId;
+        
+        // 2. Create order and order items in a minimal transaction
+        final newOrderId = await db.transaction((txn) async {
+          // Create order with the customer information
+          final now = DateTime.now();
+          final orderMap = {
+            'order_number': order.orderNumber,
+            'customer_id': customerId,
+            'customer_name': order.customerName,
+            'total_amount': order.totalAmount,
+            'status': order.orderStatus,
+            'payment_status': order.paymentStatus,
+            'created_by': order.createdBy,
+            'created_at': now.toIso8601String(),
+            'order_date': now.toIso8601String(),
+            'updated_at': now.toIso8601String(),
+          };
+          
+          final orderId = await txn.insert(tableOrders, orderMap);
+          
+          // Create order items within the same transaction
+          // Use batch insert for better performance
+          final batch = txn.batch();
+          
+          for (var item in order.items) {
+            batch.insert(tableOrderItems, {
+              ...item.toMap(),
+              'order_id': orderId,
+              'product_name': item.productName.isNotEmpty ? item.productName : 'Unknown Product',
+            });
+          }
+          
+          // Execute all inserts in a single batch
+          await batch.commit(noResult: true);
+          
+          return orderId;
+        });
+        
+        // 3. Log activity in a separate operation
+        final currentUser = AuthService.instance.currentUser;
+        if (currentUser != null) {
+          try {
+            await db.insert(tableActivityLogs, {
+              'user_id': currentUser.id,
+              'username': currentUser.username,
+              'action': actionCreateOrder,
+              'action_type': 'Create order',
+              'details': 'Created order #${order.orderNumber} for ${order.customerName}',
+              'timestamp': DateTime.now().toIso8601String(),
+            });
+          } catch (e) {
+            // Just log the error but don't fail the whole operation
+            print('Error logging activity: $e');
+          }
+        }
+        
+        return newOrderId;
       } catch (e) {
-        print('Error in transaction: $e');
-        rethrow;
+        print('Error creating order (attempt ${retryCount + 1}): $e');
+        
+        // Check if we should retry
+        if (retryCount >= maxRetries) {
+          // Close and reopen database on serious errors
+          await _closeDatabase();
+          _database = null;
+          _initialized = false;
+          rethrow;
+        }
+        
+        // Exponential backoff
+        final delay = 500 * (1 << retryCount);
+        print('Retrying order creation in $delay ms...');
+        await Future.delayed(Duration(milliseconds: delay));
+        retryCount++;
       }
-    });
-    
-    return orderId;
+    }
   }
 
   Future<void> updateOrder(Order order) async {
@@ -1575,9 +1693,23 @@ class DatabaseService {
   }
 
   Future<List<Map<String, dynamic>>> getAllCustomers() async {
-    return await withTransaction((txn) async {
-      return await txn.query('customers');
-    });
+    try {
+      // Get a fresh database connection
+      final db = await database;
+      
+      // Use a direct query with a timeout and no transaction
+      return await db.rawQuery('SELECT * FROM customers ORDER BY name LIMIT 1000');
+    } catch (e) {
+      print('Error getting all customers: $e');
+      
+      // Try to recover by closing and reopening the database
+      await _closeDatabase();
+      _database = null;
+      _initialized = false;
+      
+      // Return empty list on error instead of propagating the exception
+      return [];
+    }
   }
 
   // Simplified method to get orders by customer

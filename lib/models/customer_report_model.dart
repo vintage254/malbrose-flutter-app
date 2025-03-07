@@ -2,18 +2,18 @@ import 'package:my_flutter_app/models/order_model.dart';
 
 class CustomerReport {
   final int? id;
-  final String reportNumber;
+  String reportNumber; // Changed from final to allow setting from outside
   final int customerId;
   final String customerName;
   final double totalAmount;
   final double completedAmount;
   final double pendingAmount;
-  final String status;
-  final String paymentStatus;
   final DateTime createdAt;
-  final DateTime? dueDate;
+  final DateTime? startDate;  // Start of report period
+  final DateTime? endDate;    // End of report period
   final List<OrderItem>? completedItems;
   final List<OrderItem>? pendingItems;
+  final String? paymentStatus; // Payment status of the report
 
   CustomerReport({
     this.id,
@@ -23,12 +23,12 @@ class CustomerReport {
     required this.totalAmount,
     this.completedAmount = 0.0,
     this.pendingAmount = 0.0,
-    required this.status,
-    this.paymentStatus = 'PENDING',
     required this.createdAt,
-    this.dueDate,
+    this.startDate,
+    this.endDate,
     this.completedItems,
     this.pendingItems,
+    this.paymentStatus,
   });
 
   // Add helper methods for calculations
@@ -47,10 +47,10 @@ class CustomerReport {
       'total_amount': totalAmount,
       'completed_amount': completedAmount,
       'pending_amount': pendingAmount,
-      'status': status,
-      'payment_status': paymentStatus,
       'created_at': createdAt.toIso8601String(),
-      if (dueDate != null) 'due_date': dueDate!.toIso8601String(),
+      if (startDate != null) 'start_date': startDate!.toIso8601String(),
+      if (endDate != null) 'end_date': endDate!.toIso8601String(),
+      if (paymentStatus != null) 'payment_status': paymentStatus,
     };
   }
 
@@ -63,14 +63,16 @@ class CustomerReport {
       totalAmount: (map['total_amount'] as num?)?.toDouble() ?? 0.0,
       completedAmount: (map['completed_amount'] as num?)?.toDouble() ?? 0.0,
       pendingAmount: (map['pending_amount'] as num?)?.toDouble() ?? 0.0,
-      status: (map['status'] as String?) ?? 'PENDING',
-      paymentStatus: (map['payment_status'] as String?) ?? 'PENDING',
       createdAt: map['created_at'] != null 
           ? DateTime.parse(map['created_at'] as String)
           : DateTime.now(),
-      dueDate: map['due_date'] != null 
-          ? DateTime.parse(map['due_date'] as String)
+      startDate: map['start_date'] != null 
+          ? DateTime.parse(map['start_date'] as String)
           : null,
+      endDate: map['end_date'] != null 
+          ? DateTime.parse(map['end_date'] as String)
+          : null,
+      paymentStatus: map['payment_status'] as String?,
       // Items will be loaded separately
     );
   }
@@ -83,12 +85,12 @@ class CustomerReport {
     double? totalAmount,
     double? completedAmount,
     double? pendingAmount,
-    String? status,
-    String? paymentStatus,
     DateTime? createdAt,
-    DateTime? dueDate,
+    DateTime? startDate,
+    DateTime? endDate,
     List<OrderItem>? completedItems,
     List<OrderItem>? pendingItems,
+    String? paymentStatus,
   }) {
     return CustomerReport(
       id: id ?? this.id,
@@ -98,12 +100,12 @@ class CustomerReport {
       totalAmount: totalAmount ?? this.totalAmount,
       completedAmount: completedAmount ?? this.completedAmount,
       pendingAmount: pendingAmount ?? this.pendingAmount,
-      status: status ?? this.status,
-      paymentStatus: paymentStatus ?? this.paymentStatus,
       createdAt: createdAt ?? this.createdAt,
-      dueDate: dueDate ?? this.dueDate,
+      startDate: startDate ?? this.startDate,
+      endDate: endDate ?? this.endDate,
       completedItems: completedItems ?? this.completedItems,
       pendingItems: pendingItems ?? this.pendingItems,
+      paymentStatus: paymentStatus ?? this.paymentStatus,
     );
   }
 }
