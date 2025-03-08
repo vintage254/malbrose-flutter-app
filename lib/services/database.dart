@@ -12,6 +12,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:async';
 import 'package:my_flutter_app/models/product_model.dart';
+import 'package:my_flutter_app/services/config_service.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
@@ -2731,6 +2732,65 @@ class DatabaseService {
       
       // If initialization fails, try to reset the database
       await resetDatabase();
+    }
+  }
+
+  // Create admin user with specified details
+  Future<int> createAdminUser(
+    String username,
+    String password,
+    String fullName,
+    String email,
+  ) async {
+    try {
+      final db = await database;
+      
+      // Hash the password
+      final hashedPassword = _hashPassword(password);
+      
+      // Check if admin user already exists
+      final existingAdmin = await db.query(
+        tableUsers,
+        where: 'username = ?',
+        whereArgs: [username],
+      );
+      
+      if (existingAdmin.isNotEmpty) {
+        // Update existing admin user
+        await db.update(
+          tableUsers,
+          {
+            'password': hashedPassword,
+            'full_name': fullName,
+            'email': email,
+            'role': 'ADMIN',
+            'permissions': 'FULL_ACCESS',
+            'last_login': DateTime.now().toIso8601String(),
+          },
+          where: 'username = ?',
+          whereArgs: [username],
+        );
+        
+        return existingAdmin.first['id'] as int;
+      } else {
+        // Create new admin user
+        return await db.insert(
+          tableUsers,
+          {
+            'username': username,
+            'password': hashedPassword,
+            'full_name': fullName,
+            'email': email,
+            'role': 'ADMIN',
+            'permissions': 'FULL_ACCESS',
+            'created_at': DateTime.now().toIso8601String(),
+            'last_login': DateTime.now().toIso8601String(),
+          },
+        );
+      }
+    } catch (e) {
+      print('Error creating admin user: $e');
+      rethrow;
     }
   }
 }

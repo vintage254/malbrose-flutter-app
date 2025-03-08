@@ -117,10 +117,7 @@ class OrderItem {
     this.adjustedPrice,
   });
 
-  double get effectivePrice => adjustedPrice ?? 
-    (isSubUnit && subUnitQuantity != null ? 
-      sellingPrice / subUnitQuantity! : 
-      sellingPrice);
+  double get effectivePrice => adjustedPrice ?? sellingPrice;
 
   double get effectiveQuantity => isSubUnit && subUnitQuantity != null ?
       quantity / subUnitQuantity! :

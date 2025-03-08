@@ -35,6 +35,8 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
         {'title': 'Users', 'icon': Icons.people, 'route': '/users'},
         {'title': 'Activity Log', 'icon': Icons.history, 'route': '/activity'},
         {'title': 'Sales Reports', 'icon': Icons.bar_chart, 'route': '/sales-report'},
+        {'title': 'Printer Settings', 'icon': Icons.print, 'route': '/printer-settings'},
+        {'title': 'Backup & Restore', 'icon': Icons.backup, 'route': '/backup'},
       ]);
     }
 

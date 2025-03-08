@@ -11,6 +11,7 @@ import 'package:my_flutter_app/widgets/order_cart_panel.dart';
 import 'package:my_flutter_app/models/cart_item_model.dart';
 import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
+import 'package:my_flutter_app/services/printer_service.dart';
 
 class ReceiptPanel extends StatefulWidget {
   final Order order;
@@ -226,7 +227,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
               const SizedBox(width: 8),
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: () => _printReceipt(context),
+                  onPressed: () => _printReceipt(),
                   icon: const Icon(Icons.print),
                   label: const Text('Print Receipt'),
                   style: ElevatedButton.styleFrom(
@@ -292,121 +293,24 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
     widget.onProcessSale(updatedOrder);
   }
 
-  Future<void> _printReceipt(BuildContext context) async {
-    print('ReceiptPanel - Printing receipt with ${_orderItems.length} items');
-    print('ReceiptPanel - Order ID: ${widget.order.id}');
-    print('ReceiptPanel - Order Number: ${widget.order.orderNumber}');
-    print('ReceiptPanel - Order Total: ${widget.order.totalAmount}');
-    print('ReceiptPanel - Order Items Count: ${widget.order.items.length}');
-    print('ReceiptPanel - Payment method: ${widget.order.paymentMethod ?? _selectedPaymentMethod}');
-    
-    // First try to load order items if they're not already loaded
-    if (_orderItems.isEmpty && widget.order.id != null) {
-      try {
-        final items = await DatabaseService.instance.getOrderItems(widget.order.id!);
-        setState(() {
-          _orderItems = items;
-        });
-        print('ReceiptPanel - Loaded ${_orderItems.length} items from database');
-      } catch (e) {
-        print('ReceiptPanel - Error loading items: $e');
-      }
-    }
-    
-    if (_orderItems.isEmpty) {
-      // Try to use the items from the order object if available
-      if (widget.order.items.isNotEmpty) {
-        print('ReceiptPanel - Using items from order object instead of loaded items');
-        // Convert Order items to CartItems for the receipt dialog
-        final cartItems = widget.order.items.map((item) => CartItem(
-          product: Product(
-            id: item.productId,
-            productName: item.productName,
-            buyingPrice: item.unitPrice,
-            sellingPrice: item.sellingPrice,
-            quantity: 0, // Not relevant for receipt
-            supplier: 'Unknown',
-            receivedDate: DateTime.now(),
-            subUnitQuantity: item.subUnitQuantity?.toInt(),
-            subUnitName: item.subUnitName,
-          ),
-          quantity: item.quantity,
-          total: item.totalAmount,
-          isSubUnit: item.isSubUnit,
-          subUnitName: item.subUnitName,
-          subUnitQuantity: item.subUnitQuantity?.toInt(),
-          adjustedPrice: item.adjustedPrice,
-        )).toList();
-        
-        print('ReceiptPanel - Created ${cartItems.length} cart items for receipt');
-        for (var item in cartItems) {
-          print('ReceiptPanel - Item: ${item.product.productName}, Qty: ${item.quantity}, Total: ${item.total}, EffectivePrice: ${item.effectivePrice}');
-        }
-        
-        // Show the receipt dialog with the order items
-        showDialog(
-          context: context,
-          builder: (context) => OrderReceiptDialog(
-            items: cartItems,
-            customerName: widget.order.customerName,
-            paymentMethod: widget.order.paymentMethod ?? _selectedPaymentMethod,
-          ),
-        );
-        return;
-      }
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No products to print'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-    
-    // If we have _orderItems from the database, convert them to CartItems
-    final cartItems = _orderItems.map((item) => CartItem(
-      product: Product(
-        id: item['product_id'],
-        productName: item['product_name'] ?? 'Unknown Product',
-        buyingPrice: (item['buying_price'] as num?)?.toDouble() ?? 0.0,
-        sellingPrice: (item['selling_price'] as num?)?.toDouble() ?? (item['unit_price'] as num).toDouble(),
-        quantity: 0, // Not relevant for receipt
-        supplier: 'Unknown',
-        receivedDate: DateTime.now(),
-        subUnitQuantity: item['sub_unit_quantity'] != null ? (item['sub_unit_quantity'] as num).toInt() : null,
-        subUnitName: item['sub_unit_name'] as String?,
-      ),
-      quantity: (item['quantity'] as num).toInt(),
-      total: (item['total_amount'] as num).toDouble(),
-      isSubUnit: item['is_sub_unit'] == 1,
-      subUnitName: item['sub_unit_name'] as String?,
-      subUnitQuantity: item['sub_unit_quantity'] != null ? (item['sub_unit_quantity'] as num).toInt() : null,
-      adjustedPrice: item['adjusted_price'] != null ? (item['adjusted_price'] as num).toDouble() : null,
-    )).toList();
-    
-    print('ReceiptPanel - Created ${cartItems.length} cart items from _orderItems');
-    for (var item in cartItems) {
-      print('ReceiptPanel - Item: ${item.product.productName}, Qty: ${item.quantity}, Total: ${item.total}, EffectivePrice: ${item.effectivePrice}');
-    }
-    
-    // Show the receipt dialog with the order items
-    showDialog(
-      context: context,
-      builder: (context) => OrderReceiptDialog(
-        items: cartItems,
-        customerName: widget.order.customerName,
-        paymentMethod: widget.order.paymentMethod ?? _selectedPaymentMethod,
-      ),
-    );
-    
-    // Original PDF generation code remains as a fallback
+  Future<void> _printReceipt() async {
     try {
+      print('ReceiptPanel - Printing receipt with ${_orderItems.length} items');
+      
+      // Get the printer service
+      final printerService = PrinterService.instance;
+      
+      // Create the PDF document
       final pdf = pw.Document();
       
+      // Determine if this is a sale or a quotation
+      final salePrefix = widget.order.orderStatus == 'COMPLETED' ? 'Receipt' : 'Quotation';
+      
+      // Add a page to the PDF
       pdf.addPage(
         pw.Page(
-          pageFormat: PdfPageFormat.roll80,
+          // Use the printer service to get the appropriate page format
+          pageFormat: printerService.getPageFormat(),
           build: (context) => pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
@@ -719,9 +623,11 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
         ),
       );
 
-      await Printing.layoutPdf(
-        onLayout: (format) async => pdf.save(),
-        name: '${salePrefix}-${widget.order.orderNumber}',
+      // Use the printer service to print the PDF
+      await printerService.printPdf(
+        pdf: pdf,
+        documentName: '${salePrefix}-${widget.order.orderNumber}',
+        context: context,
       );
     } catch (e) {
       print('Error printing receipt: $e');

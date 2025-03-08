@@ -48,11 +48,9 @@ class CustomerReportPreviewWidget extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         ElevatedButton.icon(
-                          icon: const Icon(Icons.print),
-                          label: const Text('Print'),
                           onPressed: () async {
                             try {
-                              await CustomerReportService.instance.generateAndPrintCustomerReport(report, customer);
+                              await CustomerReportService.instance.generateAndPrintCustomerReport(report, customer, context);
                             } catch (e) {
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -61,6 +59,8 @@ class CustomerReportPreviewWidget extends StatelessWidget {
                               }
                             }
                           },
+                          icon: const Icon(Icons.print),
+                          label: const Text('Print'),
                         ),
                       ],
                     ),

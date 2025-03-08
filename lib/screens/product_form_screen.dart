@@ -161,8 +161,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                     Expanded(
                       child: TextFormField(
                         controller: _buyingPriceController,
-                        decoration:
-                            const InputDecoration(labelText: 'Buying Price'),
+                        decoration: const InputDecoration(
+                          labelText: 'Buying Price (Internal)',
+                          helperText: 'For internal use only',
+                        ),
                         keyboardType: TextInputType.number,
                         validator: (value) {
                           if (value == null || value.isEmpty) {

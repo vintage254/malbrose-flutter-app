@@ -11,6 +11,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'dart:async';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'package:my_flutter_app/services/printer_service.dart';
 
 class ActivityLogScreen extends StatefulWidget {
   const ActivityLogScreen({super.key});
@@ -151,11 +152,17 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
 
   Future<void> _printActivityLogs() async {
     try {
+      // Get the printer service
+      final printerService = PrinterService.instance;
+      
+      // Create the PDF document
       final pdf = pw.Document();
       
+      // Add a page to the PDF
       pdf.addPage(
         pw.Page(
-          pageFormat: PdfPageFormat.a4,
+          // Use the printer service to get the appropriate page format
+          pageFormat: printerService.getPageFormat(),
           build: (context) => pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
@@ -203,9 +210,11 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
         ),
       );
 
-      await Printing.layoutPdf(
-        onLayout: (format) async => pdf.save(),
-        name: 'Activity Logs - ${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
+      // Use the printer service to print the PDF
+      await printerService.printPdf(
+        pdf: pdf,
+        documentName: 'Activity Logs - ${DateFormat('yyyy-MM-dd').format(DateTime.now())}',
+        context: context,
       );
     } catch (e) {
       if (!mounted) return;

@@ -16,6 +16,12 @@ import 'package:my_flutter_app/screens/sales_report_screen.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:path/path.dart';
 import 'dart:io';
+import 'package:my_flutter_app/services/printer_service.dart';
+import 'package:my_flutter_app/screens/printer_settings_screen.dart';
+import 'package:my_flutter_app/services/config_service.dart';
+import 'package:my_flutter_app/screens/setup_wizard_screen.dart';
+import 'package:my_flutter_app/screens/backup_screen.dart';
+import 'package:my_flutter_app/services/backup_service.dart';
 
 void main() async {
   // Initialize FFI
@@ -24,6 +30,10 @@ void main() async {
   databaseFactory = databaseFactoryFfi;
 
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize the configuration service
+  final configService = ConfigService.instance;
+  await configService.initialize();
   
   try {
     // Ensure database directory exists with proper permissions
@@ -55,10 +65,13 @@ void main() async {
     await DatabaseService.instance.addUsernameColumnToActivityLogs();
     await DatabaseService.instance.addUpdatedAtColumnToProducts();
     await DatabaseService.instance.addStatusColumnToOrders();
+    
+    // Initialize the printer service
+    await PrinterService.instance.initialize();
   } catch (e) {
-    print('Error initializing database: $e');
-    // Continue with app startup even if database initialization fails
-    // The app will show appropriate error messages when database operations fail
+    print('Error initializing services: $e');
+    // Continue with app startup even if initialization fails
+    // The app will show appropriate error messages when operations fail
   }
   
   runApp(
@@ -78,13 +91,17 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Check if setup is completed
+    final setupCompleted = ConfigService.instance.setupCompleted;
+    
     return MaterialApp(
       title: 'Malbrose Hardware Store',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.orange),
         useMaterial3: true,
       ),
-      home: const HomeScreen(),
+      // Show setup wizard if setup is not completed, otherwise show home screen
+      home: setupCompleted ? const HomeScreen() : const SetupWizardScreen(),
       routes: {
         '/main': (context) => const MainScreen(),
         '/orders': (context) => const OrderScreen(),
@@ -96,6 +113,9 @@ class MyApp extends StatelessWidget {
         '/debtors': (context) => const DebtorsScreen(),
         '/customer-reports': (context) => const CustomerReportsScreen(),
         '/sales-report': (context) => const SalesReportScreen(),
+        '/printer-settings': (context) => const PrinterSettingsScreen(),
+        '/setup': (context) => const SetupWizardScreen(),
+        '/backup': (context) => const BackupScreen(),
       },
     );
   }

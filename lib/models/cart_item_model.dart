@@ -25,8 +25,8 @@ class CartItem {
   int get productId => product.id!;
 
   double get effectivePrice => adjustedPrice ?? 
-    (isSubUnit && subUnitQuantity != null ? 
-      sellingPrice / subUnitQuantity! : 
+    (isSubUnit && product.subUnitPrice != null ? 
+      product.subUnitPrice! : 
       sellingPrice);
 
   double get effectiveQuantity => isSubUnit && subUnitQuantity != null ?

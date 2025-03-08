@@ -10,15 +10,31 @@ import 'dart:typed_data';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:my_flutter_app/services/printer_service.dart';
+import 'package:flutter/material.dart';
 
 class CustomerReportService {
   static final CustomerReportService instance = CustomerReportService._internal();
   CustomerReportService._internal();
 
-  Future<void> generateAndPrintCustomerReport(CustomerReport report, Customer customer) async {
+  Future<void> generateAndPrintCustomerReport(CustomerReport report, Customer customer, [BuildContext? context]) async {
     try {
+      // Get the printer service
+      final printerService = PrinterService.instance;
+      
       final pdf = await generateCustomerReportPdf(report, customer);
-      await Printing.layoutPdf(onLayout: (format) async => pdf);
+      
+      // Use the printer service to print the PDF if context is provided
+      if (context != null) {
+        await printerService.printPdf(
+          pdf: pdf,
+          documentName: 'Customer Report - ${report.reportNumber}',
+          context: context,
+        );
+      } else {
+        // Fallback to the old method if no context is provided
+        await Printing.layoutPdf(onLayout: (format) async => pdf);
+      }
       
       // Log the print activity
       final currentUser = await DatabaseService.instance.getCurrentUser();
@@ -43,9 +59,15 @@ class CustomerReportService {
     final font = await PdfGoogleFonts.nunitoRegular();
     final boldFont = await PdfGoogleFonts.nunitoBold();
 
+    // Get the printer service for page format
+    final printerService = PrinterService.instance;
+    final pageFormat = printerService.printerType == PrinterType.thermal 
+        ? printerService.getPageFormat() 
+        : PdfPageFormat.a4;
+
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
+        pageFormat: pageFormat,
         build: (context) {
           final List<pw.Widget> children = [];
           

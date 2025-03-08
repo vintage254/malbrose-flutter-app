@@ -43,3 +43,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Backup files
+/backups/
+*.bak
+*.backup

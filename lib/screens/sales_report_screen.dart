@@ -6,6 +6,7 @@ import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:my_flutter_app/services/printer_service.dart';
 
 class SalesReportScreen extends StatefulWidget {
   const SalesReportScreen({super.key});
@@ -322,12 +323,15 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
 
   Future<void> _printSalesReport() async {
     try {
+      // Get the printer service
+      final printerService = PrinterService.instance;
+      
       final pdf = pw.Document();
       
       // Create a PDF document
       pdf.addPage(
         pw.MultiPage(
-          pageFormat: PdfPageFormat.a4,
+          pageFormat: printerService.getPageFormat(),
           build: (context) {
             return [
               // Header
@@ -423,10 +427,11 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
         ),
       );
 
-      // Print the document
-      await Printing.layoutPdf(
-        onLayout: (format) async => pdf.save(),
-        name: 'Sales Report - ${DateFormat('yyyy-MM-dd').format(_startDate)} to ${DateFormat('yyyy-MM-dd').format(_endDate)}',
+      // Use the printer service to print the PDF
+      await printerService.printPdf(
+        pdf: pdf,
+        documentName: 'Sales Report - ${DateFormat('yyyy-MM-dd').format(_startDate)} to ${DateFormat('yyyy-MM-dd').format(_endDate)}',
+        context: context,
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(

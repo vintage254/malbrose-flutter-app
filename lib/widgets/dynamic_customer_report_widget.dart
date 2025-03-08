@@ -7,6 +7,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:my_flutter_app/services/printer_service.dart';
 
 class DynamicCustomerReportWidget extends StatelessWidget {
   final Customer customer;
@@ -340,16 +341,24 @@ class DynamicCustomerReportWidget extends StatelessWidget {
 
   Future<void> _printReport(BuildContext context) async {
     try {
+      // Get the printer service
+      final printerService = PrinterService.instance;
+      
       final pdf = await _generatePdf();
-      await Printing.layoutPdf(
-        onLayout: (format) async => pdf.save(),
+      
+      // Use the printer service to print the PDF
+      await printerService.printPdf(
+        pdf: pdf,
+        documentName: 'Customer Report - ${customer.id}',
+        context: context,
       );
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error printing report: $e')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error printing report: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 

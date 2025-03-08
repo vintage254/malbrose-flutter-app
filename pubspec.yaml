@@ -27,6 +27,8 @@ dependencies:
   pdf: ^3.10.7
   provider: ^6.1.2
   synchronized: ^3.1.0
+  network_info_plus: ^4.1.0
+  file_picker: ^6.1.1
 
 dev_dependencies:
   flutter_test:
