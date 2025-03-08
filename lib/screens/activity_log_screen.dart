@@ -264,8 +264,8 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                         ),
                         const SizedBox(width: 20),
                         // Date Filter
-                        Expanded(
-                          flex: 2,
+                        SizedBox(
+                          width: 200,
                           child: ElevatedButton.icon(
                             onPressed: () async {
                               final picked = await showDatePicker(
@@ -289,8 +289,8 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                         ),
                         const SizedBox(width: defaultPadding),
                         // User Filter
-                        Expanded(
-                          flex: 2,
+                        SizedBox(
+                          width: 200,
                           child: FutureBuilder<List<String>>(
                             future: DatabaseService.instance.getAllUsernames(),
                             builder: (context, snapshot) {
@@ -326,8 +326,8 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                         ),
                         const SizedBox(width: defaultPadding),
                         // Action Filter
-                        Expanded(
-                          flex: 2,
+                        SizedBox(
+                          width: 200,
                           child: DropdownButtonFormField<String>(
                             isExpanded: true,
                             decoration: const InputDecoration(
@@ -357,8 +357,8 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                         ),
                         const SizedBox(width: defaultPadding),
                         // Export Button
-                        Expanded(
-                          flex: 1,
+                        SizedBox(
+                          width: 120,
                           child: ElevatedButton.icon(
                             onPressed: _exportToPDF,
                             icon: const Icon(Icons.file_download),
@@ -371,8 +371,8 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                         ),
                         const SizedBox(width: defaultPadding),
                         // Print Button
-                        Expanded(
-                          flex: 1,
+                        SizedBox(
+                          width: 120,
                           child: ElevatedButton.icon(
                             onPressed: _printActivityLogs,
                             icon: const Icon(Icons.print),
@@ -383,8 +383,51 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                             ),
                           ),
                         ),
+                        const SizedBox(width: defaultPadding),
+                        // Clear Filters Button
+                        SizedBox(
+                          width: 150,
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _selectedDate = null;
+                                _selectedUser = null;
+                                _selectedAction = null;
+                                _searchQuery = '';
+                                _searchController.clear();
+                              });
+                              _loadLogs();
+                            },
+                            icon: const Icon(Icons.clear),
+                            label: const Text('Clear Filters'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
+                  ),
+                  const SizedBox(height: defaultPadding),
+                  // Add search field
+                  TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search logs...',
+                      prefixIcon: const Icon(Icons.search),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value;
+                      });
+                    },
                   ),
                   const SizedBox(height: defaultPadding),
                   Expanded(
