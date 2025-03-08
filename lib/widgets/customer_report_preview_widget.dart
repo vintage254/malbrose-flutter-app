@@ -22,133 +22,136 @@ class CustomerReportPreviewWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.all(defaultPadding),
-      child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(defaultPadding),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Customer Report Preview',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  Row(
-                    children: [
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.download),
-                        label: const Text('Download PDF'),
-                        onPressed: () => downloadPdf(context),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.print),
-                        label: const Text('Print'),
-                        onPressed: () async {
-                          try {
-                            await CustomerReportService.instance.generateAndPrintCustomerReport(report, customer);
-                          } catch (e) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Error printing report: $e')),
-                              );
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Container(
+        margin: const EdgeInsets.all(defaultPadding),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(defaultPadding),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Customer Report Preview',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    Row(
+                      children: [
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.download),
+                          label: const Text('Download PDF'),
+                          onPressed: () => downloadPdf(context),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.print),
+                          label: const Text('Print'),
+                          onPressed: () async {
+                            try {
+                              await CustomerReportService.instance.generateAndPrintCustomerReport(report, customer);
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Error printing report: $e')),
+                                );
+                              }
                             }
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const Divider(),
+                
+                // Report header information
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildInfoRow('Report Number:', report.reportNumber),
+                      _buildInfoRow('Customer:', customer.name),
+                      _buildInfoRow('Generated On:', DateFormat('MMM dd, yyyy').format(report.createdAt)),
+                      
+                      // Date range information
+                      Builder(
+                        builder: (context) {
+                          if (report.startDate != null && report.endDate != null) {
+                            return _buildInfoRow('Report Period:', 
+                              '${DateFormat('MMM dd, yyyy').format(report.startDate!)} to ${DateFormat('MMM dd, yyyy').format(report.endDate!)}');
+                          } else if (report.startDate != null) {
+                            return _buildInfoRow('From:', DateFormat('MMM dd, yyyy').format(report.startDate!));
+                          } else if (report.endDate != null) {
+                            return _buildInfoRow('To:', DateFormat('MMM dd, yyyy').format(report.endDate!));
+                          } else {
+                            return const SizedBox.shrink();
                           }
                         },
                       ),
                     ],
                   ),
-                ],
-              ),
-              const Divider(),
-              
-              // Report header information
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildInfoRow('Report Number:', report.reportNumber),
-                    _buildInfoRow('Customer:', customer.name),
-                    _buildInfoRow('Generated On:', DateFormat('MMM dd, yyyy').format(report.createdAt)),
-                    
-                    // Date range information
-                    Builder(
-                      builder: (context) {
-                        if (report.startDate != null && report.endDate != null) {
-                          return _buildInfoRow('Report Period:', 
-                            '${DateFormat('MMM dd, yyyy').format(report.startDate!)} to ${DateFormat('MMM dd, yyyy').format(report.endDate!)}');
-                        } else if (report.startDate != null) {
-                          return _buildInfoRow('From:', DateFormat('MMM dd, yyyy').format(report.startDate!));
-                        } else if (report.endDate != null) {
-                          return _buildInfoRow('To:', DateFormat('MMM dd, yyyy').format(report.endDate!));
-                        } else {
-                          return const SizedBox.shrink();
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              
-              const SizedBox(height: defaultPadding),
-              
-              // Completed Orders Section
-              if (report.completedItems != null && report.completedItems!.isNotEmpty)
-                _buildOrdersSection('Completed Orders', report.completedItems!, report.completedAmount, Colors.green.shade100),
-              
-              // Pending Orders Section
-              if (report.pendingItems != null && report.pendingItems!.isNotEmpty)
-                _buildOrdersSection('Pending Orders', report.pendingItems!, report.pendingAmount, Colors.orange.shade100),
-              
-              const SizedBox(height: defaultPadding),
-              
-              // Summary section
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue.shade200),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      'Completed Orders: KSH ${report.completedAmount.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.normal,
-                        fontSize: 14,
+                
+                const SizedBox(height: defaultPadding),
+                
+                // Completed Orders Section
+                if (report.completedItems != null && report.completedItems!.isNotEmpty)
+                  _buildOrdersSection('Completed Orders', report.completedItems!, report.completedAmount, Colors.green.shade100),
+                
+                // Pending Orders Section
+                if (report.pendingItems != null && report.pendingItems!.isNotEmpty)
+                  _buildOrdersSection('Pending Orders', report.pendingItems!, report.pendingAmount, Colors.orange.shade100),
+                
+                const SizedBox(height: defaultPadding),
+                
+                // Summary section
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        'Completed Orders: KSH ${report.completedAmount.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.normal,
+                          fontSize: 14,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'Pending Orders: KSH ${report.pendingAmount.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.normal,
-                        fontSize: 14,
+                      Text(
+                        'Pending Orders: KSH ${report.pendingAmount.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.normal,
+                          fontSize: 14,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Divider(),
-                    Text(
-                      'Total Amount: KSH ${report.totalAmount.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
+                      const SizedBox(height: 8),
+                      const Divider(),
+                      Text(
+                        'Total Amount: KSH ${report.totalAmount.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

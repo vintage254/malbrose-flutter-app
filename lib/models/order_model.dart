@@ -6,6 +6,7 @@ class Order {
   final int? customerId;
   final String orderStatus;
   final String paymentStatus;
+  final String? paymentMethod;
   final int createdBy;
   final DateTime createdAt;
   final DateTime orderDate;
@@ -20,6 +21,7 @@ class Order {
     this.customerId,
     this.orderStatus = 'PENDING',
     this.paymentStatus = 'PENDING',
+    this.paymentMethod,
     required this.createdBy,
     required this.createdAt,
     required this.orderDate,
@@ -33,13 +35,14 @@ class Order {
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
+      if (id != null) 'id': id,
       'order_number': orderNumber,
-      'total_amount': totalAmount,
-      'customer_name': customerName,
       'customer_id': customerId,
+      'customer_name': customerName ?? '',
+      'total_amount': totalAmount,
       'status': orderStatus,
       'payment_status': paymentStatus,
+      if (paymentMethod != null) 'payment_method': paymentMethod,
       'created_by': createdBy,
       'created_at': createdAt.toIso8601String(),
       'order_date': orderDate.toIso8601String(),
@@ -60,6 +63,7 @@ class Order {
       customerId: map['customer_id'] as int?,
       orderStatus: map['status'] ?? 'PENDING',
       paymentStatus: map['payment_status'] ?? 'PENDING',
+      paymentMethod: map['payment_method'] as String?,
       createdBy: map['created_by'],
       createdAt: DateTime.parse(map['created_at']),
       orderDate: DateTime.parse(map['order_date']),
@@ -156,6 +160,7 @@ class OrderItem {
       'unit_price': unitPrice,
       'selling_price': sellingPrice,
       'total_amount': totalAmount,
+      'product_name': productName,
       'is_sub_unit': isSubUnit ? 1 : 0,
       if (subUnitName != null) 'sub_unit_name': subUnitName,
       if (subUnitQuantity != null) 'sub_unit_quantity': subUnitQuantity,

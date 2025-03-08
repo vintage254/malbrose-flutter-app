@@ -45,176 +45,185 @@ class DynamicCustomerReportWidget extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.all(defaultPadding),
       child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(defaultPadding),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header with title and action buttons
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Customer Report',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(width: defaultPadding),
-                    Row(
-                      children: [
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.download),
-                          label: const Text('Download PDF'),
-                          onPressed: () => _generateAndDownloadPdf(context),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.print),
-                          label: const Text('Print'),
-                          onPressed: () => _printReport(context),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(),
-              
-              // Report header information
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildInfoRow('Customer:', customer.name),
-                    _buildInfoRow('Generated On:', DateFormat('MMM dd, yyyy').format(DateTime.now())),
-                    
-                    // Date range information
-                    Builder(
-                      builder: (context) {
-                        if (startDate != null && endDate != null) {
-                          return _buildInfoRow('Report Period:', 
-                            '${DateFormat('MMM dd, yyyy').format(startDate!)} to ${DateFormat('MMM dd, yyyy').format(endDate!)}');
-                        } else if (startDate != null) {
-                          return _buildInfoRow('From:', DateFormat('MMM dd, yyyy').format(startDate!));
-                        } else if (endDate != null) {
-                          return _buildInfoRow('To:', DateFormat('MMM dd, yyyy').format(endDate!));
-                        } else {
-                          return const SizedBox.shrink();
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              
-              const SizedBox(height: defaultPadding),
-              
-              // Orders table
-              ConstrainedBox(
-                constraints: const BoxConstraints(
-                  minWidth: 500,
-                  maxHeight: 400,
-                ),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.vertical,
-                  child: SingleChildScrollView(
+        scrollDirection: Axis.vertical,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Padding(
+            padding: const EdgeInsets.all(defaultPadding),
+            child: SizedBox(
+              width: MediaQuery.of(context).size.width * 0.9,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header with title and action buttons
+                  SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
-                    child: DataTable(
-                      headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
-                      columns: const [
-                        DataColumn(label: Text('Order #')),
-                        DataColumn(label: Text('Date')),
-                        DataColumn(label: Text('Items')),
-                        DataColumn(label: Text('Total Amount')),
-                        DataColumn(label: Text('Status')),
-                      ],
-                      rows: orders.map((order) {
-                        final orderId = order['id'] as int;
-                        final orderItems = itemsByOrder[orderId] ?? [];
-                        final orderNumber = order['order_number'] as String;
-                        final orderDate = DateTime.parse(order['created_at'] as String);
-                        final totalAmount = (order['total_amount'] as num).toDouble();
-                        final status = order['status'] as String;
-                        
-                        return DataRow(
-                          color: MaterialStateProperty.resolveWith<Color?>((Set<MaterialState> states) {
-                            return status == 'COMPLETED' ? Colors.green.shade50 : Colors.orange.shade50;
-                          }),
-                          cells: [
-                            DataCell(Text(orderNumber)),
-                            DataCell(Text(DateFormat('MMM dd, yyyy').format(orderDate))),
-                            DataCell(
-                              Text(orderItems.length.toString()),
-                              onTap: () => _showOrderItemsDialog(context, order, orderItems),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Customer Report',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(width: defaultPadding),
+                        Row(
+                          children: [
+                            ElevatedButton.icon(
+                              icon: const Icon(Icons.download),
+                              label: const Text('Download PDF'),
+                              onPressed: () => _generateAndDownloadPdf(context),
                             ),
-                            DataCell(Text('KSH ${totalAmount.toStringAsFixed(2)}')),
-                            DataCell(
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: status == 'COMPLETED' ? Colors.green : Colors.orange,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  status,
-                                  style: const TextStyle(color: Colors.white),
-                                ),
-                              ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              icon: const Icon(Icons.print),
+                              label: const Text('Print'),
+                              onPressed: () => _printReport(context),
                             ),
                           ],
-                        );
-                      }).toList(),
+                        ),
+                      ],
                     ),
                   ),
-                ),
+                  const Divider(),
+                  
+                  // Report header information
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildInfoRow('Customer:', customer.name),
+                        _buildInfoRow('Generated On:', DateFormat('MMM dd, yyyy').format(DateTime.now())),
+                        
+                        // Date range information
+                        Builder(
+                          builder: (context) {
+                            if (startDate != null && endDate != null) {
+                              return _buildInfoRow('Report Period:', 
+                                '${DateFormat('MMM dd, yyyy').format(startDate!)} to ${DateFormat('MMM dd, yyyy').format(endDate!)}');
+                            } else if (startDate != null) {
+                              return _buildInfoRow('From:', DateFormat('MMM dd, yyyy').format(startDate!));
+                            } else if (endDate != null) {
+                              return _buildInfoRow('To:', DateFormat('MMM dd, yyyy').format(endDate!));
+                            } else {
+                              return const SizedBox.shrink();
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: defaultPadding),
+                  
+                  // Orders table
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minWidth: 500,
+                      maxHeight: 400,
+                    ),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.vertical,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: DataTable(
+                          horizontalMargin: 20,
+                          columnSpacing: 30,
+                          headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
+                          columns: const [
+                            DataColumn(label: Text('Order #')),
+                            DataColumn(label: Text('Date')),
+                            DataColumn(label: Text('Items')),
+                            DataColumn(label: Text('Total Amount')),
+                            DataColumn(label: Text('Status')),
+                          ],
+                          rows: orders.map((order) {
+                            final orderId = order['id'] as int;
+                            final orderItems = itemsByOrder[orderId] ?? [];
+                            final orderNumber = order['order_number'] as String;
+                            final orderDate = DateTime.parse(order['created_at'] as String);
+                            final totalAmount = (order['total_amount'] as num).toDouble();
+                            final status = order['status'] as String;
+                            
+                            return DataRow(
+                              color: MaterialStateProperty.resolveWith<Color?>((Set<MaterialState> states) {
+                                return status == 'COMPLETED' ? Colors.green.shade50 : Colors.orange.shade50;
+                              }),
+                              cells: [
+                                DataCell(Text(orderNumber)),
+                                DataCell(Text(DateFormat('MMM dd, yyyy').format(orderDate))),
+                                DataCell(
+                                  Text(orderItems.length.toString()),
+                                  onTap: () => _showOrderItemsDialog(context, order, orderItems),
+                                ),
+                                DataCell(Text('KSH ${totalAmount.toStringAsFixed(2)}')),
+                                DataCell(
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: status == 'COMPLETED' ? Colors.green : Colors.orange,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      status,
+                                      style: const TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+                  ),
+                  
+                  const SizedBox(height: defaultPadding),
+                  
+                  // Summary section
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'Completed Orders: KSH ${completedAmount.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.normal,
+                            fontSize: 14,
+                          ),
+                        ),
+                        Text(
+                          'Pending Orders: KSH ${pendingAmount.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.normal,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Divider(),
+                        Text(
+                          'Total Amount: KSH ${totalAmount.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              
-              const SizedBox(height: defaultPadding),
-              
-              // Summary section
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue.shade200),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      'Completed Orders: KSH ${completedAmount.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.normal,
-                        fontSize: 14,
-                      ),
-                    ),
-                    Text(
-                      'Pending Orders: KSH ${pendingAmount.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.normal,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Divider(),
-                    Text(
-                      'Total Amount: KSH ${totalAmount.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -274,10 +283,10 @@ class DynamicCustomerReportWidget extends StatelessWidget {
                     rows: items.map((item) {
                       return DataRow(
                         cells: [
-                          DataCell(Text(item['product_name'] as String)),
-                          DataCell(Text(item['quantity'].toString())),
-                          DataCell(Text('KSH ${(item['selling_price'] as num).toStringAsFixed(2)}')),
-                          DataCell(Text('KSH ${(item['total_amount'] as num).toStringAsFixed(2)}')),
+                          DataCell(Text(item['product_name'] as String? ?? 'Unknown')),
+                          DataCell(Text(item['quantity']?.toString() ?? '0')),
+                          DataCell(Text('KSH ${((item['selling_price'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(2)}')),
+                          DataCell(Text('KSH ${((item['total_amount'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(2)}')),
                         ],
                       );
                     }).toList(),

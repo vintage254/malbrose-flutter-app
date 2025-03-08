@@ -13,7 +13,14 @@ import 'package:my_flutter_app/services/order_service.dart';
 import 'package:sqflite/sqflite.dart';
 
 class OrderScreen extends StatefulWidget {
-  const OrderScreen({super.key});
+  final Order? editingOrder;
+  final bool isEditing;
+
+  const OrderScreen({
+    super.key, 
+    this.editingOrder,
+    this.isEditing = false,
+  });
 
   @override
   State<OrderScreen> createState() => _OrderScreenState();
@@ -31,6 +38,17 @@ class _OrderScreenState extends State<OrderScreen> {
   void initState() {
     super.initState();
     _loadProducts();
+    
+    // If editing an existing order, load its items
+    if (widget.isEditing && widget.editingOrder != null) {
+      _customerNameController.text = widget.editingOrder!.customerName ?? '';
+      
+      // Convert order items to cart items
+      _cartItems = widget.editingOrder!.items.map((item) => CartItem.fromOrderItem(item)).toList();
+      
+      print('OrderScreen - Editing order #${widget.editingOrder!.orderNumber}');
+      print('OrderScreen - Loaded ${_cartItems.length} items from order');
+    }
   }
 
   Future<void> _loadProducts() async {
@@ -63,10 +81,27 @@ class _OrderScreenState extends State<OrderScreen> {
   }
 
   void _showOrderReceipt(String orderNumber) {
+    // Add debug information
+    print('_showOrderReceipt - Cart items count: ${_cartItems.length}');
+    
+    if (_cartItems.isEmpty) {
+      print('_showOrderReceipt - WARNING: No items to show in receipt!');
+      return;
+    }
+    
+    // Create a copy of the cart items to prevent issues when the cart is cleared
+    final List<CartItem> receiptItems = List.from(_cartItems);
+    
+    // Print the first item for debugging
+    if (receiptItems.isNotEmpty) {
+      final firstItem = receiptItems.first;
+      print('_showOrderReceipt - First item: ${firstItem.product.productName}, Quantity: ${firstItem.quantity}, Total: ${firstItem.total}');
+    }
+    
     showDialog(
       context: context,
       builder: (context) => OrderReceiptDialog(
-        items: _cartItems,
+        items: receiptItems,
         customerName: _customerNameController.text.trim(),
       ),
     );
@@ -121,9 +156,9 @@ class _OrderScreenState extends State<OrderScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text(
-                          'Place Order',
-                          style: TextStyle(
+                        Text(
+                          widget.isEditing ? 'Edit Order #${widget.editingOrder?.orderNumber}' : 'Place Order',
+                          style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                           ),
@@ -193,6 +228,8 @@ class _OrderScreenState extends State<OrderScreen> {
                   _customerNameController.text = name;
                 });
               },
+              isEditing: widget.isEditing,
+              orderButtonText: widget.isEditing ? 'Update Order' : 'Place Order',
             ),
           ),
         ],
@@ -304,7 +341,7 @@ class _OrderScreenState extends State<OrderScreen> {
               if (quantity != null && quantity > 0 && quantity <= maxQuantity &&
                   price != null && price > 0) {
                 setState(() {
-                  _addToCart(product, quantity, isSubUnit, isSubUnit ? product.subUnitName : null);
+                  _addToCart(product, quantity, isSubUnit, isSubUnit ? product.subUnitName : null, price);
                 });
                 Navigator.pop(context);
               }
@@ -329,8 +366,10 @@ class _OrderScreenState extends State<OrderScreen> {
     });
   }
 
-  void _addToCart(Product product, int quantity, bool isSubUnit, String? selectedSubUnit) {
-    final price = isSubUnit ? product.subUnitPrice ?? product.sellingPrice : product.sellingPrice;
+  void _addToCart(Product product, int quantity, bool isSubUnit, String? selectedSubUnit, [double? adjustedPrice]) {
+    final defaultPrice = isSubUnit ? product.subUnitPrice ?? product.sellingPrice : product.sellingPrice;
+    final price = adjustedPrice ?? defaultPrice;
+    
     setState(() {
       _cartItems.add(CartItem(
         product: product,
@@ -339,6 +378,7 @@ class _OrderScreenState extends State<OrderScreen> {
         isSubUnit: isSubUnit,
         subUnitName: selectedSubUnit,
         subUnitQuantity: isSubUnit ? product.subUnitQuantity : null,
+        adjustedPrice: adjustedPrice != defaultPrice ? adjustedPrice : null,
       ));
     });
   }
@@ -348,12 +388,6 @@ class _OrderScreenState extends State<OrderScreen> {
 
     try {
       setState(() => _isLoading = true);
-      
-      // Generate a more consistent order number with date prefix for better tracking
-      final now = DateTime.now();
-      final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
-      final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
-      final orderNumber = 'ORD-$datePrefix-$timeComponent';
       
       final currentUser = AuthService.instance.currentUser;
       if (currentUser == null) throw Exception('User not logged in');
@@ -379,47 +413,117 @@ class _OrderScreenState extends State<OrderScreen> {
         customerId = await DatabaseService.instance.createCustomer(customer);
       }
 
-      // Create order with proper customer information
-      final order = Order(
-        orderNumber: orderNumber,
-        customerId: customerId,
-        customerName: customerName,
-        totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
-        orderStatus: 'PENDING',
-        paymentStatus: 'PENDING',
-        createdBy: currentUser.id!,
-        createdAt: now,
-        orderDate: now,
-        items: _cartItems.map((item) => OrderItem(
-          orderId: 0, // Will be set when order is created
-          productId: item.product.id!,
-          quantity: item.quantity,
-          unitPrice: item.product.buyingPrice,
-          sellingPrice: item.product.sellingPrice,
-          totalAmount: item.total,
-          productName: item.product.productName,
-          isSubUnit: item.isSubUnit,
-          subUnitName: item.subUnitName,
-          subUnitQuantity: item.subUnitQuantity?.toDouble(),
-        )).toList(),
-      );
+      final now = DateTime.now();
+      
+      if (widget.isEditing && widget.editingOrder != null) {
+        // Update existing order
+        final updatedOrder = Order(
+          id: widget.editingOrder!.id,
+          orderNumber: widget.editingOrder!.orderNumber,
+          customerId: customerId,
+          customerName: customerName,
+          totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
+          orderStatus: widget.editingOrder!.orderStatus,
+          paymentStatus: widget.editingOrder!.paymentStatus,
+          paymentMethod: widget.editingOrder!.paymentMethod,
+          createdBy: widget.editingOrder!.createdBy,
+          createdAt: widget.editingOrder!.createdAt,
+          orderDate: widget.editingOrder!.orderDate,
+          items: _cartItems.map((item) => OrderItem(
+            orderId: widget.editingOrder!.id ?? 0,
+            productId: item.product.id!,
+            quantity: item.quantity,
+            unitPrice: item.product.buyingPrice,
+            sellingPrice: item.product.sellingPrice,
+            totalAmount: item.total,
+            productName: item.product.productName,
+            isSubUnit: item.isSubUnit,
+            subUnitName: item.subUnitName,
+            subUnitQuantity: item.subUnitQuantity?.toDouble(),
+            adjustedPrice: item.adjustedPrice,
+          )).toList(),
+        );
+        
+        // Update the order in the database
+        await DatabaseService.instance.updateOrder(updatedOrder);
+        
+        // Log the update
+        await DatabaseService.instance.logActivity(
+          1, // Default admin user ID
+          'admin',
+          DatabaseService.actionUpdateOrder,
+          'Order Updated',
+          'Order #${updatedOrder.orderNumber} was updated',
+        );
+        
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Order updated successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        
+        // Navigate back to the previous screen
+        Navigator.pop(context);
+      } else {
+        // Create new order
+        // Generate a more consistent order number with date prefix for better tracking
+        final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+        final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
+        final orderNumber = 'ORD-$datePrefix-$timeComponent';
+        
+        // Create order with proper customer information
+        final order = Order(
+          orderNumber: orderNumber,
+          customerId: customerId,
+          customerName: customerName,
+          totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
+          orderStatus: 'PENDING',
+          paymentStatus: 'PENDING',
+          createdBy: currentUser.id!,
+          createdAt: now,
+          orderDate: now,
+          items: _cartItems.map((item) => OrderItem(
+            orderId: 0, // Will be set when order is created
+            productId: item.product.id!,
+            quantity: item.quantity,
+            unitPrice: item.product.buyingPrice,
+            sellingPrice: item.product.sellingPrice,
+            totalAmount: item.total,
+            productName: item.product.productName,
+            isSubUnit: item.isSubUnit,
+            subUnitName: item.subUnitName,
+            subUnitQuantity: item.subUnitQuantity?.toDouble(),
+            adjustedPrice: item.adjustedPrice,
+          )).toList(),
+        );
 
-      // Use the DatabaseService to handle the transaction
-      await DatabaseService.instance.createOrder(order);
+        // Use the DatabaseService to handle the transaction
+        await DatabaseService.instance.createOrder(order);
 
-      setState(() {
-        _cartItems.clear();
-        _customerNameController.clear();
-      });
-
-      if (!mounted) return;
-      _showOrderReceipt(orderNumber);
-      OrderService.instance.notifyOrderUpdate();
+        if (!mounted) return;
+        
+        // Show the receipt before clearing the cart
+        _showOrderReceipt(orderNumber);
+        
+        // Wait a moment before clearing the cart to ensure the receipt dialog has time to capture the items
+        Future.delayed(Duration(milliseconds: 500), () {
+          if (mounted) {
+            setState(() {
+              _cartItems.clear();
+              _customerNameController.clear();
+            });
+          }
+        });
+        
+        OrderService.instance.notifyOrderUpdate();
+      }
 
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error placing order: $e')),
+        SnackBar(content: Text('Error ${widget.isEditing ? "updating" : "placing"} order: $e')),
       );
     } finally {
       if (mounted) {

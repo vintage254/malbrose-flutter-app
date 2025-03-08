@@ -95,7 +95,7 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
                             color: Colors.white,
                           ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 20),
                         SizedBox(
                           width: 300,
                           child: TextField(

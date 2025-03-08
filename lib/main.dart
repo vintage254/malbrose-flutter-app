@@ -33,7 +33,22 @@ void main() async {
       await dbDir.create(recursive: true);
     }
     
-    // Initialize database and check for admin user
+    // Set permissions for Linux platform
+    if (Platform.isLinux) {
+      try {
+        final result = await Process.run('chmod', ['-R', '777', dbPath]);
+        if (result.exitCode != 0) {
+          print('Warning: Could not set directory permissions: ${result.stderr}');
+        }
+      } catch (e) {
+        print('Warning: Error setting directory permissions: $e');
+      }
+    }
+    
+    // Initialize the database
+    await DatabaseService.instance.initialize();
+    
+    // Create admin user if it doesn't exist
     await DatabaseService.instance.checkAndCreateAdminUser();
     
     // Add required columns if they don't exist

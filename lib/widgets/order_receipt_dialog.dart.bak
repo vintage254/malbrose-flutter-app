@@ -34,14 +34,10 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
     _orderItems = widget.items;
     print('OrderReceiptDialog - Items count: ${_orderItems.length}');
     if (_orderItems.isNotEmpty) {
-      final firstItem = _orderItems.first;
-      print('OrderReceiptDialog - First item: ${firstItem.product.productName}, Quantity: ${firstItem.quantity}, Total: ${firstItem.total}');
-      print('OrderReceiptDialog - First item selling price: ${firstItem.product.sellingPrice}, Effective price: ${firstItem.effectivePrice}');
+      print('OrderReceiptDialog - First item: ${_orderItems.first.product.productName}, Quantity: ${_orderItems.first.quantity}, Total: ${_orderItems.first.total}');
     } else {
       print('OrderReceiptDialog - WARNING: No items received for receipt!');
       print('OrderReceiptDialog - Customer name: ${widget.customerName}');
-      print('OrderReceiptDialog - Widget items length: ${widget.items.length}');
-      print('OrderReceiptDialog - Payment method: ${widget.paymentMethod}');
     }
   }
 
@@ -101,7 +97,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                     child: Text('x${item.quantity}${item.isSubUnit ? ' ${item.subUnitName ?? "pieces"}' : ''}'),
                   ),
                   Expanded(
-                    child: Text('KSH ${item.effectivePrice.toStringAsFixed(2)}'),
+                    child: Text('KSH ${item.product.sellingPrice.toStringAsFixed(2)}'),
                   ),
                   Expanded(
                     child: Text('KSH ${item.total.toStringAsFixed(2)}'),
@@ -295,7 +291,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                         pw.Expanded(
                           flex: 1,
                           child: pw.Text(
-                            '${item.effectivePrice.toStringAsFixed(2)}',
+                            '${item.product.sellingPrice.toStringAsFixed(2)}',
                             style: const pw.TextStyle(fontSize: 9),
                             textAlign: pw.TextAlign.right,
                           ),

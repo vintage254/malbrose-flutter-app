@@ -129,18 +129,107 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
   Future<void> _toggleAdminStatus(User user) async {
     try {
+      // Don't allow changing your own admin status
+      if (user.id == currentUser?.id) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You cannot change your own admin status'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // Create updated user with toggled admin status
       final updatedUser = user.copyWith(
-        role: user.isAdmin ? 'USER' : 'ADMIN',
+        role: user.isAdmin ? 'USER' : DatabaseService.ROLE_ADMIN,
+        permissions: user.isAdmin ? DatabaseService.PERMISSION_BASIC : DatabaseService.PERMISSION_FULL_ACCESS,
       );
 
+      // Update the user
       await DatabaseService.instance.updateUser(updatedUser);
-      _loadUsers();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error updating user: $e')),
+
+      // Log the action
+      if (currentUser != null) {
+        await DatabaseService.instance.logActivity(
+          currentUser!.id!,
+          currentUser!.username,
+          'update_user_role',
+          'Update user role',
+          'Changed ${user.username} role from ${user.role} to ${updatedUser.role}'
         );
       }
+
+      // Refresh the user list
+      _loadUsers();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${user.username} is now ${updatedUser.isAdmin ? 'an admin' : 'a regular user'}'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error updating user role: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _verifyAdminPrivileges() async {
+    if (currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No user is currently logged in'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    try {
+      // Check if the current user is an admin
+      final isAdmin = currentUser!.isAdmin;
+      
+      // Check if the user has admin privileges in the database
+      final hasAdminPrivileges = await DatabaseService.instance.hasAdminPrivileges(currentUser!.id!);
+      
+      // Check if the user has specific permissions
+      final hasFullAccess = await DatabaseService.instance.hasPermission(
+        currentUser!.id!, 
+        DatabaseService.PERMISSION_FULL_ACCESS
+      );
+      
+      // Display the results
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'User: ${currentUser!.username}\n'
+            'Role: ${currentUser!.role}\n'
+            'isAdmin: $isAdmin\n'
+            'hasAdminPrivileges: $hasAdminPrivileges\n'
+            'hasFullAccess: $hasFullAccess'
+          ),
+          duration: const Duration(seconds: 5),
+          backgroundColor: isAdmin && hasAdminPrivileges && hasFullAccess 
+              ? Colors.green 
+              : Colors.orange,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error verifying privileges: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -181,12 +270,28 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        if (currentUser?.isAdmin ?? false)
-                          ElevatedButton.icon(
-                            onPressed: _handleAddUser,
-                            icon: const Icon(Icons.add),
-                            label: const Text('Add User'),
-                          ),
+                        Row(
+                          children: [
+                            if (currentUser?.isAdmin ?? false)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 8.0),
+                                child: ElevatedButton.icon(
+                                  onPressed: _verifyAdminPrivileges,
+                                  icon: const Icon(Icons.security),
+                                  label: const Text('Verify Privileges'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.blue,
+                                  ),
+                                ),
+                              ),
+                            if (currentUser?.isAdmin ?? false)
+                              ElevatedButton.icon(
+                                onPressed: _handleAddUser,
+                                icon: const Icon(Icons.add),
+                                label: const Text('Add User'),
+                              ),
+                          ],
+                        ),
                       ],
                     ),
                     const SizedBox(height: defaultPadding),

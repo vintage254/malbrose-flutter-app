@@ -12,15 +12,23 @@ class UserService {
       final existingUser = await DatabaseService.instance.getUserById(user.id!);
       if (existingUser == null) throw Exception('User not found');
 
-      // Prepare update data
-      final userData = user.toMap();
-      
       // Only hash password if it has changed
       if (existingUser['password'] != user.password) {
-        userData['password'] = AuthService.instance.hashPassword(user.password);
+        // Create a new User object with the hashed password
+        user = User(
+          id: user.id,
+          username: user.username,
+          password: AuthService.instance.hashPassword(user.password),
+          fullName: user.fullName,
+          email: user.email,
+          role: user.role,
+          permissions: user.permissions,
+          createdAt: user.createdAt,
+          lastLogin: user.lastLogin,
+        );
       }
 
-      await DatabaseService.instance.updateUser(userData);
+      await DatabaseService.instance.updateUser(user);
       
       // Log activity
       await DatabaseService.instance.logActivity(

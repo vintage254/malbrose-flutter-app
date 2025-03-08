@@ -67,27 +67,30 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: defaultPadding * 3),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _FeatureCard(
-                      icon: Icons.point_of_sale,
-                      title: 'Point of Sale',
-                      description: 'Fast and efficient sales processing',
-                    ),
-                    const SizedBox(width: defaultPadding),
-                    _FeatureCard(
-                      icon: Icons.inventory,
-                      title: 'Inventory Management',
-                      description: 'Track and manage your stock effectively',
-                    ),
-                    const SizedBox(width: defaultPadding),
-                    _FeatureCard(
-                      icon: Icons.analytics,
-                      title: 'Sales Analytics',
-                      description: 'Detailed reports and insights',
-                    ),
-                  ],
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _FeatureCard(
+                        icon: Icons.point_of_sale,
+                        title: 'Point of Sale',
+                        description: 'Fast and efficient sales processing',
+                      ),
+                      const SizedBox(width: defaultPadding),
+                      _FeatureCard(
+                        icon: Icons.inventory,
+                        title: 'Inventory Management',
+                        description: 'Track and manage your stock effectively',
+                      ),
+                      const SizedBox(width: defaultPadding),
+                      _FeatureCard(
+                        icon: Icons.analytics,
+                        title: 'Sales Analytics',
+                        description: 'Detailed reports and insights',
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),

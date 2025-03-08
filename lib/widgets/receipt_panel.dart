@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/order_model.dart';
+import 'package:my_flutter_app/models/product_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
@@ -8,6 +9,8 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/widgets/order_cart_panel.dart';
 import 'package:my_flutter_app/models/cart_item_model.dart';
+import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
+import 'package:my_flutter_app/screens/order_screen.dart';
 
 class ReceiptPanel extends StatefulWidget {
   final Order order;
@@ -26,6 +29,7 @@ class ReceiptPanel extends StatefulWidget {
 class _ReceiptPanelState extends State<ReceiptPanel> {
   List<Map<String, dynamic>> _orderItems = [];
   bool _isLoading = true;
+  String _selectedPaymentMethod = 'Cash';
 
   @override
   void initState() {
@@ -172,12 +176,46 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
             ],
           ),
           const Spacer(),
+          if (widget.order.orderStatus == 'PENDING')
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Payment Method:',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(),
+                  ),
+                  value: _selectedPaymentMethod,
+                  items: const [
+                    DropdownMenuItem(value: 'Cash', child: Text('Cash')),
+                    DropdownMenuItem(value: 'Mobile Payment', child: Text('Mobile Payment')),
+                    DropdownMenuItem(value: 'Credit Card', child: Text('Credit Card')),
+                    DropdownMenuItem(value: 'Bank Transfer', child: Text('Bank Transfer')),
+                  ],
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedPaymentMethod = value!;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
           Row(
             children: [
               if (widget.order.orderStatus == 'PENDING')
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: () => widget.onProcessSale(widget.order),
+                    onPressed: () => _completeSale(),
                     icon: const Icon(Icons.check_circle),
                     label: const Text('Complete Sale'),
                     style: ElevatedButton.styleFrom(
@@ -198,33 +236,125 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
               ),
             ],
           ),
+          if (widget.order.orderStatus == 'PENDING')
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: ElevatedButton.icon(
+                onPressed: () => _confirmDeleteOrder(context),
+                icon: const Icon(Icons.delete),
+                label: const Text('Delete Order'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 
   void _navigateToEdit(BuildContext context) {
-    final cartItems = widget.order.items.map((item) => CartItem.fromOrderItem(item)).toList();
+    print('ReceiptPanel - Navigating to edit order #${widget.order.orderNumber}');
+    print('ReceiptPanel - Order items count: ${widget.order.items.length}');
     
-    Navigator.push(
+    Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) => OrderCartPanel(
-          orderId: widget.order.id!,
+        builder: (context) => OrderScreen(
+          editingOrder: widget.order,
           isEditing: true,
-          initialItems: cartItems,
-          customerName: widget.order.customerName,
         ),
       ),
-    ).then((_) {
-      if (mounted) {
-        _loadOrderItems();
-      }
-    });
+    );
+  }
+
+  void _completeSale() {
+    // Create a copy of the order with the selected payment method
+    final updatedOrder = Order(
+      id: widget.order.id,
+      orderNumber: widget.order.orderNumber,
+      customerId: widget.order.customerId,
+      customerName: widget.order.customerName,
+      totalAmount: widget.order.totalAmount,
+      orderStatus: widget.order.orderStatus,
+      paymentStatus: widget.order.paymentStatus,
+      paymentMethod: _selectedPaymentMethod,
+      createdBy: widget.order.createdBy,
+      createdAt: widget.order.createdAt,
+      orderDate: widget.order.orderDate,
+      items: widget.order.items,
+    );
+    
+    print('ReceiptPanel - Completing sale with payment method: ${_selectedPaymentMethod}');
+    print('ReceiptPanel - Order items count: ${widget.order.items.length}');
+    
+    // Call the onProcessSale callback with the updated order
+    widget.onProcessSale(updatedOrder);
   }
 
   Future<void> _printReceipt(BuildContext context) async {
+    print('ReceiptPanel - Printing receipt with ${_orderItems.length} items');
+    print('ReceiptPanel - Order ID: ${widget.order.id}');
+    print('ReceiptPanel - Order Number: ${widget.order.orderNumber}');
+    print('ReceiptPanel - Order Total: ${widget.order.totalAmount}');
+    print('ReceiptPanel - Order Items Count: ${widget.order.items.length}');
+    print('ReceiptPanel - Payment method: ${widget.order.paymentMethod ?? _selectedPaymentMethod}');
+    
+    // First try to load order items if they're not already loaded
+    if (_orderItems.isEmpty && widget.order.id != null) {
+      try {
+        final items = await DatabaseService.instance.getOrderItems(widget.order.id!);
+        setState(() {
+          _orderItems = items;
+        });
+        print('ReceiptPanel - Loaded ${_orderItems.length} items from database');
+      } catch (e) {
+        print('ReceiptPanel - Error loading items: $e');
+      }
+    }
+    
     if (_orderItems.isEmpty) {
+      // Try to use the items from the order object if available
+      if (widget.order.items.isNotEmpty) {
+        print('ReceiptPanel - Using items from order object instead of loaded items');
+        // Convert Order items to CartItems for the receipt dialog
+        final cartItems = widget.order.items.map((item) => CartItem(
+          product: Product(
+            id: item.productId,
+            productName: item.productName,
+            buyingPrice: item.unitPrice,
+            sellingPrice: item.sellingPrice,
+            quantity: 0, // Not relevant for receipt
+            supplier: 'Unknown',
+            receivedDate: DateTime.now(),
+            subUnitQuantity: item.subUnitQuantity?.toInt(),
+            subUnitName: item.subUnitName,
+          ),
+          quantity: item.quantity,
+          total: item.totalAmount,
+          isSubUnit: item.isSubUnit,
+          subUnitName: item.subUnitName,
+          subUnitQuantity: item.subUnitQuantity?.toInt(),
+          adjustedPrice: item.adjustedPrice,
+        )).toList();
+        
+        print('ReceiptPanel - Created ${cartItems.length} cart items for receipt');
+        for (var item in cartItems) {
+          print('ReceiptPanel - Item: ${item.product.productName}, Qty: ${item.quantity}, Total: ${item.total}, EffectivePrice: ${item.effectivePrice}');
+        }
+        
+        // Show the receipt dialog with the order items
+        showDialog(
+          context: context,
+          builder: (context) => OrderReceiptDialog(
+            items: cartItems,
+            customerName: widget.order.customerName,
+            paymentMethod: widget.order.paymentMethod ?? _selectedPaymentMethod,
+          ),
+        );
+        return;
+      }
+      
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('No products to print'),
@@ -234,6 +364,43 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       return;
     }
     
+    // If we have _orderItems from the database, convert them to CartItems
+    final cartItems = _orderItems.map((item) => CartItem(
+      product: Product(
+        id: item['product_id'],
+        productName: item['product_name'] ?? 'Unknown Product',
+        buyingPrice: (item['buying_price'] as num?)?.toDouble() ?? 0.0,
+        sellingPrice: (item['selling_price'] as num?)?.toDouble() ?? (item['unit_price'] as num).toDouble(),
+        quantity: 0, // Not relevant for receipt
+        supplier: 'Unknown',
+        receivedDate: DateTime.now(),
+        subUnitQuantity: item['sub_unit_quantity'] != null ? (item['sub_unit_quantity'] as num).toInt() : null,
+        subUnitName: item['sub_unit_name'] as String?,
+      ),
+      quantity: (item['quantity'] as num).toInt(),
+      total: (item['total_amount'] as num).toDouble(),
+      isSubUnit: item['is_sub_unit'] == 1,
+      subUnitName: item['sub_unit_name'] as String?,
+      subUnitQuantity: item['sub_unit_quantity'] != null ? (item['sub_unit_quantity'] as num).toInt() : null,
+      adjustedPrice: item['adjusted_price'] != null ? (item['adjusted_price'] as num).toDouble() : null,
+    )).toList();
+    
+    print('ReceiptPanel - Created ${cartItems.length} cart items from _orderItems');
+    for (var item in cartItems) {
+      print('ReceiptPanel - Item: ${item.product.productName}, Qty: ${item.quantity}, Total: ${item.total}, EffectivePrice: ${item.effectivePrice}');
+    }
+    
+    // Show the receipt dialog with the order items
+    showDialog(
+      context: context,
+      builder: (context) => OrderReceiptDialog(
+        items: cartItems,
+        customerName: widget.order.customerName,
+        paymentMethod: widget.order.paymentMethod ?? _selectedPaymentMethod,
+      ),
+    );
+    
+    // Original PDF generation code remains as a fallback
     try {
       final pdf = pw.Document();
       
@@ -243,7 +410,310 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
           build: (context) => pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              // ... keep existing PDF generation code ...
+              // Header Section
+              pw.Center(
+                child: pw.Text(
+                  'MALBROSE HARDWARE AND STORE',
+                  style: pw.TextStyle(
+                    fontSize: 12,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                  textAlign: pw.TextAlign.center,
+                ),
+              ),
+              pw.Center(
+                child: pw.Text(
+                  'Eldoret',
+                  style: pw.TextStyle(
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+              pw.Center(
+                child: pw.Text(
+                  '0720319340, 0721705613',
+                  style: pw.TextStyle(
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+              pw.SizedBox(height: 10),
+              
+              // Transaction Details
+              pw.Divider(),
+              pw.Text(
+                'SALE #: ${widget.order.orderNumber}',
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 10,
+                ),
+              ),
+              pw.Text(
+                'Date: ${DateFormat('yyyy-MM-dd HH:mm').format(widget.order.orderDate)}',
+                style: const pw.TextStyle(fontSize: 10),
+              ),
+              pw.Text(
+                'Customer: ${widget.order.customerName ?? "Walk-in"}',
+                style: const pw.TextStyle(fontSize: 10),
+              ),
+              pw.Divider(),
+              
+              // Items Table Header
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Expanded(
+                    flex: 3,
+                    child: pw.Text(
+                      'Item Name',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 9,
+                      ),
+                    ),
+                  ),
+                  pw.Expanded(
+                    flex: 1,
+                    child: pw.Text(
+                      'Qty',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 9,
+                      ),
+                      textAlign: pw.TextAlign.right,
+                    ),
+                  ),
+                  pw.Expanded(
+                    flex: 1,
+                    child: pw.Text(
+                      'Price',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 9,
+                      ),
+                      textAlign: pw.TextAlign.right,
+                    ),
+                  ),
+                  pw.Expanded(
+                    flex: 1,
+                    child: pw.Text(
+                      'Total',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 9,
+                      ),
+                      textAlign: pw.TextAlign.right,
+                    ),
+                  ),
+                ],
+              ),
+              pw.Divider(thickness: 0.5),
+              
+              // Order items
+              ...List.generate(_orderItems.length, (index) {
+                final item = _orderItems[index];
+                final isSubUnit = item['is_sub_unit'] == 1;
+                final subUnitName = item['sub_unit_name'] as String? ?? 'piece';
+                final sellingPrice = (item['selling_price'] as num).toDouble();
+                final adjustedPrice = item['adjusted_price'] != null ? (item['adjusted_price'] as num).toDouble() : null;
+                final effectivePrice = adjustedPrice ?? sellingPrice;
+                
+                return pw.Column(
+                  children: [
+                    pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Expanded(
+                          flex: 3,
+                          child: pw.Text(
+                            item['product_name'] ?? 'Unknown Product',
+                            style: const pw.TextStyle(fontSize: 9),
+                          ),
+                        ),
+                        pw.Expanded(
+                          flex: 1,
+                          child: pw.Text(
+                            '${item['quantity']}${isSubUnit ? " $subUnitName" : ""}',
+                            style: const pw.TextStyle(fontSize: 9),
+                            textAlign: pw.TextAlign.right,
+                          ),
+                        ),
+                        pw.Expanded(
+                          flex: 1,
+                          child: pw.Text(
+                            '${effectivePrice.toStringAsFixed(2)}',
+                            style: const pw.TextStyle(fontSize: 9),
+                            textAlign: pw.TextAlign.right,
+                          ),
+                        ),
+                        pw.Expanded(
+                          flex: 1,
+                          child: pw.Text(
+                            '${(item['total_amount'] as num).toStringAsFixed(2)}',
+                            style: const pw.TextStyle(fontSize: 9),
+                            textAlign: pw.TextAlign.right,
+                          ),
+                        ),
+                      ],
+                    ),
+                    pw.SizedBox(height: 2),
+                  ],
+                );
+              }),
+              
+              // Total Calculation
+              pw.Divider(),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Expanded(
+                    flex: 3,
+                    child: pw.Text(
+                      'SUBTOTAL:',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
+                  pw.Expanded(
+                    flex: 1,
+                    child: pw.Text(
+                      '',
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                  ),
+                  pw.Expanded(
+                    flex: 1,
+                    child: pw.Text(
+                      '',
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                  ),
+                  pw.Expanded(
+                    flex: 1,
+                    child: pw.Text(
+                      'KSH ${widget.order.totalAmount.toStringAsFixed(2)}',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 10,
+                      ),
+                      textAlign: pw.TextAlign.right,
+                    ),
+                  ),
+                ],
+              ),
+              pw.SizedBox(height: 5),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Expanded(
+                    flex: 3,
+                    child: pw.Text(
+                      'TOTAL AMOUNT DUE:',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
+                  pw.Expanded(
+                    flex: 1,
+                    child: pw.Text(
+                      '',
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                  ),
+                  pw.Expanded(
+                    flex: 1,
+                    child: pw.Text(
+                      '',
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                  ),
+                  pw.Expanded(
+                    flex: 1,
+                    child: pw.Text(
+                      'KSH ${widget.order.totalAmount.toStringAsFixed(2)}',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 10,
+                      ),
+                      textAlign: pw.TextAlign.right,
+                    ),
+                  ),
+                ],
+              ),
+              
+              // Payment Details
+              pw.SizedBox(height: 10),
+              pw.Text(
+                'PAYMENT DETAILS:',
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 10,
+                ),
+              ),
+              pw.SizedBox(height: 5),
+              pw.Row(
+                children: [
+                  pw.Text(
+                    'Payment Mode:',
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                  pw.SizedBox(width: 5),
+                  pw.Text(
+                    widget.order.paymentMethod ?? _selectedPaymentMethod,
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                ],
+              ),
+              pw.Row(
+                children: [
+                  pw.Text(
+                    'Paid By:',
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                  pw.SizedBox(width: 5),
+                  pw.Text(
+                    widget.order.customerName ?? 'Walk-in Customer',
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                ],
+              ),
+              
+              // Footer Section
+              pw.SizedBox(height: 10),
+              pw.Center(
+                child: pw.Text(
+                  'Thank you for your business!',
+                  style: pw.TextStyle(
+                    fontSize: 10,
+                    fontStyle: pw.FontStyle.italic,
+                  ),
+                ),
+              ),
+              pw.Center(
+                child: pw.Text(
+                  'Please keep this receipt for your records',
+                  style: pw.TextStyle(
+                    fontSize: 8,
+                  ),
+                ),
+              ),
+              pw.SizedBox(height: 5),
+              pw.Center(
+                child: pw.Text(
+                  'Powered by Malbrose POS',
+                  style: pw.TextStyle(
+                    fontSize: 8,
+                  ),
+                ),
+              ),
+              
+              // Extra space for thermal printer cutting
+              pw.SizedBox(height: 20),
             ],
           ),
         ),
@@ -263,6 +733,68 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
           backgroundColor: Colors.red,
         ),
       );
+    }
+  }
+
+  Future<void> _confirmDeleteOrder(BuildContext context) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Order'),
+        content: const Text(
+          'Are you sure you want to delete this order? This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true && widget.order.id != null) {
+      try {
+        // Log the deletion
+        await DatabaseService.instance.logActivity(
+          1, // Default admin user ID
+          'admin',
+          'ORDER_DELETION',
+          'Order Deleted',
+          'Order with ID ${widget.order.id} and total amount KSH ${widget.order.totalAmount} was deleted',
+        );
+        
+        // Delete the order
+        await DatabaseService.instance.deleteOrder(widget.order.id!);
+        
+        if (!mounted) return;
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Order deleted successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        
+        // Navigate back
+        Navigator.pop(context);
+      } catch (e) {
+        if (!mounted) return;
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error deleting order: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 }

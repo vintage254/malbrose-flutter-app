@@ -23,6 +23,7 @@ class _AddUserDialogState extends State<AddUserDialog> {
   final _fullNameController = TextEditingController();
   final _emailController = TextEditingController();
   bool _isAdmin = false;
+  bool _obscurePassword = true;
 
   @override
   Widget build(BuildContext context) {
@@ -46,11 +47,31 @@ class _AddUserDialogState extends State<AddUserDialog> {
               ),
               TextFormField(
                 controller: _passwordController,
-                decoration: const InputDecoration(labelText: 'Password'),
-                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                      color: Colors.grey,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _obscurePassword = !_obscurePassword;
+                      });
+                    },
+                  ),
+                  helperText: 'At least 6 characters with 1 number',
+                ),
+                obscureText: _obscurePassword,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Please enter password';
+                  }
+                  if (value.length < 6) {
+                    return 'Password must be at least 6 characters';
+                  }
+                  if (!value.contains(RegExp(r'[0-9]'))) {
+                    return 'Password must contain at least one number';
                   }
                   return null;
                 },
@@ -113,14 +134,31 @@ class _AddUserDialogState extends State<AddUserDialog> {
           'password': _passwordController.text,
           'full_name': _fullNameController.text.trim(),
           'email': _emailController.text.trim(),
-          'role': _isAdmin ? 'ADMIN' : 'USER',
+          'role': _isAdmin ? DatabaseService.ROLE_ADMIN : 'USER',
+          'permissions': _isAdmin ? DatabaseService.PERMISSION_FULL_ACCESS : DatabaseService.PERMISSION_BASIC,
+          'created_at': DateTime.now().toIso8601String(),
         };
+
+        // Log the user data being created (without password)
+        print('Creating user with role: ${userData['role']}, permissions: ${userData['permissions']}');
 
         final user = await DatabaseService.instance.createUser(userData);
         
         if (!mounted) return;
         
         if (user != null) {
+          // Log the creation
+          final currentUser = AuthService.instance.currentUser;
+          if (currentUser != null) {
+            await DatabaseService.instance.logActivity(
+              currentUser.id!,
+              currentUser.username,
+              'create_user',
+              'Create user',
+              'Created new user: ${userData['username']} with role: ${userData['role']}'
+            );
+          }
+          
           Navigator.pop(context, true);
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(

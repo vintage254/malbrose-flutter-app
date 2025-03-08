@@ -141,13 +141,17 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text(
-                                    'Order #${order['order_number']}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
+                                  Flexible(
+                                    child: Text(
+                                      'Order #${order['order_number']}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
+                                  const SizedBox(width: 8),
                                   Text(
                                     DateFormat('HH:mm').format(createdAt),
                                     style: const TextStyle(color: Colors.white70),
@@ -158,14 +162,17 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
                               Text(
                                 'Customer: ${order['customer_name'] ?? 'Walk-in'}',
                                 style: const TextStyle(color: Colors.white),
+                                overflow: TextOverflow.ellipsis,
                               ),
                               Text(
                                 'Total: KSH ${NumberFormat('#,##0.00').format(order['total_amount'])}',
                                 style: const TextStyle(color: Colors.white),
+                                overflow: TextOverflow.ellipsis,
                               ),
                               Text(
                                 'Status: $status',
                                 style: const TextStyle(color: Colors.white70),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ],
                           ),

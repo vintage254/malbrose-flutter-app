@@ -17,6 +17,7 @@ class OrderCartPanel extends StatefulWidget {
   final VoidCallback? onPlaceOrder;
   final VoidCallback? onClearCart;
   final Function(String)? onCustomerNameChanged;
+  final String orderButtonText;
 
   const OrderCartPanel({
     super.key,
@@ -28,6 +29,7 @@ class OrderCartPanel extends StatefulWidget {
     this.onPlaceOrder,
     this.onClearCart,
     this.onCustomerNameChanged,
+    this.orderButtonText = 'Place Order',
   });
 
   @override
@@ -524,7 +526,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                             child: ElevatedButton.icon(
                               onPressed: widget.initialItems.isEmpty ? null : _placeOrder,
                               icon: const Icon(Icons.receipt_long),
-                              label: const Text('Place Order'),
+                              label: Text(widget.orderButtonText),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.green,
                               ),

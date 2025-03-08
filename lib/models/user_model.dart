@@ -39,6 +39,15 @@ class User {
   }
 
   factory User.fromMap(Map<String, dynamic> map) {
+    // Ensure all required fields are present
+    if (!map.containsKey('username') || 
+        !map.containsKey('password') || 
+        !map.containsKey('full_name') || 
+        !map.containsKey('email') || 
+        !map.containsKey('created_at')) {
+      throw FormatException('Missing required fields in User.fromMap: ${map.keys}');
+    }
+    
     return User(
       id: map['id'] as int?,
       username: map['username'] as String,

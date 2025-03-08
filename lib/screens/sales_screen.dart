@@ -231,7 +231,7 @@ class _SalesScreenState extends State<SalesScreen> {
             {
               'user_id': currentUser.id,
               'username': currentUser.username,
-              'action': 'complete_sale',
+              'action': DatabaseService.actionCompleteSale,
               'details': 'Completed sale #${order.orderNumber}, amount: ${order.totalAmount}',
               'timestamp': DateTime.now().toIso8601String(),
             },
@@ -263,30 +263,11 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Future<void> _completeSale(Order order) async {
     try {
-      // Create new order instance with updated status
-      final updatedOrder = Order(
-        id: order.id,
-        orderNumber: order.orderNumber,
-        totalAmount: order.totalAmount,
-        customerName: order.customerName,
-        orderStatus: 'COMPLETED',
-        paymentStatus: order.paymentStatus,
-        createdBy: order.createdBy,
-        createdAt: order.createdAt,
-        orderDate: order.orderDate,
-        items: order.items,
-      );
-
-      await DatabaseService.instance.updateOrder(updatedOrder);
+      // Use the payment method from the order or default to Cash
+      final paymentMethod = order.paymentMethod ?? 'Cash';
       
-      // Log sale completion
-      await DatabaseService.instance.logActivity(
-        AuthService.instance.currentUser!.id!,
-        AuthService.instance.currentUser!.username,
-        "complete_sale",
-        "Complete sale",
-        'Completed sale #${updatedOrder.orderNumber}, amount: ${updatedOrder.totalAmount}'
-      );
+      // Complete the sale using the DatabaseService
+      await DatabaseService.instance.completeSale(order, paymentMethod: paymentMethod);
       
       // Refresh orders list
       await _loadPendingOrders();
@@ -489,44 +470,63 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   Widget _buildOrderListItem(Order order) {
+    final isSelected = _selectedOrder?.id == order.id;
+    
     return Card(
-      margin: const EdgeInsets.symmetric(
-        horizontal: defaultPadding,
-        vertical: defaultPadding / 2,
-      ),
-      child: ListTile(
-        leading: const Icon(Icons.receipt),
-        title: Text('Order #${order.orderNumber}'),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Customer: ${order.customerName ?? "N/A"}'),
-            Text('Items: ${order.items.map((item) {
-              final unitText = item.isSubUnit ? 
-                  ' (${item.quantity} ${item.subUnitName ?? "pieces"})' : 
-                  ' (${item.quantity} units)';
-              return '${item.productName}$unitText';
-            }).join(", ")}'),
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'KSH ${order.totalAmount.toStringAsFixed(2)}',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
+      margin: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+      color: isSelected ? Colors.amber.shade100 : null,
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            _selectedOrder = order;
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    Text('Order #${order.orderNumber}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 16),
+                    Text('Customer: ${order.customerName ?? "N/A"}'),
+                    const SizedBox(width: 16),
+                    Text(
+                      'KSH ${order.totalAmount.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    IconButton(
+                      icon: const Icon(Icons.edit),
+                      onPressed: () => _editOrder(order),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: () => _editOrder(order),
-            ),
-          ],
+              const SizedBox(height: 8),
+              Text(
+                'Items: ${order.items.map((item) {
+                  final unitText = item.isSubUnit ? 
+                      ' (${item.quantity} ${item.subUnitName ?? "pieces"})' : 
+                      ' (${item.quantity} units)';
+                  return '${item.productName}$unitText';
+                }).join(", ")}',
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
         ),
-        onTap: () => setState(() => _selectedOrder = order),
-        selected: _selectedOrder?.orderNumber == order.orderNumber,
       ),
     );
   }
@@ -564,7 +564,7 @@ class _SalesScreenState extends State<SalesScreen> {
                             color: Colors.white,
                           ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 20),
                         SizedBox(
                           width: 200,
                           child: TextField(
@@ -601,12 +601,10 @@ class _SalesScreenState extends State<SalesScreen> {
                                   ),
                                 ),
                               )
-                            : ListView.builder(
-                                itemCount: _filteredOrders.length,
-                                itemBuilder: (context, index) {
-                                  final order = _filteredOrders[index];
-                                  return _buildOrderListItem(order);
-                                },
+                            : SingleChildScrollView(
+                                child: Column(
+                                  children: _filteredOrders.map((order) => _buildOrderListItem(order)).toList(),
+                                ),
                               ),
                   ),
                 ],

@@ -10,6 +10,8 @@ import 'package:synchronized/synchronized.dart';
 import '../models/customer_model.dart';
 import 'dart:io';
 import 'dart:math';
+import 'dart:async';
+import 'package:my_flutter_app/models/product_model.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
@@ -31,6 +33,7 @@ class DatabaseService {
 
   // Add these constants at the top of the DatabaseService class
   static const String actionCreateOrder = 'create_order';
+  static const String actionUpdateOrder = 'update_order';
   static const String actionCompleteSale = 'complete_sale';
   static const String actionUpdateProduct = 'update_product';
   static const String actionCreateProduct = 'create_product';
@@ -51,7 +54,7 @@ class DatabaseService {
 
   DatabaseService._init();
 
-  // Completely rewritten database getter to be more aggressive with connection management
+  // Completely rewritten database getter to be more reliable
   Future<Database> get database async {
     if (_database != null && _initialized) {
       try {
@@ -70,9 +73,18 @@ class DatabaseService {
     return await _lock.synchronized(() async {
       if (_database != null && _initialized) return _database!;
       
-      _database = await _initDatabase();
-      _initialized = true;
-      return _database!;
+      // Try to initialize the database
+      try {
+        _database = await _initDatabase();
+        _initialized = true;
+        return _database!;
+      } catch (e) {
+        print('Error initializing database: $e');
+        
+        // If initialization fails, try to reset the database
+        await resetDatabase();
+        return _database!;
+      }
     });
   }
 
@@ -89,13 +101,46 @@ class DatabaseService {
       _initialized = false;
     }
   }
+  
+  // Add a method to force unlock the database
+  Future<void> _forceUnlockDatabase() async {
+    try {
+      final databasePath = await getDatabasesPath();
+      final path = join(databasePath, 'malbrose_db.db');
+      
+      // Check if the database file exists
+      final dbFile = File(path);
+      if (await dbFile.exists()) {
+        // Check for lock files and delete them
+        final lockFile = File('$path-shm');
+        if (await lockFile.exists()) {
+          await lockFile.delete();
+          print('Deleted database lock file: $path-shm');
+        }
+        
+        final journalFile = File('$path-wal');
+        if (await journalFile.exists()) {
+          await journalFile.delete();
+          print('Deleted database journal file: $path-wal');
+        }
+        
+        final journalFile2 = File('$path-journal');
+        if (await journalFile2.exists()) {
+          await journalFile2.delete();
+          print('Deleted database journal file: $path-journal');
+        }
+      }
+    } catch (e) {
+      print('Error forcing database unlock: $e');
+    }
+  }
 
   // Completely rewritten transaction method to be more aggressive with retries and timeouts
   Future<T> withTransaction<T>(Future<T> Function(Transaction txn) action) async {
-    int retryCount = 0;
+      int retryCount = 0;
     const maxRetries = 2;
-    
-    while (true) {
+      
+      while (true) {
       Database db;
       try {
         // Get a fresh database connection for each retry
@@ -109,33 +154,35 @@ class DatabaseService {
         
         // Use a simple transaction with minimal timeout
         return await db.transaction(action, exclusive: true);
-      } catch (e) {
+        } catch (e) {
         final errorMsg = e.toString().toLowerCase();
         final isLockError = errorMsg.contains('locked') || 
                             errorMsg.contains('busy') || 
                             errorMsg.contains('timeout');
         
-        print('Transaction error (attempt ${retryCount + 1}): $e');
-        
-        // If we've reached max retries or it's not a locking error, rethrow
+          print('Transaction error (attempt ${retryCount + 1}): $e');
+          
+          // If we've reached max retries or it's not a locking error, rethrow
         if (retryCount >= maxRetries || !isLockError) {
           // Close and reopen database on serious errors
           await _closeDatabase();
           _database = null;
           _initialized = false;
-          rethrow;
-        }
-        
+            rethrow;
+          }
+          
         // Aggressive exponential backoff for retries
         final delay = 500 * (1 << retryCount);
-        print('Retrying transaction in $delay ms...');
-        await Future.delayed(Duration(milliseconds: delay));
-        retryCount++;
+          print('Retrying transaction in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          retryCount++;
+        }
       }
-    }
   }
 
+  // Completely rewritten _initDatabase method
   Future<Database> _initDatabase() async {
+    // Use a more reliable path for the database
     final databasePath = await getDatabasesPath();
     final path = join(databasePath, 'malbrose_db.db');
 
@@ -162,17 +209,14 @@ class DatabaseService {
         }
       }
 
-      // Always close any existing database connection first
-      await _closeDatabase();
-
       // Create a new database with minimal options
       final db = await openDatabase(
         path,
-        version: 24,
+        version: 25,
         onCreate: _createTables,
         onUpgrade: _onUpgrade,
-        // Set a shorter timeout to fail faster
-        singleInstance: false,
+        // Use single instance to prevent locking issues
+        singleInstance: true,
       );
       
       // Set pragmas outside of any transaction
@@ -184,11 +228,44 @@ class DatabaseService {
       throw Exception('Failed to initialize the database: $e');
     }
   }
-  
+
+  // Add a method to force a clean database
+  Future<void> _forceCleanDatabase(String path) async {
+    try {
+      // Check if the database file exists
+      final dbFile = File(path);
+      if (await dbFile.exists()) {
+        // Delete the database file
+        await dbFile.delete();
+        print('Deleted existing database file for clean start');
+      }
+      
+      // Also check for journal and shm files
+      final walFile = File('$path-wal');
+      if (await walFile.exists()) {
+        await walFile.delete();
+      }
+      
+      final shmFile = File('$path-shm');
+      if (await shmFile.exists()) {
+        await shmFile.delete();
+      }
+      
+      final journalFile = File('$path-journal');
+      if (await journalFile.exists()) {
+        await journalFile.delete();
+      }
+      
+      print('Forced clean database state');
+    } catch (e) {
+      print('Error forcing clean database: $e');
+    }
+  }
+
   Future<void> _setPragmas(Database db) async {
     try {
-      // Enable foreign keys
-      await db.execute('PRAGMA foreign_keys=ON');
+        // Enable foreign keys
+        await db.execute('PRAGMA foreign_keys=ON');
       
       // Set busy timeout to 3 seconds - even shorter timeout to fail faster
       await db.execute('PRAGMA busy_timeout=3000');
@@ -200,7 +277,7 @@ class DatabaseService {
       // These settings should be set last
       await db.execute('PRAGMA journal_mode=WAL');
       await db.execute('PRAGMA synchronous=NORMAL');
-      await db.execute('PRAGMA locking_mode=NORMAL');
+        await db.execute('PRAGMA locking_mode=NORMAL');
     } catch (e) {
       print('Error setting database pragmas: $e');
     }
@@ -297,6 +374,7 @@ class DatabaseService {
         has_sub_units INTEGER DEFAULT 0,
         sub_unit_quantity INTEGER,
         sub_unit_price REAL,
+        sub_unit_buying_price REAL,
         sub_unit_name TEXT,
         created_by INTEGER,
         updated_by INTEGER,
@@ -519,6 +597,42 @@ class DatabaseService {
       }
     }
     
+    if (oldVersion < 25) {
+      // Add sub_unit_buying_price column to products table if it doesn't exist
+      try {
+        // Check if column exists first
+        var tableInfo = await db.rawQuery('PRAGMA table_info($tableProducts)');
+        bool hasSubUnitBuyingPriceColumn = tableInfo.any((column) => column['name'] == 'sub_unit_buying_price');
+        
+        if (!hasSubUnitBuyingPriceColumn) {
+          await db.execute('ALTER TABLE $tableProducts ADD COLUMN sub_unit_buying_price REAL');
+          
+          // Initialize with calculated values for existing products
+          var products = await db.query(
+            tableProducts,
+            where: 'has_sub_units = 1 AND sub_unit_quantity > 0'
+          );
+          
+          for (var product in products) {
+            final buyingPrice = (product['buying_price'] as num).toDouble();
+            final subUnitQuantity = (product['sub_unit_quantity'] as num).toDouble();
+            final calculatedSubUnitBuyingPrice = buyingPrice / subUnitQuantity;
+            
+            await db.update(
+              tableProducts,
+              {'sub_unit_buying_price': calculatedSubUnitBuyingPrice},
+              where: 'id = ?',
+              whereArgs: [product['id']],
+            );
+          }
+          
+          print('Added sub_unit_buying_price column and initialized values');
+        }
+      } catch (e) {
+        print('Error adding sub_unit_buying_price column: $e');
+      }
+    }
+    
     try {
       // Check if sub_unit_quantity column exists in order_items
       var tableInfo = await db.rawQuery('PRAGMA table_info($tableOrderItems)');
@@ -573,6 +687,11 @@ class DatabaseService {
 
   // User related methods
   Future<User?> createUser(Map<String, dynamic> userData) async {
+    int retryCount = 0;
+    const maxRetries = 3;
+    const baseDelay = 200; // milliseconds
+    
+    while (true) {
     try {
       // Hash the password before storing
       if (userData.containsKey('password')) {
@@ -591,52 +710,113 @@ class DatabaseService {
       }
 
       final db = await database;
-      final id = await db.insert(tableUsers, userData);
+        
+        // Use a transaction for better reliability
+        final id = await db.transaction((txn) async {
+          return await txn.insert(tableUsers, userData);
+        });
       
       if (id != 0) {
         return User.fromMap({...userData, 'id': id});
       }
       return null;
     } catch (e) {
-      print('Error creating user: $e');
+        print('Error creating user (attempt ${retryCount + 1}): $e');
+        
+        if (e is DatabaseException && 
+            (e.toString().contains('database is locked') || 
+             e.toString().contains('database locked')) && 
+            retryCount < maxRetries) {
+          retryCount++;
+          // Exponential backoff with jitter
+          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
+          print('Database locked. Retrying createUser in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          
+          // Force close and reopen the database
+          await _closeDatabase();
+          _database = null;
+          _initialized = false;
+          
+          continue;
+        }
+        
+        // If we've reached max retries or it's not a locking issue, rethrow
+        print('Failed to create user after $retryCount retries: $e');
       rethrow;
+      }
     }
   }
 
   Future<void> updateUser(User user) async {
-    // Ensure permissions are maintained during update
-    final db = await database;
-    try {
-      final userData = user.toMap();
-      
-      // If password is being updated, ensure it's hashed
-      if (userData.containsKey('password')) {
-        final currentUser = await getUserById(user.id!);
-        if (currentUser != null) {
-          // Only hash if the password has actually changed
-          final currentPassword = currentUser['password'] as String;
-          if (userData['password'] != currentPassword) {
-            userData['password'] = AuthService.instance.hashPassword(userData['password']);
+    int retryCount = 0;
+    const maxRetries = 3;
+    const baseDelay = 200; // milliseconds
+    
+    while (true) {
+      try {
+        final db = await database;
+        
+        // Ensure permissions are maintained during update
+        final userData = user.toMap();
+        
+        // If we're only updating specific fields, make sure we have the minimum required data
+        if (!userData.containsKey('username') || !userData.containsKey('full_name') || !userData.containsKey('email')) {
+          // This might be a partial update (like just updating password)
+          // Get the existing user data to fill in missing fields
+          final existingUser = await getUserById(user.id!);
+          if (existingUser != null) {
+            // Fill in missing fields from existing user data
+            if (!userData.containsKey('username')) userData['username'] = existingUser['username'];
+            if (!userData.containsKey('full_name')) userData['full_name'] = existingUser['full_name'];
+            if (!userData.containsKey('email')) userData['email'] = existingUser['email'];
+            if (!userData.containsKey('role')) userData['role'] = existingUser['role'];
+            if (!userData.containsKey('permissions')) userData['permissions'] = existingUser['permissions'];
+            if (!userData.containsKey('created_at')) userData['created_at'] = existingUser['created_at'];
           }
         }
-      }
-
-      if (!userData.containsKey('permissions')) {
-        final existingUser = await getUserById(user.id!);
-        if (existingUser != null) {
-          userData['permissions'] = existingUser['permissions'];
+      
+        // If password is being updated, ensure it's hashed
+        if (userData.containsKey('password')) {
+          final currentUser = await getUserById(user.id!);
+          if (currentUser != null) {
+            // Only hash if the password has actually changed
+            final currentPassword = currentUser['password'] as String;
+            if (userData['password'] != currentPassword) {
+              userData['password'] = AuthService.instance.hashPassword(userData['password']);
+            }
+          }
         }
-      }
 
-      await db.update(
-        tableUsers,
-        userData,
-        where: 'id = ?',
-        whereArgs: [user.id],
-      );
-    } catch (e) {
-      print('Error updating user: $e');
-      rethrow;
+        await db.transaction((txn) async {
+          await txn.update(
+            tableUsers,
+            userData,
+            where: 'id = ?',
+            whereArgs: [user.id],
+          );
+        });
+        
+        // If we get here, the update was successful
+        return;
+      } catch (e) {
+        print('Error updating user (attempt ${retryCount + 1}): $e');
+        
+        if (e is DatabaseException && 
+            (e.toString().contains('database is locked') || 
+             e.toString().contains('database locked')) && 
+            retryCount < maxRetries) {
+          retryCount++;
+          // Exponential backoff with jitter
+          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
+          print('Database locked. Retrying user update in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          continue;
+        }
+        
+        // If we've reached max retries or it's not a locking issue, rethrow
+        rethrow;
+      }
     }
   }
 
@@ -650,25 +830,85 @@ class DatabaseService {
   }
 
   Future<Map<String, dynamic>?> getUserByUsername(String username) async {
+    int retryCount = 0;
+    const maxRetries = 3;
+    const baseDelay = 200; // milliseconds
+    
+    while (true) {
+      try {
     final db = await database;
-    final results = await db.query(
+        
+        final results = await db.transaction((txn) async {
+          return await txn.query(
       tableUsers,
       where: 'username = ?',
       whereArgs: [username],
       limit: 1,
     );
+        });
+        
     return results.isNotEmpty ? results.first : null;
+      } catch (e) {
+        print('Error getting user by username (attempt ${retryCount + 1}): $e');
+        
+        if (e is DatabaseException && 
+            (e.toString().contains('database is locked') || 
+             e.toString().contains('database locked')) && 
+            retryCount < maxRetries) {
+          retryCount++;
+          // Exponential backoff with jitter
+          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
+          print('Database locked. Retrying getUserByUsername in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          continue;
+        }
+        
+        // If we've reached max retries or it's not a locking issue, return null
+        print('Failed to get user after $retryCount retries: $e');
+        return null;
+      }
+    }
   }
 
   Future<Map<String, dynamic>?> getUserById(int id) async {
+    int retryCount = 0;
+    const maxRetries = 3;
+    const baseDelay = 200; // milliseconds
+    
+    while (true) {
+      try {
     final db = await database;
-    final results = await db.query(
+        
+        final results = await db.transaction((txn) async {
+          return await txn.query(
       tableUsers,
       where: 'id = ?',
       whereArgs: [id],
       limit: 1,
     );
+        });
+        
     return results.isNotEmpty ? results.first : null;
+      } catch (e) {
+        print('Error getting user by id (attempt ${retryCount + 1}): $e');
+        
+        if (e is DatabaseException && 
+            (e.toString().contains('database is locked') || 
+             e.toString().contains('database locked')) && 
+            retryCount < maxRetries) {
+          retryCount++;
+          // Exponential backoff with jitter
+          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
+          print('Database locked. Retrying getUserById in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          continue;
+        }
+        
+        // If we've reached max retries or it's not a locking issue, return null
+        print('Failed to get user by id after $retryCount retries: $e');
+        return null;
+      }
+    }
   }
 
   Future<List<String>> getAllUsernames() async {
@@ -742,188 +982,204 @@ class DatabaseService {
   // Order related methods
   Future<int> createOrder(Order order) async {
     int retryCount = 0;
-    const maxRetries = 2;
+    const maxRetries = 3;
+    const baseDelay = 200; // milliseconds
     
     while (true) {
       try {
         final db = await database;
         
-        // First check if an order with this order number already exists to prevent duplicates
+        // Check if an order with this order number already exists
         final existingOrder = await db.query(
           tableOrders,
-          columns: ['id'],
           where: 'order_number = ?',
           whereArgs: [order.orderNumber],
-          limit: 1,
+          limit: 1
         );
         
         if (existingOrder.isNotEmpty) {
-          print('Order with number ${order.orderNumber} already exists, returning existing ID');
+          // Order already exists, return its ID
+          print('Order with number ${order.orderNumber} already exists, skipping creation');
           return existingOrder.first['id'] as int;
         }
         
-        // Split the operation into smaller transactions
-        
-        // 1. First handle customer creation/update outside the main transaction
-        int? customerId = order.customerId;
-        if (order.customerName != null && order.customerName!.isNotEmpty) {
-          final existingCustomer = await db.query(
-            tableCustomers,
-            columns: ['id'],
-            where: 'name = ?',
-            whereArgs: [order.customerName],
-            limit: 1,
-          );
-
-          if (existingCustomer.isEmpty) {
-            // Create new customer
-            customerId = await db.insert(
-              tableCustomers,
-              {
-                'name': order.customerName,
-                'created_at': DateTime.now().toIso8601String(),
-                'total_orders': 1,
-                'total_amount': order.totalAmount,
-                'last_order_date': DateTime.now().toIso8601String(),
-                'updated_at': DateTime.now().toIso8601String(),
-              },
-            );
-          } else {
-            customerId = existingCustomer.first['id'] as int;
-            
-            // First get the current values
-            final customerData = await db.query(
-              tableCustomers,
-              columns: ['total_orders', 'total_amount'],
-              where: 'id = ?',
-              whereArgs: [customerId],
-              limit: 1,
+        // Start a transaction
+        return await db.transaction((txn) async {
+          // Insert the order
+          final orderId = await txn.insert(tableOrders, order.toMap());
+          
+          // Insert each order item
+          for (final item in order.items) {
+            final orderItem = OrderItem(
+              orderId: orderId,
+              productId: item.productId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              sellingPrice: item.sellingPrice,
+              totalAmount: item.totalAmount,
+              productName: item.productName,
+              isSubUnit: item.isSubUnit,
+              subUnitName: item.subUnitName,
+              subUnitQuantity: item.subUnitQuantity,
             );
             
-            if (customerData.isNotEmpty) {
-              final currentTotalOrders = (customerData.first['total_orders'] as num?)?.toInt() ?? 0;
-              final currentTotalAmount = (customerData.first['total_amount'] as num?)?.toDouble() ?? 0.0;
-              
-              // Update customer stats with calculated values
-              await db.update(
-                tableCustomers,
-                {
-                  'total_orders': currentTotalOrders + 1,
-                  'total_amount': currentTotalAmount + order.totalAmount,
-                  'last_order_date': DateTime.now().toIso8601String(),
-                  'updated_at': DateTime.now().toIso8601String(),
-                },
+            await txn.insert(tableOrderItems, orderItem.toMap());
+            
+            // Update product inventory directly within this transaction
+            if (order.orderStatus == 'COMPLETED') {
+              // Get product information
+              final productResult = await txn.query(
+                tableProducts,
                 where: 'id = ?',
-                whereArgs: [customerId],
+                whereArgs: [item.productId],
+                limit: 1
               );
+              
+              if (productResult.isNotEmpty) {
+                final product = productResult.first;
+                final currentQuantity = (product['quantity'] as num).toDouble();
+                final subUnitQuantity = (product['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
+                
+                // Calculate actual quantity to update based on sub-units
+                double quantityToUpdate;
+                if (item.isSubUnit) {
+                  // For sub-units, we need to calculate the equivalent in whole units
+                  quantityToUpdate = item.quantity.toDouble() / subUnitQuantity;
+                } else {
+                  quantityToUpdate = item.quantity.toDouble();
+                }
+                
+                // Calculate new quantity (allow negative for tracking oversold items)
+                final newQuantity = currentQuantity - quantityToUpdate;
+                
+                // Update product quantity directly in this transaction
+                await txn.update(
+                  tableProducts,
+                  {'quantity': newQuantity},
+                  where: 'id = ?',
+                  whereArgs: [item.productId],
+                );
+              }
             }
           }
-        }
-        
-        // 2. Create order and order items in a minimal transaction
-        final newOrderId = await db.transaction((txn) async {
-          // Create order with the customer information
-          final now = DateTime.now();
-          final orderMap = {
-            'order_number': order.orderNumber,
-            'customer_id': customerId,
-            'customer_name': order.customerName,
-            'total_amount': order.totalAmount,
-            'status': order.orderStatus,
-            'payment_status': order.paymentStatus,
-            'created_by': order.createdBy,
-            'created_at': now.toIso8601String(),
-            'order_date': now.toIso8601String(),
-            'updated_at': now.toIso8601String(),
-          };
           
-          final orderId = await txn.insert(tableOrders, orderMap);
-          
-          // Create order items within the same transaction
-          // Use batch insert for better performance
-          final batch = txn.batch();
-          
-          for (var item in order.items) {
-            batch.insert(tableOrderItems, {
-              ...item.toMap(),
-              'order_id': orderId,
-              'product_name': item.productName.isNotEmpty ? item.productName : 'Unknown Product',
-            });
-          }
-          
-          // Execute all inserts in a single batch
-          await batch.commit(noResult: true);
+          // Log the activity directly within this transaction
+          await txn.insert(tableActivityLogs, {
+            'user_id': 1, // Default admin user ID
+            'username': 'admin',
+            'action': actionCreateOrder,
+            'action_type': 'Order Created',
+            'details': 'Order #${order.orderNumber} created with ${order.items.length} items for KSH ${order.totalAmount}',
+            'timestamp': DateTime.now().toIso8601String(),
+          });
           
           return orderId;
         });
-        
-        // 3. Log activity in a separate operation
-        final currentUser = AuthService.instance.currentUser;
-        if (currentUser != null) {
-          try {
-            await db.insert(tableActivityLogs, {
-              'user_id': currentUser.id,
-              'username': currentUser.username,
-              'action': actionCreateOrder,
-              'action_type': 'Create order',
-              'details': 'Created order #${order.orderNumber} for ${order.customerName}',
-              'timestamp': DateTime.now().toIso8601String(),
-            });
-          } catch (e) {
-            // Just log the error but don't fail the whole operation
-            print('Error logging activity: $e');
-          }
-        }
-        
-        return newOrderId;
       } catch (e) {
         print('Error creating order (attempt ${retryCount + 1}): $e');
         
-        // Check if we should retry
-        if (retryCount >= maxRetries) {
-          // Close and reopen database on serious errors
-          await _closeDatabase();
-          _database = null;
-          _initialized = false;
-          rethrow;
+        if (e is DatabaseException && 
+            (e.toString().contains('database is locked') || 
+             e.toString().contains('database locked')) && 
+            retryCount < maxRetries) {
+          retryCount++;
+          // Exponential backoff with jitter
+          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
+          print('Database locked. Retrying in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          continue;
         }
         
-        // Exponential backoff
-        final delay = 500 * (1 << retryCount);
-        print('Retrying order creation in $delay ms...');
-        await Future.delayed(Duration(milliseconds: delay));
-        retryCount++;
+        // If we've reached max retries or it's not a locking issue, rethrow
+        rethrow;
       }
     }
   }
-
+  
   Future<void> updateOrder(Order order) async {
-    final db = await database;
-    await db.transaction((txn) async {
-      // Update order status
-      await txn.update(
-        tableOrders,
-        {
-          'status': order.orderStatus,
-          'payment_status': order.paymentStatus,
-          'total_amount': order.totalAmount,
-        },
-        where: 'id = ?',
-        whereArgs: [order.id],
-      );
-
-      // Update order items if needed
-      for (var item in order.items) {
-        if (item.id != null) {
+    if (order.id == null) {
+      throw ArgumentError('Order ID is required for updating');
+    }
+    
+    int retryCount = 0;
+    const maxRetries = 3;
+    const baseDelay = 200; // milliseconds
+    
+    while (true) {
+      try {
+        final db = await database;
+        
+        // Start a transaction
+        await db.transaction((txn) async {
+          // Create a map without the payment_method field
+            final orderMap = {
+            'id': order.id,
+              'order_number': order.orderNumber,
+            'customer_id': order.customerId,
+            'customer_name': order.customerName,
+              'total_amount': order.totalAmount,
+              'status': order.orderStatus,
+              'payment_status': order.paymentStatus,
+              'created_by': order.createdBy,
+            'created_at': order.createdAt.toIso8601String(),
+            'order_date': order.orderDate.toIso8601String(),
+          };
+          
+          // Update the order
           await txn.update(
-            tableOrderItems,
-            item.toMap(),
-            where: 'id = ?',
-            whereArgs: [item.id],
+            tableOrders, 
+            orderMap,
+                  where: 'id = ?',
+            whereArgs: [order.id],
           );
+          
+          // Delete existing order items
+          await txn.delete(
+            tableOrderItems,
+            where: 'order_id = ?',
+            whereArgs: [order.id],
+          );
+          
+          // Insert updated order items
+          for (final item in order.items) {
+            final orderItem = OrderItem(
+              orderId: order.id!,
+              productId: item.productId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              sellingPrice: item.sellingPrice,
+              totalAmount: item.totalAmount,
+              productName: item.productName,
+              isSubUnit: item.isSubUnit,
+              subUnitName: item.subUnitName,
+              subUnitQuantity: item.subUnitQuantity,
+              adjustedPrice: item.adjustedPrice,
+            );
+            
+            await txn.insert(tableOrderItems, orderItem.toMap());
+          }
+        });
+        
+        return;
+      } catch (e) {
+        print('Error updating order (attempt ${retryCount + 1}): $e');
+        
+        if (e is DatabaseException && 
+            (e.toString().contains('database is locked') || 
+             e.toString().contains('database locked')) && 
+            retryCount < maxRetries) {
+        retryCount++;
+          // Exponential backoff with jitter
+          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
+          print('Database locked. Retrying in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          continue;
         }
+        
+        // If we've reached max retries or it's not a locking issue, rethrow
+        rethrow;
       }
-    });
+    }
   }
 
   Future<List<Map<String, dynamic>>> getOrdersByDateRange(
@@ -1055,39 +1311,53 @@ class DatabaseService {
       // Calculate actual quantity to update based on sub-units
       double quantityToUpdate;
       if (isSubUnit) {
-        // Convert sub-units to whole units
+        // For sub-units, we need to calculate the equivalent in whole units
         quantityToUpdate = quantity.toDouble() / subUnitQuantity;
       } else {
         quantityToUpdate = quantity.toDouble();
       }
 
       // Calculate new quantity (allow negative for tracking oversold items)
-      final newQuantity = isDeducting 
-          ? currentQuantity - quantityToUpdate 
-          : currentQuantity + quantityToUpdate;
-
-      // If adding new stock and current quantity is negative,
-      // calculate the actual new quantity by adding to the negative value
-      final finalQuantity = !isDeducting && currentQuantity < 0
-          ? newQuantity // This will effectively add to the negative value
-          : newQuantity;
+      double newQuantity;
+      if (isDeducting) {
+        // When deducting, we simply subtract the quantity
+        newQuantity = currentQuantity - quantityToUpdate;
+      } else {
+        // When adding, if current quantity is negative, we first offset the negative balance
+        newQuantity = currentQuantity + quantityToUpdate;
+      }
 
       await txn.update(
         tableProducts,
-        {'quantity': finalQuantity},
+        {'quantity': newQuantity},
         where: 'id = ?',
         whereArgs: [productId],
       );
 
-      // Log stock update
+      // Log stock update with detailed information
       final currentUser = AuthService.instance.currentUser;
       if (currentUser != null) {
+        final String actionDetails;
+        if (isDeducting) {
+          if (isSubUnit) {
+            actionDetails = 'Deducted ${quantity} ${product['sub_unit_name'] ?? 'pieces'} (${quantityToUpdate.toStringAsFixed(2)} units) from ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
+          } else {
+            actionDetails = 'Deducted ${quantity} units of ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
+          }
+        } else {
+          if (isSubUnit) {
+            actionDetails = 'Added ${quantity} ${product['sub_unit_name'] ?? 'pieces'} (${quantityToUpdate.toStringAsFixed(2)} units) to ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
+          } else {
+            actionDetails = 'Added ${quantity} units of ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
+          }
+        }
+        
         await logActivity(
           currentUser.id!,
           currentUser.username,
           isDeducting ? 'deduct_stock' : 'add_stock',
           'Stock update',
-          '${isDeducting ? 'Deducted' : 'Added'} ${quantity} ${isSubUnit ? product['sub_unit_name'] ?? 'pieces' : 'units'} of ${product['product_name']}. New quantity: ${finalQuantity}'
+          actionDetails
         );
       }
     });
@@ -1110,15 +1380,52 @@ class DatabaseService {
     return result.isNotEmpty;
   }
 
+  Future<int> addCreditor(Map<String, dynamic> creditor) async {
+    try {
+    final db = await database;
+      int creditorId = await db.insert(tableCreditors, creditor);
+      
+      // Log the activity
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null) {
+        await logActivity(
+          currentUser.id!,
+          currentUser.username,
+          actionCreateCreditor,
+          'Create creditor',
+          'Created creditor: ${creditor['name']} with balance: ${creditor['balance']}'
+        );
+      }
+      
+      return creditorId;
+    } catch (e) {
+      print('Error adding creditor: $e');
+      rethrow;
+    }
+  }
+
   Future<void> updateCreditorBalanceAndStatus(
     int id,
     double newBalance,
     String details,
     String status,
   ) async {
+    try {
     final db = await database;
+      
+      // Get the creditor name for logging
+      final creditor = await db.query(
+        tableCreditors,
+        columns: ['name'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      
+      final creditorName = creditor.isNotEmpty ? creditor.first['name'] as String : 'Unknown';
+      
     await db.update(
-      tableCreditors,
+        tableCreditors,
       {
         'balance': newBalance,
         'details': details,
@@ -1127,55 +1434,48 @@ class DatabaseService {
       },
       where: 'id = ?',
       whereArgs: [id],
-    );
+      );
+      
+      // Log the activity
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null) {
+        await logActivity(
+          currentUser.id!,
+          currentUser.username,
+          actionUpdateCreditor,
+          'Update creditor',
+          'Updated creditor: $creditorName, new balance: $newBalance, status: $status'
+        );
+      }
+    } catch (e) {
+      print('Error updating creditor: $e');
+      rethrow;
+    }
   }
 
-  Future<void> addCreditor(Map<String, dynamic> creditor) async {
-    final db = await database;
-    await db.insert(tableCreditors, creditor);
-  }
-
-  // Debtor related methods
-  Future<List<Map<String, dynamic>>> getDebtors() async {
-    final db = await database;
-    return await db.query(tableDebtors, orderBy: 'created_at DESC');
-  }
-
-  Future<bool> checkDebtorExists(String name) async {
-    final db = await database;
-    final result = await db.query(
-      tableDebtors,
-      where: 'name = ?',
-      whereArgs: [name],
-      limit: 1,
-    );
-    return result.isNotEmpty;
-  }
-
-  Future<void> updateDebtorBalanceAndStatus(
-    int id,
-    double newBalance,
-    String details,
-    String status,
-  ) async {
-    final db = await database;
-    await db.update(
-      tableDebtors,
-      {
-        'balance': newBalance,
-        'details': details,
-        'status': status,
-        'last_updated': DateTime.now().toIso8601String(),
-      },
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-  }
-
-  Future<void> addDebtor(Map<String, dynamic> debtor) async {
-    await withTransaction((txn) async {
-      await txn.insert(tableDebtors, debtor);
-    });
+  Future<int> addDebtor(Map<String, dynamic> debtor) async {
+    try {
+      int debtorId = await withTransaction((txn) async {
+        return await txn.insert(tableDebtors, debtor);
+      });
+      
+      // Log the activity
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null) {
+        await logActivity(
+          currentUser.id!,
+          currentUser.username,
+          actionCreateDebtor,
+          'Create debtor',
+          'Created debtor: ${debtor['name']} with balance: ${debtor['balance']}'
+        );
+      }
+      
+      return debtorId;
+    } catch (e) {
+      print('Error adding debtor: $e');
+      rethrow;
+    }
   }
 
   // Stats related methods
@@ -1203,19 +1503,41 @@ class DatabaseService {
   }
 
   Future<void> checkAndCreateAdminUser() async {
-    final db = await database;
-    final adminUser = await getUserByUsername('admin');
-    
-    if (adminUser == null) {
-      await createUser({
-        'username': 'admin',
-        'password': AuthService.instance.hashPassword('Account@2024'),
-        'full_name': 'System Administrator',
-        'email': 'admin@example.com',
-        'role': ROLE_ADMIN,
-        'created_at': DateTime.now().toIso8601String(),
-        'permissions': PERMISSION_FULL_ACCESS,
-      });
+    try {
+      // Get a direct database connection
+      final db = await database;
+      
+      // Check if admin user exists with a simple query
+      final results = await db.rawQuery(
+        'SELECT id FROM $tableUsers WHERE username = ?',
+        ['admin']
+      );
+      
+      if (results.isEmpty) {
+        print('Admin user not found, creating...');
+        
+        // Create admin user with a simple insert
+        await db.execute('''
+          INSERT OR IGNORE INTO $tableUsers 
+          (username, password, full_name, email, role, created_at, permissions)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', [
+          'admin',
+          AuthService.instance.hashPassword('Account@2024'),
+          'System Administrator',
+          'admin@example.com',
+          ROLE_ADMIN,
+          DateTime.now().toIso8601String(),
+          PERMISSION_FULL_ACCESS,
+        ]);
+        
+        print('Admin user created successfully');
+      } else {
+        print('Admin user already exists with ID: ${results.first['id']}');
+      }
+    } catch (e) {
+      print('Error checking/creating admin user: $e');
+      // Don't throw, just log the error
     }
   }
 
@@ -1293,24 +1615,53 @@ class DatabaseService {
     return results.isNotEmpty ? results.first : null;
   }
 
+  // Add a method to completely reset the database
   Future<void> resetDatabase() async {
+    print('Completely resetting database...');
+    
+    // Close any existing database connection
+    await _closeDatabase();
+    _database = null;
+    _initialized = false;
+    
+    // Get the database path
+    final databasePath = await getDatabasesPath();
+    final path = join(databasePath, 'malbrose_db.db');
+    
+    // Delete all database files
     try {
-      final databasePath = await getDatabasesPath();
-      final path = join(databasePath, 'malbrose_db.db');
+      final dbFile = File(path);
+      if (await dbFile.exists()) {
+        await dbFile.delete();
+        print('Deleted main database file: $path');
+      }
       
-      // Delete the database
-      await deleteDatabase(path);
+      final shmFile = File('$path-shm');
+      if (await shmFile.exists()) {
+        await shmFile.delete();
+        print('Deleted database shared memory file: $path-shm');
+      }
       
-      // Reinitialize the database
-      _database = null;
-      await database;
+      final walFile = File('$path-wal');
+      if (await walFile.exists()) {
+        await walFile.delete();
+        print('Deleted database WAL file: $path-wal');
+      }
       
-      // Create admin user after reset
-      await checkAndCreateAdminUser();
+      final journalFile = File('$path-journal');
+      if (await journalFile.exists()) {
+        await journalFile.delete();
+        print('Deleted database journal file: $path-journal');
+      }
     } catch (e) {
-      print('Error resetting database: $e');
-      rethrow;
+      print('Error deleting database files: $e');
     }
+    
+    // Reinitialize the database
+    _database = await _initDatabase();
+    _initialized = true;
+    
+    print('Database reset complete');
   }
 
   Future<void> addUsernameColumnToActivityLogs() async {
@@ -1359,30 +1710,139 @@ class DatabaseService {
     }
   }
 
-  // Update the completeSale method to log properly
-  Future<void> completeSale(Order order) async {
+  // Add migration method for sub_unit_buying_price column
+  Future<void> addSubUnitBuyingPriceColumn() async {
     final db = await database;
-    await db.transaction((txn) async {
-      // Update order status
-      await txn.update(
-        tableOrders,
-        {
-          'status': 'COMPLETED',
-          'payment_status': 'PAID'
-        },
-        where: 'order_number = ?',
-        whereArgs: [order.orderNumber],
-      );
-
-      // Update product quantities
-      for (var item in order.items ?? []) {
-        await txn.rawUpdate('''
-          UPDATE $tableProducts 
-          SET quantity = quantity - ?
-          WHERE id = ?
-        ''', [item.quantity, item.productId]);
+    try {
+      // Check if sub_unit_buying_price column exists
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableProducts)');
+      bool hasSubUnitBuyingPriceColumn = tableInfo.any((column) => column['name'] == 'sub_unit_buying_price');
+      
+      if (!hasSubUnitBuyingPriceColumn) {
+        // Add sub_unit_buying_price column
+        await db.execute('ALTER TABLE $tableProducts ADD COLUMN sub_unit_buying_price REAL');
+        
+        // Initialize with calculated values for existing products
+        var products = await db.query(
+          tableProducts,
+          where: 'has_sub_units = 1 AND sub_unit_quantity > 0'
+        );
+        
+        for (var product in products) {
+          final buyingPrice = (product['buying_price'] as num).toDouble();
+          final subUnitQuantity = (product['sub_unit_quantity'] as num).toDouble();
+          final calculatedSubUnitBuyingPrice = buyingPrice / subUnitQuantity;
+          
+          await db.update(
+            tableProducts,
+            {'sub_unit_buying_price': calculatedSubUnitBuyingPrice},
+            where: 'id = ?',
+            whereArgs: [product['id']],
+          );
+        }
+        
+        print('Added sub_unit_buying_price column and initialized values');
       }
-    });
+    } catch (e) {
+      print('Error adding sub_unit_buying_price column: $e');
+    }
+  }
+
+  // Update the completeSale method to log properly
+  Future<void> completeSale(Order order, {String paymentMethod = 'Cash'}) async {
+    int retryCount = 0;
+    const maxRetries = 3;
+    const baseDelay = 200; // milliseconds
+    
+    while (true) {
+      try {
+        final db = await database;
+        await db.transaction((txn) async {
+          // Update order status
+          await txn.update(
+            tableOrders,
+            {
+              'status': 'COMPLETED',
+              'payment_status': 'PAID',
+              'payment_method': paymentMethod,
+              'updated_at': DateTime.now().toIso8601String(),
+            },
+            where: 'order_number = ?',
+            whereArgs: [order.orderNumber],
+          );
+
+          // Get order items with complete information
+          final orderItems = await txn.rawQuery('''
+            SELECT oi.*, p.sub_unit_quantity, p.quantity as current_quantity
+            FROM $tableOrderItems oi
+            JOIN $tableProducts p ON oi.product_id = p.id
+            WHERE oi.order_id = ?
+          ''', [order.id]);
+
+          // Update product quantities directly within this transaction
+          for (var item in orderItems) {
+            final productId = item['product_id'] as int;
+            final quantity = (item['quantity'] as num).toInt();
+            final isSubUnit = (item['is_sub_unit'] as num) == 1;
+            final subUnitQuantity = (item['sub_unit_quantity'] as num?)?.toDouble();
+            final currentQuantity = (item['current_quantity'] as num).toDouble();
+            
+            // Calculate quantity to deduct
+            double quantityToDeduct;
+            if (isSubUnit && subUnitQuantity != null && subUnitQuantity > 0) {
+              // For sub-units, convert to whole units
+              quantityToDeduct = quantity / subUnitQuantity;
+            } else {
+              quantityToDeduct = quantity.toDouble();
+            }
+            
+            // Calculate new quantity
+            final newQuantity = currentQuantity - quantityToDeduct;
+            
+            // Update product quantity directly in this transaction
+            await txn.update(
+              tableProducts,
+              {'quantity': newQuantity},
+              where: 'id = ?',
+              whereArgs: [productId],
+            );
+          }
+          
+          // Log the completed sale directly within this transaction
+          final currentUser = AuthService.instance.currentUser;
+          if (currentUser != null) {
+            await txn.insert(tableActivityLogs, {
+              'user_id': currentUser.id,
+              'username': currentUser.username,
+              'action': actionCompleteSale,
+              'action_type': 'Complete sale',
+              'details': 'Completed sale for order #${order.orderNumber}, customer: ${order.customerName}, amount: ${order.totalAmount}',
+              'timestamp': DateTime.now().toIso8601String(),
+            });
+          }
+        });
+        
+        // If we get here, the transaction was successful
+        return;
+      } catch (e) {
+        print('Error completing sale (attempt ${retryCount + 1}): $e');
+        
+        if (e is DatabaseException && 
+            (e.toString().contains('database is locked') || 
+             e.toString().contains('database locked')) && 
+            retryCount < maxRetries) {
+          retryCount++;
+          // Exponential backoff with jitter
+          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
+          print('Database locked. Retrying in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          continue;
+        }
+        
+        // If we've reached max retries or it's not a locking issue, rethrow
+        rethrow;
+      }
+    }
   }
 
   // Add this method to get proper order counts
@@ -1821,18 +2281,20 @@ class DatabaseService {
         oi.quantity,
         oi.unit_price,
         oi.selling_price,
-        COALESCE(oi.adjusted_price, 
-          CASE 
-            WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0
-            THEN oi.selling_price / p.sub_unit_quantity
-            ELSE oi.selling_price
-          END
-        ) as effective_price,
+        COALESCE(oi.adjusted_price, oi.selling_price) as effective_price,
         oi.total_amount,
         oi.is_sub_unit,
         oi.sub_unit_name,
         p.sub_unit_quantity,
-        p.buying_price as base_buying_price
+        p.buying_price as product_buying_price,
+        p.sub_unit_buying_price,
+        CASE 
+          WHEN oi.is_sub_unit = 1 AND p.sub_unit_buying_price IS NOT NULL
+          THEN p.sub_unit_buying_price
+          WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0
+          THEN p.buying_price / p.sub_unit_quantity
+          ELSE p.buying_price
+        END as buying_price
       FROM $tableOrders o
       JOIN $tableOrderItems oi ON o.id = oi.order_id
       JOIN $tableProducts p ON oi.product_id = p.id
@@ -1851,13 +2313,7 @@ class DatabaseService {
     final results = await db.rawQuery('''
       SELECT
         COUNT(DISTINCT o.id) as total_orders,
-        SUM(
-          CASE 
-            WHEN oi.is_sub_unit = 1 AND p.sub_unit_price IS NOT NULL
-            THEN p.sub_unit_price * oi.quantity
-            ELSE oi.selling_price * oi.quantity
-          END
-        ) as total_sales,
+        SUM(oi.total_amount) as total_sales,
         SUM(
           CASE 
             WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0
@@ -1866,10 +2322,11 @@ class DatabaseService {
           END
         ) as total_buying_cost,
         SUM(
+          oi.total_amount - 
           CASE 
-            WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0 AND p.sub_unit_price IS NOT NULL
-            THEN (p.sub_unit_price - (p.buying_price / p.sub_unit_quantity)) * oi.quantity
-            ELSE (oi.selling_price - p.buying_price) * oi.quantity
+            WHEN oi.is_sub_unit = 1 AND p.sub_unit_quantity > 0
+            THEN (p.buying_price / p.sub_unit_quantity) * oi.quantity
+            ELSE p.buying_price * oi.quantity
           END
         ) as total_profit,
         COUNT(DISTINCT o.customer_id) as unique_customers,
@@ -2143,5 +2600,137 @@ class DatabaseService {
       return await getUserById(currentUser.id!);
     }
     return null;
+  }
+
+  // Debtor related methods
+  Future<List<Map<String, dynamic>>> getDebtors() async {
+    final db = await database;
+    return await db.query(tableDebtors, orderBy: 'created_at DESC');
+  }
+
+  Future<bool> checkDebtorExists(String name) async {
+    final db = await database;
+    final result = await db.query(
+      tableDebtors,
+      where: 'name = ?',
+      whereArgs: [name],
+      limit: 1,
+    );
+    return result.isNotEmpty;
+  }
+
+  Future<void> updateDebtorBalanceAndStatus(
+    int id,
+    double newBalance,
+    String details,
+    String status,
+  ) async {
+    try {
+      final db = await database;
+      
+      // Get the debtor name for logging
+      final debtor = await db.query(
+        tableDebtors,
+        columns: ['name'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      
+      final debtorName = debtor.isNotEmpty ? debtor.first['name'] as String : 'Unknown';
+      
+      await db.update(
+        tableDebtors,
+        {
+          'balance': newBalance,
+          'details': details,
+          'status': status,
+          'last_updated': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      
+      // Log the activity
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null) {
+        await logActivity(
+          currentUser.id!,
+          currentUser.username,
+          actionUpdateDebtor,
+          'Update debtor',
+          'Updated debtor: $debtorName, new balance: $newBalance, status: $status'
+        );
+      }
+    } catch (e) {
+      print('Error updating debtor: $e');
+      rethrow;
+    }
+  }
+
+  // Delete an order and its items
+  Future<void> deleteOrder(int orderId) async {
+    int retryCount = 0;
+    const maxRetries = 3;
+    const baseDelay = 200; // milliseconds
+    
+    while (true) {
+      try {
+        final db = await database;
+        
+        await db.transaction((txn) async {
+          // First, delete all order items
+          await txn.delete(
+            'order_items',
+            where: 'order_id = ?',
+            whereArgs: [orderId],
+          );
+          
+          // Then delete the order
+          await txn.delete(
+            'orders',
+            where: 'id = ?',
+            whereArgs: [orderId],
+          );
+        });
+        
+        // If we get here, the transaction was successful
+        return;
+      } catch (e) {
+        print('Error deleting order (attempt ${retryCount + 1}): $e');
+        
+        if (e is DatabaseException && 
+            (e.toString().contains('database is locked') || 
+             e.toString().contains('database locked')) && 
+            retryCount < maxRetries) {
+          retryCount++;
+          // Exponential backoff with jitter
+          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
+          print('Database locked. Retrying in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          continue;
+        }
+        
+        // If we've reached max retries or it's not a locking issue, rethrow
+        rethrow;
+      }
+    }
+  }
+
+  // Add a method to explicitly initialize the database
+  Future<void> initialize() async {
+    try {
+      // Get a database connection to trigger initialization
+      final db = await database;
+      
+      // Test the connection with a simple query
+      final result = await db.rawQuery('SELECT 1');
+      print('Database initialized successfully: $result');
+    } catch (e) {
+      print('Error initializing database: $e');
+      
+      // If initialization fails, try to reset the database
+      await resetDatabase();
+    }
   }
 }
