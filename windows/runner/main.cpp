@@ -1,17 +1,35 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
-
+#include <iostream>
 #include "flutter_window.h"
 #include "utils.h"
+#include "dll_loader.h"
+
+// Add Windows App SDK and Win32 API linking
+#pragma comment(lib, "windowsapp")
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "kernel32.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "advapi32.lib")
+
+// Add delay load handling
+#pragma comment(lib, "delayimp.lib")
+#pragma comment(linker, "/DELAYLOAD:api-ms-win-core-winrt-error-l1-1-0.dll")
+#pragma comment(linker, "/DELAYLOAD:api-ms-win-core-winrt-l1-1-0.dll")
+#pragma comment(linker, "/DELAYLOAD:api-ms-win-core-winrt-string-l1-1-0.dll")
+
+// Remove the CONSOLE subsystem pragma that was causing linking errors
+// #pragma comment(linker, "/SUBSYSTEM:CONSOLE")
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
-  // Attach to console when present (e.g., 'flutter run') or create a
-  // new console when running with a debugger.
-  if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
-    CreateAndAttachConsole();
-  }
+  // Always create and attach console for debugging
+  CreateAndAttachConsole();
+
+  // Initialize the DLL loader
+  DllLoader::Initialize();
 
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.
