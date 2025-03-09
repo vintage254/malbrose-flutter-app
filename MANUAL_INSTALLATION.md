@@ -44,6 +44,7 @@ Your computer needs some additional software to run Malbrose POS:
    - Right-click and select "Copy" (or press Ctrl+C)
    - Go to the "Malbrose POS" folder you created on your Desktop
    - Right-click inside the folder and select "Paste" (or press Ctrl+V)
+   - Make sure the `sqlite3.dll` file is included in the folder
 
 ### STEP 4: Create a Shortcut
 
