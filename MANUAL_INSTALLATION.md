@@ -23,7 +23,8 @@ This guide will help you install the Malbrose POS application on your computer.
 Your computer needs some additional software to run Malbrose POS:
 
 1. **Install Visual C++ Package (64-bit)**:
-   - Double-click the file named `VC_redist.x64.exe` in the ZIP folder
+   - Open the "prerequisites" folder from the ZIP
+   - Double-click the file named `VC_redist.x64.exe`
    - Click "Yes" if asked for permission
    - Check the box to agree to the terms
    - Click "Install"
@@ -31,7 +32,8 @@ Your computer needs some additional software to run Malbrose POS:
    - Click "Close" when finished
 
 2. **Install Visual C++ Package (32-bit)**:
-   - Double-click the file named `VC_redist.x86.exe` in the ZIP folder
+   - Open the "prerequisites" folder from the ZIP
+   - Double-click the file named `VC_redist.x86.exe`
    - Follow the same steps as above
 
 ### STEP 3: Install Malbrose POS
