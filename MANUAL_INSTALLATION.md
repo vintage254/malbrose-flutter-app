@@ -105,8 +105,8 @@ When you first start the application, you'll need to set up the database connect
 ## Need Help?
 
 If you still have problems, please contact support:
-- Phone: (123) 456-7890
-- Email: support@example.com
+- Phone: +254 748322954
+- Email: derricknjuguna414@gmail.com
 
 Please have the following information ready:
 - The version of Windows you're using
