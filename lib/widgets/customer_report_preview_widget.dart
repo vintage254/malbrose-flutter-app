@@ -22,135 +22,169 @@ class CustomerReportPreviewWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Container(
-        margin: const EdgeInsets.all(defaultPadding),
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.amber.withOpacity(0.7),
+              Colors.orange.shade900,
+            ],
+          ),
+        ),
         child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(defaultPadding),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Container(
+              margin: const EdgeInsets.all(defaultPadding),
+              constraints: BoxConstraints(
+                // Set minimum width to ensure horizontal scrolling works when needed
+                minWidth: MediaQuery.of(context).size.width - 2 * defaultPadding,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(defaultPadding),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Customer Report Preview',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
                     Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.download),
-                          label: const Text('Download PDF'),
-                          onPressed: () => downloadPdf(context),
+                        Text(
+                          'Customer Report Preview',
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                        const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          onPressed: () async {
-                            try {
-                              await CustomerReportService.instance.generateAndPrintCustomerReport(report, customer, context);
-                            } catch (e) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Error printing report: $e')),
-                                );
-                              }
-                            }
-                          },
-                          icon: const Icon(Icons.print),
-                          label: const Text('Print'),
+                        Row(
+                          children: [
+                            ElevatedButton.icon(
+                              icon: const Icon(Icons.download),
+                              label: const Text('Download PDF'),
+                              onPressed: () => downloadPdf(context),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              onPressed: () async {
+                                try {
+                                  await CustomerReportService.instance.generateAndPrintCustomerReport(report, customer, context);
+                                } catch (e) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Error printing report: $e')),
+                                    );
+                                  }
+                                }
+                              },
+                              icon: const Icon(Icons.print),
+                              label: const Text('Print'),
+                            ),
+                          ],
                         ),
                       ],
                     ),
+                    const Divider(color: Colors.white),
+                    
+                    // Wrap the content in a Card for better visibility against gradient background
+                    Card(
+                      elevation: 4,
+                      margin: const EdgeInsets.only(top: defaultPadding),
+                      child: Padding(
+                        padding: const EdgeInsets.all(defaultPadding),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Report header information
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildInfoRow('Report Number:', report.reportNumber),
+                                  _buildInfoRow('Customer:', customer.name),
+                                  _buildInfoRow('Generated On:', DateFormat('MMM dd, yyyy').format(report.createdAt)),
+                                  
+                                  // Date range information
+                                  Builder(
+                                    builder: (context) {
+                                      if (report.startDate != null && report.endDate != null) {
+                                        return _buildInfoRow('Report Period:', 
+                                          '${DateFormat('MMM dd, yyyy').format(report.startDate!)} to ${DateFormat('MMM dd, yyyy').format(report.endDate!)}');
+                                      } else if (report.startDate != null) {
+                                        return _buildInfoRow('From:', DateFormat('MMM dd, yyyy').format(report.startDate!));
+                                      } else if (report.endDate != null) {
+                                        return _buildInfoRow('To:', DateFormat('MMM dd, yyyy').format(report.endDate!));
+                                      } else {
+                                        return const SizedBox.shrink();
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                            
+                            const SizedBox(height: defaultPadding),
+                            
+                            // Completed Orders Section
+                            if (report.completedItems != null && report.completedItems!.isNotEmpty)
+                              _buildOrdersSection('Completed Orders', report.completedItems!, report.completedAmount, Colors.green.shade100),
+                            
+                            // Pending Orders Section
+                            if (report.pendingItems != null && report.pendingItems!.isNotEmpty)
+                              _buildOrdersSection('Pending Orders', report.pendingItems!, report.pendingAmount, Colors.orange.shade100),
+                            
+                            const SizedBox(height: defaultPadding),
+                            
+                            // Summary section
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.blue.shade200),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    'Completed Orders: KSH ${report.completedAmount.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.normal,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Pending Orders: KSH ${report.pendingAmount.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.normal,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  const Divider(),
+                                  Text(
+                                    'Total Amount: KSH ${report.totalAmount.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-                const Divider(),
-                
-                // Report header information
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildInfoRow('Report Number:', report.reportNumber),
-                      _buildInfoRow('Customer:', customer.name),
-                      _buildInfoRow('Generated On:', DateFormat('MMM dd, yyyy').format(report.createdAt)),
-                      
-                      // Date range information
-                      Builder(
-                        builder: (context) {
-                          if (report.startDate != null && report.endDate != null) {
-                            return _buildInfoRow('Report Period:', 
-                              '${DateFormat('MMM dd, yyyy').format(report.startDate!)} to ${DateFormat('MMM dd, yyyy').format(report.endDate!)}');
-                          } else if (report.startDate != null) {
-                            return _buildInfoRow('From:', DateFormat('MMM dd, yyyy').format(report.startDate!));
-                          } else if (report.endDate != null) {
-                            return _buildInfoRow('To:', DateFormat('MMM dd, yyyy').format(report.endDate!));
-                          } else {
-                            return const SizedBox.shrink();
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                
-                const SizedBox(height: defaultPadding),
-                
-                // Completed Orders Section
-                if (report.completedItems != null && report.completedItems!.isNotEmpty)
-                  _buildOrdersSection('Completed Orders', report.completedItems!, report.completedAmount, Colors.green.shade100),
-                
-                // Pending Orders Section
-                if (report.pendingItems != null && report.pendingItems!.isNotEmpty)
-                  _buildOrdersSection('Pending Orders', report.pendingItems!, report.pendingAmount, Colors.orange.shade100),
-                
-                const SizedBox(height: defaultPadding),
-                
-                // Summary section
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'Completed Orders: KSH ${report.completedAmount.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.normal,
-                          fontSize: 14,
-                        ),
-                      ),
-                      Text(
-                        'Pending Orders: KSH ${report.pendingAmount.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.normal,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Divider(),
-                      Text(
-                        'Total Amount: KSH ${report.totalAmount.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -170,6 +204,7 @@ class CustomerReportPreviewWidget extends StatelessWidget {
               label, 
               style: const TextStyle(fontWeight: FontWeight.bold)
             ),
+
           ),
           const SizedBox(width: 8),
           Flexible(
@@ -354,4 +389,5 @@ class CustomerReportPreviewWidget extends StatelessWidget {
       labelStyle: TextStyle(color: color),
     );
   }
+} 
 } 
