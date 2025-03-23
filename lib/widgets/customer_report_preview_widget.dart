@@ -9,6 +9,7 @@ import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 
 class CustomerReportPreviewWidget extends StatelessWidget {
   final CustomerReport report;
@@ -334,19 +335,41 @@ class CustomerReportPreviewWidget extends StatelessWidget {
       // Generate the PDF
       final pdfBytes = await CustomerReportService.generateCustomerReportPdf(report, customer);
       
-      // Get the downloads directory
-      final directory = await getApplicationDocumentsDirectory();
-      final filePath = '${directory.path}/customer_report_${report.reportNumber}.pdf';
+      // Ask user for save location
+      String? outputPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Choose where to save the Customer Report PDF',
+        fileName: 'customer_report_${report.reportNumber}.pdf',
+        allowedExtensions: ['pdf'],
+        type: FileType.custom,
+      );
       
-      // Write the PDF to a file
-      final file = File(filePath);
+      if (outputPath == null) {
+        // User cancelled the picker
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Download cancelled'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+      
+      // Ensure .pdf extension
+      if (!outputPath.toLowerCase().endsWith('.pdf')) {
+        outputPath = '$outputPath.pdf';
+      }
+      
+      // Write the PDF to the selected location
+      final file = File(outputPath);
       await file.writeAsBytes(pdfBytes);
       
       // Show success message with the file path
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('PDF saved to: $filePath'),
+            content: Text('PDF saved to: $outputPath'),
             duration: const Duration(seconds: 5),
             action: SnackBarAction(
               label: 'Open',

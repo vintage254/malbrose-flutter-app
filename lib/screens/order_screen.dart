@@ -302,53 +302,72 @@ class _OrderScreenState extends State<OrderScreen> {
     final maxQuantity = isSubUnit ? 
         (product.quantity * (product.subUnitQuantity ?? 1)) : 
         product.quantity;
+    bool showWarning = false;
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Add ${product.productName}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: quantityController,
-              decoration: InputDecoration(
-                labelText: 'Quantity (Max: $maxQuantity)',
-                suffix: Text(isSubUnit ? product.subUnitName ?? 'pieces' : 'units'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text('Add ${product.productName}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: quantityController,
+                decoration: InputDecoration(
+                  labelText: 'Quantity (Available: $maxQuantity)',
+                  suffix: Text(isSubUnit ? product.subUnitName ?? 'pieces' : 'units'),
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (value) {
+                  final enteredQuantity = int.tryParse(value);
+                  if (enteredQuantity != null) {
+                    setState(() {
+                      showWarning = enteredQuantity > maxQuantity;
+                    });
+                  }
+                },
               ),
-              keyboardType: TextInputType.number,
+              TextField(
+                controller: priceController,
+                decoration: const InputDecoration(
+                  labelText: 'Price per unit',
+                  prefixText: 'KSH ',
+                ),
+                keyboardType: TextInputType.number,
+              ),
+              if (showWarning)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text(
+                    'Warning: This quantity exceeds available stock and will result in negative inventory.',
+                    style: TextStyle(color: Colors.red, fontSize: 12),
+                  ),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
             ),
-            TextField(
-              controller: priceController,
-              decoration: const InputDecoration(
-                labelText: 'Price per unit',
-                prefixText: 'KSH ',
-              ),
-              keyboardType: TextInputType.number,
+            ElevatedButton(
+              onPressed: () {
+                final quantity = int.tryParse(quantityController.text);
+                final price = double.tryParse(priceController.text);
+                
+                if (quantity != null && quantity > 0 &&
+                    price != null && price > 0) {
+                  setState(() {
+                    _addToCart(product, quantity, isSubUnit, isSubUnit ? product.subUnitName : null, price);
+                  });
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text('Add to Cart'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final quantity = int.tryParse(quantityController.text);
-              final price = double.tryParse(priceController.text);
-              
-              if (quantity != null && quantity > 0 && quantity <= maxQuantity &&
-                  price != null && price > 0) {
-                setState(() {
-                  _addToCart(product, quantity, isSubUnit, isSubUnit ? product.subUnitName : null, price);
-                });
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('Add to Cart'),
-          ),
-        ],
       ),
     );
   }

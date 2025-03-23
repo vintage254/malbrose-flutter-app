@@ -50,24 +50,58 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
             product: product,
             quantity: item['quantity'] as int,
             total: item['total_amount'] as double,
-            isSubUnit: false, // Set based on your needs
-            subUnitName: null,
-            subUnitQuantity: null,
+            isSubUnit: item['is_sub_unit'] == 1,
+            subUnitName: item['sub_unit_name'] as String?,
+            subUnitQuantity: product.subUnitQuantity,
           );
         }));
 
-        // Filter out any null items and navigate
-        final validCartItems = cartItems.whereType<CartItem>().toList();
+        // Filter out any null items
+        List<CartItem> editableCartItems = cartItems.whereType<CartItem>().toList();
         
         if (mounted) {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => OrderCartPanel(
-                orderId: order['id'] as int,
-                isEditing: true,
-                initialItems: validCartItems,
-                customerName: order['customer_name'] as String?,
+              builder: (context) => StatefulBuilder(
+                builder: (context, setState) => Scaffold(
+                  appBar: AppBar(
+                    title: Text('Edit Order #${order['order_number']}'),
+                    backgroundColor: Colors.amber,
+                    actions: [
+                      IconButton(
+                        icon: const Icon(Icons.add),
+                        onPressed: () async {
+                          // Show product selection dialog
+                          await _showProductSelectionDialog(context, (product, quantity, isSubUnit, subUnitName) {
+                            setState(() {
+                              final price = isSubUnit ? product.subUnitPrice ?? product.sellingPrice : product.sellingPrice;
+                              editableCartItems.add(CartItem(
+                                product: product,
+                                quantity: quantity,
+                                total: quantity * price,
+                                isSubUnit: isSubUnit,
+                                subUnitName: subUnitName,
+                                subUnitQuantity: isSubUnit ? product.subUnitQuantity : null,
+                              ));
+                            });
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                  body: OrderCartPanel(
+                    orderId: order['id'] as int,
+                    isEditing: true,
+                    initialItems: editableCartItems,
+                    customerName: order['customer_name'] as String?,
+                    onRemoveItem: (index) {
+                      setState(() {
+                        editableCartItems.removeAt(index);
+                      });
+                    },
+                  ),
+                ),
               ),
             ),
           );
@@ -83,6 +117,110 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
         }
       }
     }
+  }
+  
+  Future<void> _showProductSelectionDialog(
+    BuildContext context,
+    Function(Product, int, bool, String?) onProductSelected
+  ) async {
+    try {
+      final products = await DatabaseService.instance.getAllProducts();
+      if (!mounted) return;
+
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Add Product'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: products.length,
+              itemBuilder: (context, index) {
+                final product = Product.fromMap(products[index]);
+                return ListTile(
+                  title: Text(product.productName),
+                  subtitle: Text('KSH ${product.sellingPrice.toStringAsFixed(2)}'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showQuantityDialog(context, product, onProductSelected);
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+      );
+    } catch (e) {
+      print('Error loading products: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading products: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _showQuantityDialog(
+    BuildContext context,
+    Product product,
+    Function(Product, int, bool, String?) onProductSelected
+  ) async {
+    final quantityController = TextEditingController();
+    bool isSubUnit = false;
+
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text('Add ${product.productName}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (product.hasSubUnits) ...[
+                SwitchListTile(
+                  title: Text('Sell by ${product.subUnitName ?? "pieces"}'),
+                  value: isSubUnit,
+                  onChanged: (value) => setState(() => isSubUnit = value),
+                ),
+              ],
+              TextField(
+                controller: quantityController,
+                decoration: InputDecoration(
+                  labelText: 'Quantity',
+                  suffix: Text(isSubUnit ? product.subUnitName ?? 'pieces' : 'units'),
+                ),
+                keyboardType: TextInputType.number,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final quantity = int.tryParse(quantityController.text);
+                if (quantity != null && quantity > 0) {
+                  onProductSelected(
+                    product,
+                    quantity,
+                    isSubUnit,
+                    isSubUnit ? product.subUnitName : null,
+                  );
+                  Navigator.pop(context);
+                }
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override

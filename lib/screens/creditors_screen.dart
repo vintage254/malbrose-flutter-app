@@ -13,11 +13,13 @@ class CreditorsScreen extends StatefulWidget {
 
 class _CreditorsScreenState extends State<CreditorsScreen> {
   List<Creditor> _creditors = [];
+  List<Creditor> _filteredCreditors = [];
   bool _isLoading = true;
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _balanceController = TextEditingController();
   final _detailsController = TextEditingController();
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -31,6 +33,7 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
       if (mounted) {
         setState(() {
           _creditors = creditorsData.map((map) => Creditor.fromMap(map)).toList();
+          _filteredCreditors = List.from(_creditors);
           _isLoading = false;
         });
       }
@@ -40,6 +43,20 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
           SnackBar(content: Text('Error loading creditors: $e')),
         );
       }
+    }
+  }
+
+  void _filterCreditors(String query) {
+    if (query.isEmpty) {
+      setState(() {
+        _filteredCreditors = List.from(_creditors);
+      });
+    } else {
+      setState(() {
+        _filteredCreditors = _creditors
+            .where((creditor) => creditor.name.toLowerCase().contains(query.toLowerCase()))
+            .toList();
+      });
     }
   }
 
@@ -253,14 +270,29 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
                     ),
                   ),
                   const SizedBox(height: defaultPadding),
+                  // Search bar
+                  TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search creditors by name...',
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                    onChanged: _filterCreditors,
+                  ),
+                  const SizedBox(height: defaultPadding),
                   Expanded(
                     child: _isLoading
                         ? const Center(child: CircularProgressIndicator())
                         : Card(
                             child: ListView.builder(
-                              itemCount: _creditors.length,
+                              itemCount: _filteredCreditors.length,
                               itemBuilder: (context, index) {
-                                final creditor = _creditors[index];
+                                final creditor = _filteredCreditors[index];
                                 return ListTile(
                                   title: Text(creditor.name),
                                   subtitle: Column(
@@ -313,6 +345,7 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
     _nameController.dispose();
     _balanceController.dispose();
     _detailsController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 } 

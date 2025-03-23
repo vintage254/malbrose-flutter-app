@@ -12,6 +12,9 @@ import 'package:my_flutter_app/models/cart_item_model.dart';
 import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
 import 'package:my_flutter_app/services/printer_service.dart';
+import 'package:my_flutter_app/models/customer_model.dart';
+import 'dart:async';
+import 'dart:math';
 
 class ReceiptPanel extends StatefulWidget {
   final Order order;
@@ -31,11 +34,21 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
   List<Map<String, dynamic>> _orderItems = [];
   bool _isLoading = true;
   String _selectedPaymentMethod = 'Cash';
+  final _creditDetailsController = TextEditingController();
+  final _creditCustomerNameController = TextEditingController();
+  Customer? _selectedCustomer;
 
   @override
   void initState() {
     super.initState();
     _loadOrderItems();
+  }
+
+  @override
+  void dispose() {
+    _creditDetailsController.dispose();
+    _creditCustomerNameController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadOrderItems() async {
@@ -201,6 +214,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                     DropdownMenuItem(value: 'Mobile Payment', child: Text('Mobile Payment')),
                     DropdownMenuItem(value: 'Credit Card', child: Text('Credit Card')),
                     DropdownMenuItem(value: 'Bank Transfer', child: Text('Bank Transfer')),
+                    DropdownMenuItem(value: 'Credit', child: Text('Credit')),
                   ],
                   onChanged: (value) {
                     setState(() {
@@ -216,7 +230,13 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
               if (widget.order.orderStatus == 'PENDING')
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: () => _completeSale(),
+                    onPressed: () {
+                      if (_selectedPaymentMethod == 'Credit') {
+                        _showCreditDetailsDialog();
+                      } else {
+                        _completeSale();
+                      }
+                    },
                     icon: const Icon(Icons.check_circle),
                     label: const Text('Complete Sale'),
                     style: ElevatedButton.styleFrom(
@@ -702,5 +722,118 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
         );
       }
     }
+  }
+
+  Future<void> _showCreditDetailsDialog() async {
+    // Reset the controllers
+    _creditDetailsController.clear();
+    _creditCustomerNameController.text = widget.order.customerName ?? '';
+    _selectedCustomer = null;
+    
+    // If there's a customer ID in the order, try to get customer details
+    if (widget.order.customerId != null) {
+      try {
+        final customerData = await DatabaseService.instance.getCustomerById(widget.order.customerId!);
+        if (customerData != null) {
+          _selectedCustomer = Customer.fromMap(customerData);
+          _creditCustomerNameController.text = _selectedCustomer!.name;
+        }
+      } catch (e) {
+        print('Error fetching customer: $e');
+      }
+    }
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Credit Sale Details'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Order will be added as credit to:'),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _creditCustomerNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Customer Name',
+                  border: OutlineInputBorder(),
+                ),
+                readOnly: _selectedCustomer != null, // Read-only if customer is selected
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _creditDetailsController,
+                decoration: const InputDecoration(
+                  labelText: 'Credit Details',
+                  border: OutlineInputBorder(),
+                  hintText: 'Enter any additional details about this credit',
+                ),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Total Amount: KSH ${widget.order.totalAmount.toStringAsFixed(2)}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              // Validate customer name
+              if (_creditCustomerNameController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please enter customer name')),
+                );
+                return;
+              }
+              
+              Navigator.of(context).pop();
+              
+              // First complete the sale normally
+              _completeSale();
+              
+              // Then add the credit record
+              try {
+                final creditor = {
+                  'name': _creditCustomerNameController.text.trim(),
+                  'balance': widget.order.totalAmount,
+                  'details': 'Credit for Order #${widget.order.orderNumber}. '
+                      '${_creditDetailsController.text.isNotEmpty ? _creditDetailsController.text : ''}',
+                  'status': 'PENDING',
+                  'created_at': DateTime.now().toIso8601String(),
+                };
+                
+                await DatabaseService.instance.addCreditor(creditor);
+                
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Credit record added successfully'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error adding credit record: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Confirm Credit Sale'),
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -12,6 +12,7 @@ import 'dart:async';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:my_flutter_app/services/printer_service.dart';
+import 'package:file_picker/file_picker.dart';
 
 class ActivityLogScreen extends StatefulWidget {
   const ActivityLogScreen({super.key});
@@ -37,6 +38,7 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
     DatabaseService.actionCreateOrder,
     DatabaseService.actionUpdateOrder,
     DatabaseService.actionCompleteSale,
+    DatabaseService.actionRevertReceipt,
     DatabaseService.actionCreateCreditor,
     DatabaseService.actionUpdateCreditor,
     DatabaseService.actionCreateDebtor,
@@ -91,6 +93,12 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
 
   Future<void> _exportToPDF() async {
     try {
+      // Show loading indicator
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Generating PDF...')),
+      );
+      
       final pdf = pw.Document();
       
       pdf.addPage(
@@ -126,17 +134,51 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
         ),
       );
 
-      final directory = await getApplicationDocumentsDirectory();
-      final fileName = 'activity_logs_${DateTime.now().toIso8601String()}.pdf';
-      final filePath = '${directory.path}/$fileName';
-      final file = File(filePath);
-      await file.writeAsBytes(await pdf.save());
+      // Generate the PDF bytes
+      final pdfBytes = await pdf.save();
+      
+      // Ask user for save location
+      String? outputPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Choose where to save the Activity Logs PDF',
+        fileName: 'activity_logs_${DateFormat('yyyy-MM-dd_HH-mm').format(DateTime.now())}.pdf',
+        allowedExtensions: ['pdf'],
+        type: FileType.custom,
+      );
+      
+      if (outputPath == null) {
+        // User cancelled the picker
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Export cancelled'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      
+      // Ensure .pdf extension
+      if (!outputPath.toLowerCase().endsWith('.pdf')) {
+        outputPath = '$outputPath.pdf';
+      }
+      
+      // Write the PDF to the selected location
+      final file = File(outputPath);
+      await file.writeAsBytes(pdfBytes);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Exported to $filePath'),
+          content: Text('Exported to $outputPath'),
           backgroundColor: Colors.green,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Open',
+            onPressed: () async {
+              // Open the PDF file using printing package
+              await Printing.sharePdf(bytes: pdfBytes, filename: outputPath ?? 'activity_log.pdf');
+            },
+          ),
         ),
       );
     } catch (e) {

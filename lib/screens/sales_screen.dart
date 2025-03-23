@@ -142,6 +142,9 @@ class _SalesScreenState extends State<SalesScreen> {
             throw Exception('Product not found: ${item.productId}');
           }
 
+          // Remove stock validation to allow negative inventory
+          // Note: We'll still calculate and display available quantity for information purposes,
+          // but we won't throw an exception anymore
           final currentQuantity = (product.first['quantity'] as num).toDouble();
           final subUnitQuantity = (product.first['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
           
@@ -149,12 +152,10 @@ class _SalesScreenState extends State<SalesScreen> {
               ? currentQuantity * subUnitQuantity 
               : currentQuantity;
 
+          // Instead of preventing the order, we'll just log if the quantity exceeds available stock
           if (item.quantity > availableQuantity) {
-            throw Exception(
-              'Insufficient stock for ${product.first['product_name']}. '
-              'Available: ${availableQuantity.toStringAsFixed(2)} '
-              '${item.isSubUnit ? (product.first['sub_unit_name'] ?? 'pieces') : 'units'}'
-            );
+            print('Warning: Selling more than available stock for ${product.first['product_name']}. '
+                 'Available: ${availableQuantity.toStringAsFixed(2)}, Requested: ${item.quantity}');
           }
         }
 

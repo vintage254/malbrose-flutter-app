@@ -8,6 +8,7 @@ import 'package:printing/printing.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:my_flutter_app/services/printer_service.dart';
+import 'package:file_picker/file_picker.dart';
 
 class DynamicCustomerReportWidget extends StatelessWidget {
   final Customer customer;
@@ -309,22 +310,57 @@ class DynamicCustomerReportWidget extends StatelessWidget {
 
   Future<void> _generateAndDownloadPdf(BuildContext context) async {
     try {
+      // Show loading indicator
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Generating PDF...')),
+      );
+      
       final pdf = await _generatePdf();
-      final output = await getTemporaryDirectory();
-      final file = File('${output.path}/customer_report_${customer.id}_${DateTime.now().millisecondsSinceEpoch}.pdf');
-      await file.writeAsBytes(await pdf.save());
+      
+      // Generate the PDF bytes
+      final pdfBytes = await pdf.save();
+      
+      // Ask user for save location
+      String? outputPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Choose where to save the Customer Report PDF',
+        fileName: 'customer_report_${customer.id}_${DateFormat('yyyy-MM-dd').format(DateTime.now())}.pdf',
+        allowedExtensions: ['pdf'],
+        type: FileType.custom,
+      );
+      
+      if (outputPath == null) {
+        // User cancelled the picker
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Download cancelled'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+      
+      // Ensure .pdf extension
+      if (!outputPath.toLowerCase().endsWith('.pdf')) {
+        outputPath = '$outputPath.pdf';
+      }
+      
+      // Write the PDF to the selected location
+      final file = File(outputPath);
+      await file.writeAsBytes(pdfBytes);
       
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('PDF saved to ${file.path}'),
+            content: Text('PDF saved to: $outputPath'),
+            duration: const Duration(seconds: 5),
             action: SnackBarAction(
               label: 'Open',
               onPressed: () async {
-                // This would typically open the file, but for simplicity we'll just show a message
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Opening PDF...')),
-                );
+                // Open the PDF file
+                final fileName = outputPath != null ? outputPath.split('/').last : 'customer_report.pdf';
+                await Printing.sharePdf(bytes: pdfBytes, filename: fileName);
               },
             ),
           ),

@@ -6,6 +6,10 @@ class Product {
   final String productName;
   final double buyingPrice;
   final double sellingPrice;
+  /// Quantity of the product in stock
+  /// Note: Negative values are allowed and represent oversold items.
+  /// A negative quantity indicates that more units have been sold
+  /// than were available in inventory.
   final int quantity;
   final String? description;
   final bool hasSubUnits;

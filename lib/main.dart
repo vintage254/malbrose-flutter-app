@@ -13,6 +13,7 @@ import 'package:my_flutter_app/screens/creditors_screen.dart';
 import 'package:my_flutter_app/screens/debtors_screen.dart';
 import 'package:my_flutter_app/screens/customer_reports_screen.dart';
 import 'package:my_flutter_app/screens/sales_report_screen.dart';
+import 'package:my_flutter_app/screens/order_history_screen.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:path/path.dart';
 import 'dart:io';
@@ -116,6 +117,7 @@ class MyApp extends StatelessWidget {
         '/printer-settings': (context) => const PrinterSettingsScreen(),
         '/setup': (context) => const SetupWizardScreen(),
         '/backup': (context) => const BackupScreen(),
+        '/order-history': (context) => const OrderHistoryScreen(),
       },
     );
   }

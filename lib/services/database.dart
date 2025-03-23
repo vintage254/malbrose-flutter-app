@@ -36,6 +36,7 @@ class DatabaseService {
   static const String actionCreateOrder = 'create_order';
   static const String actionUpdateOrder = 'update_order';
   static const String actionCompleteSale = 'complete_sale';
+  static const String actionRevertReceipt = 'revert_receipt';
   static const String actionUpdateProduct = 'update_product';
   static const String actionCreateProduct = 'create_product';
   static const String actionCreateCreditor = 'create_creditor';
@@ -1764,7 +1765,7 @@ class DatabaseService {
             tableOrders,
             {
               'status': 'COMPLETED',
-              'payment_status': 'PAID',
+              'payment_status': paymentMethod == 'Credit' ? 'PENDING' : 'PAID',
               'payment_method': paymentMethod,
               'updated_at': DateTime.now().toIso8601String(),
             },
@@ -1797,8 +1798,13 @@ class DatabaseService {
               quantityToDeduct = quantity.toDouble();
             }
             
-            // Calculate new quantity
+            // Calculate new quantity - allow negative inventory for tracking oversold items
             final newQuantity = currentQuantity - quantityToDeduct;
+            
+            // Log a warning if inventory is going negative
+            if (newQuantity < 0) {
+              print('WARNING: Product ID $productId going to negative inventory: $newQuantity');
+            }
             
             // Update product quantity directly in this transaction
             await txn.update(
@@ -1817,7 +1823,7 @@ class DatabaseService {
               'username': currentUser.username,
               'action': actionCompleteSale,
               'action_type': 'Complete sale',
-              'details': 'Completed sale for order #${order.orderNumber}, customer: ${order.customerName}, amount: ${order.totalAmount}',
+              'details': 'Completed sale for order #${order.orderNumber}, customer: ${order.customerName}, amount: ${order.totalAmount}, payment: $paymentMethod',
               'timestamp': DateTime.now().toIso8601String(),
             });
           }
@@ -2791,6 +2797,168 @@ class DatabaseService {
     } catch (e) {
       print('Error creating admin user: $e');
       rethrow;
+    }
+  }
+
+  // Add method to revert a completed order
+  Future<void> revertCompletedOrder(Order order) async {
+    int retryCount = 0;
+    const maxRetries = 3;
+    const baseDelay = 200; // milliseconds
+    
+    while (true) {
+      try {
+        final db = await database;
+        await db.transaction((txn) async {
+          // Verify the order is completed
+          final orderData = await txn.query(
+            tableOrders,
+            where: 'id = ? AND status = ?',
+            whereArgs: [order.id, 'COMPLETED'],
+            limit: 1,
+          );
+          
+          if (orderData.isEmpty) {
+            throw Exception('Order not found or not in COMPLETED status');
+          }
+          
+          // Get order items with complete information
+          final orderItems = await txn.rawQuery('''
+            SELECT oi.*, p.id as product_id, p.quantity as current_quantity, p.sub_unit_quantity
+            FROM $tableOrderItems oi
+            JOIN $tableProducts p ON oi.product_id = p.id
+            WHERE oi.order_id = ?
+          ''', [order.id]);
+          
+          if (orderItems.isEmpty) {
+            throw Exception('No items found for this order');
+          }
+          
+          // Return products to inventory
+          for (var item in orderItems) {
+            final productId = item['product_id'] as int;
+            final itemQuantity = (item['quantity'] as num).toInt();
+            final isSubUnit = (item['is_sub_unit'] as num) == 1;
+            final subUnitQuantity = (item['sub_unit_quantity'] as num?)?.toDouble();
+            final currentQuantity = (item['current_quantity'] as num).toDouble();
+            
+            // Calculate quantity to add back
+            double quantityToAdd;
+            if (isSubUnit && subUnitQuantity != null && subUnitQuantity > 0) {
+              // For sub-units, convert to whole units
+              quantityToAdd = itemQuantity / subUnitQuantity;
+            } else {
+              quantityToAdd = itemQuantity.toDouble();
+            }
+            
+            // Calculate new quantity
+            final newQuantity = currentQuantity + quantityToAdd;
+            
+            // Update product quantity
+            await txn.update(
+              tableProducts,
+              {'quantity': newQuantity},
+              where: 'id = ?',
+              whereArgs: [productId],
+            );
+          }
+          
+          // Update customer statistics if customer_id exists
+          if (order.customerId != null) {
+            final customerStats = await txn.query(
+              tableCustomers,
+              columns: ['total_orders', 'total_amount'],
+              where: 'id = ?',
+              whereArgs: [order.customerId],
+              limit: 1,
+            );
+            
+            if (customerStats.isNotEmpty) {
+              final currentTotalOrders = (customerStats.first['total_orders'] as int?) ?? 0;
+              final currentTotalAmount = (customerStats.first['total_amount'] as num?)?.toDouble() ?? 0.0;
+              
+              // Only update if totals would remain non-negative
+              if (currentTotalOrders > 0) {
+                final newTotalOrders = currentTotalOrders - 1;
+                final newTotalAmount = (currentTotalAmount - order.totalAmount).clamp(0.0, double.infinity);
+                
+                await txn.update(
+                  tableCustomers,
+                  {
+                    'total_orders': newTotalOrders,
+                    'total_amount': newTotalAmount,
+                    'updated_at': DateTime.now().toIso8601String(),
+                  },
+                  where: 'id = ?',
+                  whereArgs: [order.customerId],
+                );
+              }
+            }
+          }
+          
+          // Update order status to REVERTED
+          await txn.update(
+            tableOrders,
+            {
+              'status': 'REVERTED',
+              'payment_status': 'REVERTED',
+              'updated_at': DateTime.now().toIso8601String(),
+            },
+            where: 'id = ?',
+            whereArgs: [order.id],
+          );
+          
+          // Log the activity
+          final currentUser = AuthService.instance.currentUser;
+          if (currentUser != null) {
+            await txn.insert(tableActivityLogs, {
+              'user_id': currentUser.id,
+              'username': currentUser.username,
+              'action': actionRevertReceipt,
+              'action_type': 'Revert Receipt',
+              'details': 'Reverted receipt for order #${order.orderNumber}, customer: ${order.customerName}, amount: ${order.totalAmount}',
+              'timestamp': DateTime.now().toIso8601String(),
+            });
+          }
+        });
+        
+        // If the transaction was successful, return
+        return;
+      } catch (e) {
+        print('Error reverting order (attempt ${retryCount + 1}): $e');
+        
+        if (e is DatabaseException && 
+            (e.toString().contains('database is locked') || 
+             e.toString().contains('database locked')) && 
+            retryCount < maxRetries) {
+          retryCount++;
+          // Exponential backoff with jitter
+          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
+          print('Database locked. Retrying in $delay ms...');
+          await Future.delayed(Duration(milliseconds: delay));
+          continue;
+        }
+        
+        // If we've reached max retries or it's not a locking issue, rethrow
+        rethrow;
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>?> getCustomerById(int id) async {
+    try {
+      final db = await database;
+      final results = await db.query(
+        tableCustomers,
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      
+      return results.isNotEmpty ? results.first : null;
+    } catch (e) {
+      print('Error fetching customer by ID: $e');
+      return null;
     }
   }
 }

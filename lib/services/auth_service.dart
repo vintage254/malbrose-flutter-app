@@ -12,6 +12,9 @@ class AuthService {
   User? _currentUser;
   User? get currentUser => _currentUser;
 
+  // Check if user is logged in
+  bool get isLoggedIn => _currentUser != null;
+
   String hashPassword(String password) {
     final bytes = utf8.encode(password);
     final hash = sha256.convert(bytes);

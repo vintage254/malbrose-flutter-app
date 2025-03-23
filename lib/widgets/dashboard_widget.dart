@@ -9,6 +9,7 @@ import 'package:my_flutter_app/screens/sales_screen.dart';
 import 'package:my_flutter_app/screens/user_management_screen.dart';
 import 'package:my_flutter_app/screens/activity_log_screen.dart';
 import 'package:my_flutter_app/screens/sales_report_screen.dart';
+import 'package:my_flutter_app/screens/product_management_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 
@@ -40,6 +41,8 @@ class DashboardWidgetState extends State<DashboardWidget> {
     final cardWidth = (screenWidth - totalSpacing) / cardsPerRow;
     
     return Container(
+      width: double.infinity,
+      height: double.infinity,
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
@@ -111,6 +114,19 @@ class DashboardWidgetState extends State<DashboardWidget> {
                     ),
                   ),
                 ),
+                
+                SizedBox(
+                  width: cardWidth,
+                  child: _ActionCard(
+                    title: 'Make Sale',
+                    icon: Icons.point_of_sale,
+                    color: Colors.purple,
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SalesScreen()),
+                    ),
+                  ),
+                ),
                 SizedBox(
                   width: cardWidth,
                   child: _ActionCard(
@@ -168,13 +184,22 @@ class DashboardWidgetState extends State<DashboardWidget> {
                   SizedBox(
                     width: cardWidth,
                     child: _ActionCard(
-                      title: 'Make Sale',
-                      icon: Icons.point_of_sale,
-                      color: Colors.purple,
+                      title: 'Add/Edit Products',
+                      icon: Icons.inventory,
+                      color: Colors.teal,
                       onPressed: () => Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const SalesScreen()),
+                        MaterialPageRoute(builder: (_) => const ProductManagementScreen()),
                       ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: cardWidth,
+                    child: _ActionCard(
+                      title: 'Order History',
+                      icon: Icons.history,
+                      color: Colors.teal,
+                      onPressed: () => Navigator.pushNamed(context, '/order-history'),
                     ),
                   ),
                   SizedBox(
@@ -205,8 +230,8 @@ class DashboardWidgetState extends State<DashboardWidget> {
                     width: cardWidth,
                     child: _ActionCard(
                       title: 'Sales Reports',
-                      icon: Icons.history,
-                      color: Colors.teal,
+                      icon: Icons.bar_chart,
+                      color: Colors.blue,
                       onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const SalesReportScreen()),

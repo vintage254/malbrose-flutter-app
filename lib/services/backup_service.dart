@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/services/config_service.dart';
+import 'package:file_picker/file_picker.dart';
 
 class BackupService {
   static final BackupService instance = BackupService._init();
@@ -204,19 +205,33 @@ class BackupService {
       final backupPath = await createBackup();
       final backupFile = File(backupPath);
       
-      // Get the downloads directory
-      final downloadsDir = await getDownloadsDirectory();
-      if (downloadsDir == null) {
-        throw Exception('Downloads directory not found');
+      // Generate a default filename with timestamp
+      final timestamp = DateFormat('yyyy-MM-dd_HH-mm-ss').format(DateTime.now());
+      final defaultFilename = 'malbrose_backup_$timestamp.db';
+      
+      // Ask user for save location
+      String? outputPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Choose where to save the database backup',
+        fileName: defaultFilename,
+        allowedExtensions: ['db'],
+        type: FileType.custom,
+      );
+      
+      if (outputPath == null) {
+        // User cancelled the picker
+        throw Exception('Backup export cancelled by user');
       }
       
-      // Create a copy in the downloads directory
-      final timestamp = DateFormat('yyyy-MM-dd_HH-mm-ss').format(DateTime.now());
-      final exportPath = '${downloadsDir.path}/malbrose_backup_$timestamp.db';
-      await backupFile.copy(exportPath);
+      // Ensure .db extension
+      if (!outputPath.toLowerCase().endsWith('.db')) {
+        outputPath = '$outputPath.db';
+      }
       
-      debugPrint('Backup exported to: $exportPath');
-      return exportPath;
+      // Copy the backup to the selected location
+      await backupFile.copy(outputPath);
+      
+      debugPrint('Backup exported to: $outputPath');
+      return outputPath;
     } catch (e) {
       debugPrint('Error exporting backup: $e');
       rethrow;

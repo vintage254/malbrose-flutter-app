@@ -137,7 +137,11 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
                                     title: Text(product.productName),
                                     subtitle: Text(
                                       'Supplier: ${product.supplier}\n'
-                                      'Quantity: ${product.quantity}',
+                                      'Quantity: ${product.quantity < 0 ? "OVERSOLD (${product.quantity})" : product.quantity}',
+                                      style: TextStyle(
+                                        color: product.quantity < 0 ? Colors.red : null,
+                                        fontWeight: product.quantity < 0 ? FontWeight.bold : null,
+                                      ),
                                     ),
                                     trailing: Row(
                                       mainAxisSize: MainAxisSize.min,

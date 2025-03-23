@@ -13,11 +13,13 @@ class DebtorsScreen extends StatefulWidget {
 
 class _DebtorsScreenState extends State<DebtorsScreen> {
   List<Debtor> _debtors = [];
+  List<Debtor> _filteredDebtors = [];
   bool _isLoading = true;
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _balanceController = TextEditingController();
   final _detailsController = TextEditingController();
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -31,6 +33,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
       if (mounted) {
         setState(() {
           _debtors = debtorsData.map((map) => Debtor.fromMap(map)).toList();
+          _filteredDebtors = List.from(_debtors);
           _isLoading = false;
         });
       }
@@ -40,6 +43,20 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
           SnackBar(content: Text('Error loading debtors: $e')),
         );
       }
+    }
+  }
+
+  void _filterDebtors(String query) {
+    if (query.isEmpty) {
+      setState(() {
+        _filteredDebtors = List.from(_debtors);
+      });
+    } else {
+      setState(() {
+        _filteredDebtors = _debtors
+            .where((debtor) => debtor.name.toLowerCase().contains(query.toLowerCase()))
+            .toList();
+      });
     }
   }
 
@@ -252,14 +269,29 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                     ),
                   ),
                   const SizedBox(height: defaultPadding),
+                  // Search bar
+                  TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search debtors by name...',
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                    onChanged: _filterDebtors,
+                  ),
+                  const SizedBox(height: defaultPadding),
                   Expanded(
                     child: _isLoading
                         ? const Center(child: CircularProgressIndicator())
                         : Card(
                             child: ListView.builder(
-                              itemCount: _debtors.length,
+                              itemCount: _filteredDebtors.length,
                               itemBuilder: (context, index) {
-                                final debtor = _debtors[index];
+                                final debtor = _filteredDebtors[index];
                                 return ListTile(
                                   title: Text(debtor.name),
                                   subtitle: Column(
@@ -312,6 +344,7 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
     _nameController.dispose();
     _balanceController.dispose();
     _detailsController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 } 

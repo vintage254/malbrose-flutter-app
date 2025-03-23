@@ -20,18 +20,21 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
     print('Is Admin: $isAdmin');
 
     final List<Map<String, dynamic>> items = [
+      {'title': 'Home', 'icon': Icons.home, 'route': '/home'},
       {'title': 'Dashboard', 'icon': Icons.dashboard, 'route': '/main'},
       {'title': 'Orders', 'icon': Icons.shopping_cart, 'route': '/orders'},
+      
       {'title': 'Products', 'icon': Icons.inventory, 'route': '/products'},
       {'title': 'Creditors', 'icon': Icons.account_balance_wallet, 'route': '/creditors'},
       {'title': 'Debtors', 'icon': Icons.money_off, 'route': '/debtors'},
       {'title': 'Customer Reports', 'icon': Icons.receipt_long, 'route': '/customer-reports'},
+      {'title': 'Sales', 'icon': Icons.point_of_sale, 'route': '/sales'},
     ];
 
     // Add admin-only menu items
     if (isAdmin) {
       items.addAll([
-        {'title': 'Sales', 'icon': Icons.point_of_sale, 'route': '/sales'},
+        {'title': 'Order History', 'icon': Icons.history, 'route': '/order-history'},
         {'title': 'Users', 'icon': Icons.people, 'route': '/users'},
         {'title': 'Activity Log', 'icon': Icons.history, 'route': '/activity'},
         {'title': 'Sales Reports', 'icon': Icons.bar_chart, 'route': '/sales-report'},
@@ -83,7 +86,16 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
                     context,
                     item['title'] as String,
                     item['icon'] as IconData,
-                    () => Navigator.pushNamed(context, item['route'] as String),
+                    () {
+                      if (item['route'] == '/home') {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(builder: (context) => const HomeScreen())
+                        );
+                      } else {
+                        Navigator.pushNamed(context, item['route'] as String);
+                      }
+                    },
                   );
                 },
               ),

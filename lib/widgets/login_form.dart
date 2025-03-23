@@ -4,7 +4,12 @@ import 'package:my_flutter_app/screens/main_screen.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
 
 class LoginForm extends StatefulWidget {
-  const LoginForm({super.key});
+  final String? targetRoute;
+
+  const LoginForm({
+    super.key,
+    this.targetRoute,
+  });
 
   @override
   State<LoginForm> createState() => _LoginFormState();
@@ -111,10 +116,19 @@ class _LoginFormState extends State<LoginForm> {
         if (!mounted) return;
         
         if (user != null) {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const MainScreen()),
-            (route) => false,
-          );
+          // Close the dialog
+          Navigator.of(context).pop();
+          
+          if (widget.targetRoute != null) {
+            // Navigate to the target route if specified
+            Navigator.of(context).pushNamed(widget.targetRoute!);
+          } else {
+            // Navigate to the main screen if no target route specified
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const MainScreen()),
+              (route) => false,
+            );
+          }
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
