@@ -3,7 +3,6 @@ import 'package:path/path.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/models/user_model.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
-import 'package:flutter/foundation.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert'; // For utf8 encoding
 import 'package:synchronized/synchronized.dart';
@@ -12,7 +11,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:async';
 import 'package:my_flutter_app/models/product_model.dart';
-import 'package:my_flutter_app/services/config_service.dart';
+import 'package:excel/excel.dart';
+import 'package:path_provider/path_provider.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
@@ -197,37 +197,56 @@ class DatabaseService {
       if (!await dbDir.exists()) {
         await dbDir.create(recursive: true);
       }
-      
+
       // Set permissions for Linux platform
       if (Platform.isLinux) {
-        try {
-          // Ensure the directory has write permissions
-          final result = await Process.run('chmod', ['-R', '777', databasePath]);
-          if (result.exitCode != 0) {
-            print('Warning: Could not set directory permissions: ${result.stderr}');
-          }
-        } catch (e) {
-          print('Warning: Error setting directory permissions: $e');
-        }
+        await Process.run('chmod', ['777', databasePath]);
       }
 
-      // Create a new database with minimal options
+      // Open the database with the onCreate callback and onUpgrade handlers
       final db = await openDatabase(
         path,
-        version: 25,
-        onCreate: _createTables,
+        version: 25, // Use the existing version number
+        onCreate: _createTables, // Use the existing method name
         onUpgrade: _onUpgrade,
-        // Use single instance to prevent locking issues
-        singleInstance: true,
       );
-      
-      // Set pragmas outside of any transaction
-      await _setPragmas(db);
-      
+
+      // Apply specific department column migration if needed
+      await _migrateDatabase(db);
+
       return db;
     } catch (e) {
-      print('Database initialization error: $e');
-      throw Exception('Failed to initialize the database: $e');
+      print('Error during database initialization: $e');
+      rethrow;
+    }
+  }
+
+  // Migration to add department column to products table if it doesn't exist
+  Future<void> _migrateDatabase(Database db) async {
+    try {
+      // Check if department column exists in products table
+      final result = await db.rawQuery('PRAGMA table_info($tableProducts)');
+      final hasColumn = result.any((column) => column['name'] == 'department');
+      
+      if (!hasColumn) {
+        await _addDepartmentColumn(db);
+      }
+    } catch (e) {
+      print('Error during database migration: $e');
+    }
+  }
+
+  // Add department column to products table
+  Future<void> _addDepartmentColumn(Database db) async {
+    try {
+      await db.execute(
+        'ALTER TABLE $tableProducts ADD COLUMN department TEXT DEFAULT "${Product.deptLubricants}"'
+      );
+      print('Added department column to products table');
+    } catch (e) {
+      print('Error adding department column: $e');
+      // If the column already exists, SQLite will throw an error
+      // We can safely ignore it
     }
   }
 
@@ -381,6 +400,9 @@ class DatabaseService {
         created_by INTEGER,
         updated_by INTEGER,
         updated_at TEXT,
+        number_of_sub_units INTEGER,
+        price_per_sub_unit REAL,
+        department TEXT DEFAULT '${Product.deptLubricants}',
         FOREIGN KEY (created_by) REFERENCES $tableUsers (id),
         FOREIGN KEY (updated_by) REFERENCES $tableUsers (id)
       )
@@ -590,100 +612,32 @@ class DatabaseService {
     }
     
     if (oldVersion < 24) {
-      // Add order_id column to report_items table if it doesn't exist
-      try {
-        await db.execute('ALTER TABLE $tableReportItems ADD COLUMN order_id INTEGER NOT NULL DEFAULT 0');
-        print('Added order_id column to report_items table');
-      } catch (e) {
-        print('Error adding order_id column: $e');
-      }
+      // Migrate passwords if needed
+      await _migrateUnhashedPasswords(db);
+      
+      // Migrate activity logs if needed
+      await _migrateActivityLogs(db);
     }
     
     if (oldVersion < 25) {
-      // Add sub_unit_buying_price column to products table if it doesn't exist
+      // Add department column to products table if it doesn't exist
       try {
-        // Check if column exists first
-        var tableInfo = await db.rawQuery('PRAGMA table_info($tableProducts)');
-        bool hasSubUnitBuyingPriceColumn = tableInfo.any((column) => column['name'] == 'sub_unit_buying_price');
-        
-        if (!hasSubUnitBuyingPriceColumn) {
-          await db.execute('ALTER TABLE $tableProducts ADD COLUMN sub_unit_buying_price REAL');
-          
-          // Initialize with calculated values for existing products
-          var products = await db.query(
-            tableProducts,
-            where: 'has_sub_units = 1 AND sub_unit_quantity > 0'
-          );
-          
-          for (var product in products) {
-            final buyingPrice = (product['buying_price'] as num).toDouble();
-            final subUnitQuantity = (product['sub_unit_quantity'] as num).toDouble();
-            final calculatedSubUnitBuyingPrice = buyingPrice / subUnitQuantity;
-            
-            await db.update(
-              tableProducts,
-              {'sub_unit_buying_price': calculatedSubUnitBuyingPrice},
-              where: 'id = ?',
-              whereArgs: [product['id']],
-            );
-          }
-          
-          print('Added sub_unit_buying_price column and initialized values');
-        }
+        await db.execute('ALTER TABLE $tableProducts ADD COLUMN department TEXT DEFAULT "${Product.deptLubricants}"');
+        print('Added department column to products table in migration to v25');
       } catch (e) {
-        print('Error adding sub_unit_buying_price column: $e');
+        print('Error adding department column during upgrade: $e');
+        // If the column already exists, SQLite will throw an error
+        // We can safely ignore it
       }
-    }
-    
-    try {
-      // Check if sub_unit_quantity column exists in order_items
-      var tableInfo = await db.rawQuery('PRAGMA table_info($tableOrderItems)');
-      bool hasSubUnitQuantity = tableInfo.any((column) => column['name'] == 'sub_unit_quantity');
       
-      if (!hasSubUnitQuantity) {
-        await db.execute(
-          'ALTER TABLE $tableOrderItems ADD COLUMN sub_unit_quantity REAL'
-        );
+      // Add number_of_sub_units and price_per_sub_unit columns if they don't exist
+      try {
+        await db.execute('ALTER TABLE $tableProducts ADD COLUMN number_of_sub_units INTEGER');
+        await db.execute('ALTER TABLE $tableProducts ADD COLUMN price_per_sub_unit REAL');
+        print('Added sub-unit related columns to products table');
+      } catch (e) {
+        print('Error adding sub-unit columns: $e');
       }
-
-      // Backup existing data
-      final existingUsers = await db.query(tableUsers);
-      
-      // Create missing tables if needed
-      await _createTables(db, newVersion);
-      
-      // Migrate unhashed passwords
-      await _migrateUnhashedPasswords(db);
-      
-      // Migrate activity logs
-      await _migrateActivityLogs(db);
-
-      // Migrate customer data
-      await _migrateCustomerData(db);
-
-      // Restore users if needed
-      if (existingUsers.isNotEmpty) {
-        for (var user in existingUsers) {
-          if (!user.containsKey('permissions')) {
-            user['permissions'] = user['role'] == ROLE_ADMIN ? 
-              PERMISSION_FULL_ACCESS : PERMISSION_BASIC;
-          }
-          
-          // Ensure password is hashed
-          if (user['password'].toString().length != 64) {
-            user['password'] = _hashPassword(user['password'] as String);
-          }
-          
-          user.remove('id');
-          await db.insert(
-            tableUsers,
-            user,
-            conflictAlgorithm: ConflictAlgorithm.ignore,
-          );
-        }
-      }
-    } catch (e) {
-      print('Error during migration: $e');
     }
   }
 
@@ -1007,68 +961,46 @@ class DatabaseService {
         
         // Start a transaction
         return await db.transaction((txn) async {
-          // Insert the order
-          final orderId = await txn.insert(tableOrders, order.toMap());
+          // First insert the order
+          final orderMap = {
+            'order_number': order.orderNumber,
+            'customer_id': order.customerId,
+            'customer_name': order.customerName,
+            'total_amount': order.totalAmount,
+            'status': order.orderStatus,
+            'payment_status': order.paymentStatus,
+            'created_by': order.createdBy,
+            'created_at': order.createdAt.toIso8601String(),
+            'order_date': order.orderDate.toIso8601String(),
+          };
           
-          // Insert each order item
+          // Insert the order and get its ID
+          final orderId = await txn.insert(tableOrders, orderMap);
+          
+          // Then insert each order item with the correct orderId
           for (final item in order.items) {
-            final orderItem = OrderItem(
-              orderId: orderId,
-              productId: item.productId,
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              sellingPrice: item.sellingPrice,
-              totalAmount: item.totalAmount,
-              productName: item.productName,
-              isSubUnit: item.isSubUnit,
-              subUnitName: item.subUnitName,
-              subUnitQuantity: item.subUnitQuantity,
-            );
+            final orderItem = {
+              'order_id': orderId,
+              'product_id': item.productId,
+              'quantity': item.quantity,
+              'unit_price': item.unitPrice,
+              'selling_price': item.sellingPrice,
+              'total_amount': item.totalAmount,
+              'product_name': item.productName,
+              'is_sub_unit': item.isSubUnit ? 1 : 0,
+              'sub_unit_name': item.subUnitName,
+              'sub_unit_quantity': item.subUnitQuantity,
+              'adjusted_price': item.adjustedPrice,
+              'status': order.orderStatus,
+            };
             
-            await txn.insert(tableOrderItems, orderItem.toMap());
-            
-            // Update product inventory directly within this transaction
-            if (order.orderStatus == 'COMPLETED') {
-              // Get product information
-              final productResult = await txn.query(
-                tableProducts,
-                where: 'id = ?',
-                whereArgs: [item.productId],
-                limit: 1
-              );
-              
-              if (productResult.isNotEmpty) {
-                final product = productResult.first;
-                final currentQuantity = (product['quantity'] as num).toDouble();
-                final subUnitQuantity = (product['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
-                
-                // Calculate actual quantity to update based on sub-units
-                double quantityToUpdate;
-                if (item.isSubUnit) {
-                  // For sub-units, we need to calculate the equivalent in whole units
-                  quantityToUpdate = item.quantity.toDouble() / subUnitQuantity;
-                } else {
-                  quantityToUpdate = item.quantity.toDouble();
-                }
-                
-                // Calculate new quantity (allow negative for tracking oversold items)
-                final newQuantity = currentQuantity - quantityToUpdate;
-                
-                // Update product quantity directly in this transaction
-                await txn.update(
-                  tableProducts,
-                  {'quantity': newQuantity},
-                  where: 'id = ?',
-                  whereArgs: [item.productId],
-                );
-              }
-            }
+            await txn.insert(tableOrderItems, orderItem);
           }
           
-          // Log the activity directly within this transaction
+          // Log the activity
           await txn.insert(tableActivityLogs, {
-            'user_id': 1, // Default admin user ID
-            'username': 'admin',
+            'user_id': order.createdBy,
+            'username': 'admin', // Default to admin for now
             'action': actionCreateOrder,
             'action_type': 'Order Created',
             'details': 'Order #${order.orderNumber} created with ${order.items.length} items for KSH ${order.totalAmount}',
@@ -1085,14 +1017,12 @@ class DatabaseService {
              e.toString().contains('database locked')) && 
             retryCount < maxRetries) {
           retryCount++;
-          // Exponential backoff with jitter
           final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
           print('Database locked. Retrying in $delay ms...');
           await Future.delayed(Duration(milliseconds: delay));
           continue;
         }
         
-        // If we've reached max retries or it's not a locking issue, rethrow
         rethrow;
       }
     }
@@ -1248,6 +1178,11 @@ class DatabaseService {
   // Product related methods
   Future<Map<String, dynamic>?> getProductById(int id) async {
     try {
+      if (id <= 0) {
+        print('Warning: Invalid product ID requested: $id');
+        return null;
+      }
+      
       final db = await database;
       final results = await db.rawQuery('''
         SELECT 
@@ -1261,10 +1196,70 @@ class DatabaseService {
         LIMIT 1
       ''', [id]);
       
-      return results.isNotEmpty ? results.first : null;
+      if (results.isEmpty) {
+        print('Product with ID $id not found in database');
+        return null;
+      }
+      
+      return results.first;
     } catch (e) {
       print('Error getting product by id: $e');
       return null;
+    }
+  }
+
+  // Improved method to find products by name with better error handling and logging
+  Future<List<Map<String, dynamic>>> getProductByName(String productName) async {
+    try {
+      if (productName.isEmpty) {
+        print('Warning: Empty product name provided for lookup');
+        return [];
+      }
+      
+      final db = await database;
+      
+      // Try exact match first
+      var results = await db.query(
+        tableProducts,
+        where: 'product_name = ?',
+        whereArgs: [productName],
+        limit: 1,
+      );
+      
+      // If no exact match, try LIKE query
+      if (results.isEmpty) {
+        results = await db.query(
+          tableProducts,
+          where: 'product_name LIKE ?',
+          whereArgs: ['%$productName%'],
+          limit: 10,
+        );
+      }
+      
+      print('Product lookup for "$productName" found ${results.length} results');
+      
+      if (results.isEmpty) {
+        // As a fallback, search with more relaxed criteria (each word separately)
+        final words = productName.split(' ').where((w) => w.length > 2).toList();
+        if (words.isNotEmpty) {
+          String whereClause = words.map((w) => 'product_name LIKE ?').join(' OR ');
+          List<String> whereArgs = words.map((w) => '%$w%').toList();
+          
+          results = await db.query(
+            tableProducts,
+            where: whereClause,
+            whereArgs: whereArgs,
+            limit: 10,
+          );
+          
+          print('Fallback search for "$productName" found ${results.length} results');
+        }
+      }
+      
+      return results;
+    } catch (e) {
+      print('Error getting product by name: $e');
+      return [];
     }
   }
 
@@ -1342,15 +1337,15 @@ class DatabaseService {
         final String actionDetails;
         if (isDeducting) {
           if (isSubUnit) {
-            actionDetails = 'Deducted ${quantity} ${product['sub_unit_name'] ?? 'pieces'} (${quantityToUpdate.toStringAsFixed(2)} units) from ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
+            actionDetails = 'Deducted $quantity ${product['sub_unit_name'] ?? 'pieces'} (${quantityToUpdate.toStringAsFixed(2)} units) from ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
           } else {
-            actionDetails = 'Deducted ${quantity} units of ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
+            actionDetails = 'Deducted $quantity units of ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
           }
         } else {
           if (isSubUnit) {
-            actionDetails = 'Added ${quantity} ${product['sub_unit_name'] ?? 'pieces'} (${quantityToUpdate.toStringAsFixed(2)} units) to ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
+            actionDetails = 'Added $quantity ${product['sub_unit_name'] ?? 'pieces'} (${quantityToUpdate.toStringAsFixed(2)} units) to ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
           } else {
-            actionDetails = 'Added ${quantity} units of ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
+            actionDetails = 'Added $quantity units of ${product['product_name']}. New quantity: ${newQuantity.toStringAsFixed(2)}';
           }
         }
         
@@ -1555,33 +1550,31 @@ class DatabaseService {
 
   Future<List<Map<String, dynamic>>> getOrdersByStatus(String status) async {
     final db = await database;
-    try {
-      return await db.rawQuery('''
-        SELECT 
-          o.*,
-          oi.id as item_id,
-          oi.product_id,
-          oi.quantity,
-          oi.unit_price,
-          oi.selling_price,
-          oi.adjusted_price,
-          oi.total_amount as item_total,
-          oi.is_sub_unit,
-          oi.sub_unit_name,
-          p.product_name,
-          c.name as customer_name,
-          c.id as customer_id
-        FROM $tableOrders o
-        LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
-        LEFT JOIN $tableProducts p ON oi.product_id = p.id
-        LEFT JOIN $tableCustomers c ON o.customer_id = c.id
-        WHERE o.status = ?
-        ORDER BY o.created_at DESC
-      ''', [status]);
-    } catch (e) {
-      print('Error getting orders by status: $e');
-      return [];
-    }
+    return await db.rawQuery('''
+      SELECT 
+        o.*,
+        json_group_array(
+          json_object(
+            'item_id', oi.id,
+            'product_id', oi.product_id,
+            'quantity', oi.quantity,
+            'unit_price', oi.unit_price,
+            'selling_price', oi.selling_price,
+            'adjusted_price', oi.adjusted_price,
+            'total_amount', oi.total_amount,
+            'product_name', oi.product_name,
+            'is_sub_unit', oi.is_sub_unit,
+            'sub_unit_name', oi.sub_unit_name,
+            'sub_unit_quantity', oi.sub_unit_quantity,
+            'status', oi.status
+          )
+        ) as items_json
+      FROM $tableOrders o
+      LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
+      WHERE o.status = ?
+      GROUP BY o.id, o.order_number
+      ORDER BY o.created_at DESC
+    ''', [status]);
   }
 
   Future<void> ensureCustomerExists(String customerName) async {
@@ -1813,6 +1806,61 @@ class DatabaseService {
               where: 'id = ?',
               whereArgs: [productId],
             );
+          }
+          
+          // If payment method is Credit, add to creditors table
+          if (paymentMethod == 'Credit') {
+            final customerName = order.customerName ?? 'Unknown Customer';
+            
+            // Create a list of ordered products for details
+            final itemNames = orderItems.map((item) => 
+              '${item['product_name']} (${item['quantity']})'
+            ).join(', ');
+            
+            // Check if customer already exists in creditors
+            final existingCreditor = await txn.query(
+              tableCreditors,
+              where: 'name = ?',
+              whereArgs: [customerName],
+              limit: 1,
+            );
+            
+            if (existingCreditor.isNotEmpty) {
+              // Update existing creditor
+              final currentBalance = (existingCreditor.first['balance'] as num).toDouble();
+              final newBalance = currentBalance + order.totalAmount;
+              final currentDetails = existingCreditor.first['details'] as String? ?? '';
+              final newDetails = '$currentDetails\nOrder #${order.orderNumber}: $itemNames';
+              
+              await txn.update(
+                tableCreditors,
+                {
+                  'balance': newBalance,
+                  'details': newDetails,
+                  'status': 'PENDING',
+                  'updated_at': DateTime.now().toIso8601String(),
+                },
+                where: 'id = ?',
+                whereArgs: [existingCreditor.first['id']],
+              );
+              
+              print('Updated existing creditor: $customerName, new balance: $newBalance');
+            } else {
+              // Create new creditor
+              await txn.insert(
+                tableCreditors,
+                {
+                  'name': customerName,
+                  'balance': order.totalAmount,
+                  'details': 'Order #${order.orderNumber}: $itemNames',
+                  'status': 'PENDING',
+                  'created_at': DateTime.now().toIso8601String(),
+                  'updated_at': DateTime.now().toIso8601String(),
+                },
+              );
+              
+              print('Added new creditor: $customerName, balance: ${order.totalAmount}');
+            }
           }
           
           // Log the completed sale directly within this transaction
@@ -2676,7 +2724,7 @@ class DatabaseService {
   }
 
   // Delete an order and its items
-  Future<void> deleteOrder(int orderId) async {
+  Future<void> deleteOrderTransaction(int orderId) async {
     int retryCount = 0;
     const maxRetries = 3;
     const baseDelay = 200; // milliseconds
@@ -2959,6 +3007,659 @@ class DatabaseService {
     } catch (e) {
       print('Error fetching customer by ID: $e');
       return null;
+    }
+  }
+
+  // Add these methods to the DatabaseService class for Excel export and import
+  
+  /// Exports all products to an Excel file
+  Future<String> exportProductsToExcel() async {
+    try {
+      // 1. Get all products from database
+      final productsData = await getAllProducts();
+      final products = productsData.map((map) => Product.fromMap(map)).toList();
+      
+      // 2. Create a new Excel workbook
+      final excel = Excel.createExcel();
+      
+      // 3. Get the default sheet (usually "Sheet1")
+      String defaultSheet = excel.sheets.keys.first;
+      final sheet = excel[defaultSheet];
+      
+      // 4. Get the headers from Product model
+      final headersList = Product.getExcelHeaders();
+      
+      // 5. Create and append headers as the first row (as TextCellValue objects)
+      final headersRow = headersList.map((header) => TextCellValue(header)).toList();
+      sheet.appendRow(headersRow);
+      
+      // 6. Convert each product to row data and append
+      for (var product in products) {
+        final excelMap = product.toExcelMap();
+        
+        // Map each header to its corresponding value, converting to appropriate CellValue types
+        final rowData = headersList.map((header) {
+          final value = excelMap[header];
+          if (value == null) return null;
+          
+          if (value is int) return IntCellValue(value);
+          if (value is double) return DoubleCellValue(value);
+          return TextCellValue(value.toString());
+        }).toList();
+        
+        // Append row to the sheet
+        sheet.appendRow(rowData);
+      }
+      
+      // 7. Get app's documents directory for saving the file
+      final directory = await getApplicationDocumentsDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final filePath = '${directory.path}/products_export_$timestamp.xlsx';
+      
+      // 8. Save Excel to bytes
+      var fileBytes = excel.save();
+      if (fileBytes == null) {
+        throw Exception("Failed to generate Excel file");
+      }
+      
+      // 9. Write bytes to file
+      final file = File(filePath);
+      await file.writeAsBytes(fileBytes);
+      
+      print('✅ Excel file saved successfully at: $filePath');
+      return filePath;
+      
+    } catch (e) {
+      print('❌ Error exporting products to Excel: $e');
+      rethrow;
+    }
+  }
+
+  /// Creates a new product
+  Future<int> createProduct(Map<String, dynamic> productData) async {
+    try {
+      final db = await database;
+      
+      // Check if product with same name exists
+      final existingProducts = await db.query(
+        tableProducts,
+        where: 'product_name = ?',
+        whereArgs: [productData['product_name']],
+        limit: 1,
+      );
+      
+      if (existingProducts.isNotEmpty) {
+        // Update existing product
+        final productId = existingProducts.first['id'] as int;
+        await db.update(
+          tableProducts,
+          productData,
+          where: 'id = ?',
+          whereArgs: [productId],
+        );
+        return productId;
+      } else {
+        // Insert new product
+        return await db.insert(tableProducts, productData);
+      }
+    } catch (e) {
+      print('Error creating product: $e');
+      return -1;
+    }
+  }
+
+  // Helper method to parse double values from Excel cells
+  double? _parseDouble(dynamic value) {
+    if (value == null) return null;
+    
+    try {
+      if (value is double) return value;
+      if (value is int) return value.toDouble();
+      
+      // Check if the value is a product name or description that was inadvertently mapped to a numeric field
+      String stringValue = value.toString().trim();
+      // If the string contains mostly text, it's likely not a number at all
+      if (stringValue.length > 10 && !stringValue.contains(RegExp(r'[\d]'))) {
+        print('Detected non-numeric value in numeric field: $stringValue');
+        return null;
+      }
+      
+      // Extract only digits, decimal point, and negative sign
+      final numericChars = RegExp(r'[-\d.]+');
+      final match = numericChars.firstMatch(stringValue);
+      if (match != null) {
+        final numericString = match.group(0);
+        if (numericString != null) {
+          return double.tryParse(numericString);
+        }
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error parsing double: $e');
+      return null;
+    }
+  }
+  
+  // Helper method to parse integer values from Excel cells
+  int? _parseInt(dynamic value) {
+    if (value == null) return null;
+    
+    try {
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      
+      // Check if the value is a product name or description that was inadvertently mapped to a numeric field
+      String stringValue = value.toString().trim();
+      // If the string contains mostly text, it's likely not a number at all
+      if (stringValue.length > 10 && !stringValue.contains(RegExp(r'[\d]'))) {
+        print('Detected non-numeric value in numeric field: $stringValue');
+        return null;
+      }
+      
+      // Extract only digits and negative sign
+      final numericChars = RegExp(r'[-\d]+');
+      final match = numericChars.firstMatch(stringValue);
+      if (match != null) {
+        final numericString = match.group(0);
+        if (numericString != null) {
+          return int.tryParse(numericString);
+        }
+      }
+      
+      return null;
+    } catch (e) {
+      print('Error parsing int: $e');
+      return null;
+    }
+  }
+
+  // Helper method to set a cell to bold
+  void setBold(Sheet sheet, int row, int col) {
+    final cell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row));
+    // Apply bold style directly to cell
+    // Note: CellStyle might not be available in this version of the package
+    try {
+      cell.cellStyle = CellStyle(
+        bold: true,
+        horizontalAlign: HorizontalAlign.Center,
+      );
+    } catch (e) {
+      // If CellStyle is not available, just continue with plain text
+      print('Warning: Could not apply cell styling: $e');
+    }
+  }
+
+  /// Imports products from an Excel file
+  Future<Map<String, dynamic>> importProductsFromExcel(String filePath) async {
+    final errors = <String>[];
+    int imported = 0;
+    int failed = 0;
+    
+    try {
+      print('Starting Excel import from file: $filePath');
+      final bytes = await File(filePath).readAsBytes();
+      final excel = Excel.decodeBytes(bytes);
+      
+      if (excel.tables.isEmpty) {
+        return {
+          'success': false,
+          'message': 'No data found in Excel file',
+          'imported': 0,
+          'failed': 0,
+          'errors': errors,
+        };
+      }
+      
+      final sheet = excel.tables.entries.first.value;
+      
+      // Get headers from first row
+      final headers = <String>[];
+      for (var cell in sheet.rows.first) {
+        if (cell?.value != null) {
+          headers.add(cell!.value.toString().trim());
+        }
+      }
+      
+      print('Found headers in Excel file: ${headers.join(', ')}');
+      
+      // Map headers to database fields
+      final headerMap = <String, String>{};
+      
+      // First, analyze the data to determine which columns contain which type of data
+      final columnTypes = _analyzeColumnTypes(sheet, headers);
+      print('Column type analysis: $columnTypes');
+      
+      // Then use direct mapping based on column positions and column types
+      bool useDirectMapping = true;
+      if (useDirectMapping) {
+        // Find the likely product name column (usually first text column)
+        int productNameIndex = -1;
+        int descriptionIndex = -1;
+        int buyingPriceIndex = -1;
+        int sellingPriceIndex = -1;
+        int quantityIndex = -1;
+        int supplierIndex = -1;
+        int departmentIndex = -1;
+        
+        // Identify column types and positions
+        for (int i = 0; i < headers.length; i++) {
+          String type = columnTypes[i] ?? 'unknown';
+          String header = headers[i].toLowerCase();
+          
+          // Check for department column
+          if (header.contains('department') || header.contains('dept') || header.contains('category')) {
+            departmentIndex = i;
+            continue;
+          }
+          
+          // Direct match for product_name (case insensitive)
+          if (header == 'product_name' || header == 'product name' || header == 'productname') {
+            productNameIndex = i;
+            continue; // Skip other checks for this column
+          }
+          
+          if (type == 'text') {
+            // Try to identify text columns
+            if ((header.contains('name') || header.contains('product') || header.contains('item')) && 
+                !header.contains('department') && !header.contains('sub') && 
+                productNameIndex == -1) {
+              productNameIndex = i;
+            } else if (header.contains('desc') || header.contains('detail') || 
+                       descriptionIndex == -1) {
+              descriptionIndex = i;
+            } else if (header.contains('supp') || header.contains('vendor') || 
+                       header.contains('dist') || supplierIndex == -1) {
+              supplierIndex = i;
+            }
+          } else if (type == 'numeric') {
+            // Try to identify numeric columns
+            if (header.contains('buy') || header.contains('cost') || header.contains('purchase') || 
+                header.contains('bp') || buyingPriceIndex == -1) {
+              buyingPriceIndex = i;
+            } else if (header.contains('sell') || header.contains('price') || 
+                       header.contains('sp') || header.contains('retail') || 
+                       sellingPriceIndex == -1) {
+              sellingPriceIndex = i;
+            } else if (header.contains('qty') || header.contains('quant') || 
+                       header.contains('stock') || quantityIndex == -1) {
+              quantityIndex = i;
+            }
+          }
+        }
+        
+        // Debug print all headers for examination
+        for (int i = 0; i < headers.length; i++) {
+          print('Header $i: "${headers[i]}" - Type: ${columnTypes[i]}');
+        }
+        
+        // Ensure product_name is always mapped - by default use index 1 if all else fails
+        // This is based on your Excel which has product_name in column 1
+        if (productNameIndex == -1 && headers.length > 1) {
+          print('No product name column detected - defaulting to column index 1');
+          productNameIndex = 1;
+        }
+        
+        // If department wasn't found but first column might be department
+        if (departmentIndex == -1 && headers.isNotEmpty && 
+            headers[0].toLowerCase().contains('department')) {
+          departmentIndex = 0;
+        }
+        
+        // If we didn't find specific columns, use positional defaults based on the Excel screenshot
+        if (descriptionIndex == -1 && headers.length > 2) descriptionIndex = 2;
+        if (buyingPriceIndex == -1 && headers.length > 3) buyingPriceIndex = 3;
+        if (sellingPriceIndex == -1 && headers.length > 4) sellingPriceIndex = 4;
+        if (supplierIndex == -1 && headers.length > 5) supplierIndex = 5;
+        if (quantityIndex == -1 && headers.length > 6) quantityIndex = 6;
+        
+        // Map the identified indices to field names
+        if (productNameIndex >= 0) headerMap[productNameIndex.toString()] = 'product_name';
+        if (descriptionIndex >= 0) headerMap[descriptionIndex.toString()] = 'description';
+        if (buyingPriceIndex >= 0) headerMap[buyingPriceIndex.toString()] = 'buying_price';
+        if (sellingPriceIndex >= 0) headerMap[sellingPriceIndex.toString()] = 'selling_price';
+        if (supplierIndex >= 0) headerMap[supplierIndex.toString()] = 'supplier';
+        if (quantityIndex >= 0) headerMap[quantityIndex.toString()] = 'quantity';
+        if (departmentIndex >= 0) headerMap[departmentIndex.toString()] = 'department';
+        
+        // Add any additional mappings for sub-units if needed
+        int subUnitIndex = -1;
+        for (int i = 0; i < headers.length; i++) {
+          if (headers[i].toLowerCase().contains('sub') || headers[i].toLowerCase().contains('unit')) {
+            subUnitIndex = i;
+            break;
+          }
+        }
+        if (subUnitIndex >= 0) headerMap[subUnitIndex.toString()] = 'sub_unit_name';
+        
+        // Find column for number_of_sub_units if exists
+        for (int i = 0; i < headers.length; i++) {
+          if (headers[i].toLowerCase().contains('no') && headers[i].toLowerCase().contains('sub')) {
+            headerMap[i.toString()] = 'number_of_sub_units';
+            break;
+          }
+        }
+        
+        print('Using intelligent column mapping based on content analysis');
+        print('Mapped headers: $headerMap');
+      } else {
+        // Original header mapping logic as fallback
+        final standardHeaderMap = Product.getHeaderMappings();
+        final alternateHeaderMap = Product.getAlternateHeaderMappings();
+        
+        // First try exact matches with standard headers
+        for (var i = 0; i < headers.length; i++) {
+          final header = headers[i];
+          final headerLower = header.toLowerCase();
+          
+          // Check standard mapping (case insensitive)
+          bool matched = false;
+          standardHeaderMap.forEach((key, value) {
+            if (key.toLowerCase() == headerLower) {
+              headerMap[i.toString()] = value;
+              matched = true;
+            }
+          });
+          
+          // If not matched, check alternate mappings
+          if (!matched) {
+            alternateHeaderMap.forEach((key, value) {
+              if (key.toLowerCase() == headerLower) {
+                headerMap[i.toString()] = value;
+                matched = true;
+              }
+            });
+          }
+          
+          // Special cases for common variations
+          if (!matched) {
+            // These are the critical fields that are most commonly having issues
+            if (headerLower.contains('buy') || headerLower.contains('cost') || headerLower == 'bp') {
+              headerMap[i.toString()] = 'buying_price';
+            } else if (headerLower.contains('sell') || headerLower.contains('sale') || headerLower.contains('retail') || headerLower == 'sp') {
+              headerMap[i.toString()] = 'selling_price';
+            } else if (headerLower.contains('qty') || headerLower.contains('quant') || headerLower.contains('stock')) {
+              headerMap[i.toString()] = 'quantity';
+            } else if (headerLower.contains('supp') || headerLower.contains('vend') || headerLower.contains('dist')) {
+              headerMap[i.toString()] = 'supplier';
+            } else if (headerLower.contains('name') || headerLower.contains('prod') || headerLower.contains('item')) {
+              headerMap[i.toString()] = 'product_name';
+            } else if (headerLower.contains('desc')) {
+              headerMap[i.toString()] = 'description';
+            } else if (headerLower.contains('dept') || headerLower.contains('cat')) {
+              headerMap[i.toString()] = 'department';
+            }
+          }
+        }
+      }
+      
+      print('Mapped headers: $headerMap');
+      
+      // Check for required fields
+      final requiredFields = ['product_name', 'buying_price', 'selling_price', 'quantity', 'supplier'];
+      final missingFields = requiredFields.where((field) => !headerMap.values.contains(field)).toList();
+      
+      if (missingFields.isNotEmpty) {
+        return {
+          'success': false,
+          'message': 'Missing required fields: ${missingFields.join(', ')}',
+          'imported': 0,
+          'failed': 0,
+          'errors': errors,
+        };
+      }
+      
+      // Process data rows
+      for (var i = 1; i < sheet.rows.length; i++) {
+        try {
+          final row = sheet.rows[i];
+          
+          // Skip empty rows
+          if (row.isEmpty || row.every((cell) => cell?.value == null)) {
+            continue;
+          }
+          
+          final productData = <String, dynamic>{};
+          
+          // Map cell values to product fields
+          for (var j = 0; j < row.length; j++) {
+            final cell = row[j];
+            if (cell?.value != null && headerMap.containsKey(j.toString())) {
+              final fieldName = headerMap[j.toString()]!;
+              
+              // Process based on field type
+              if (['buying_price', 'selling_price', 'sub_unit_price', 'price_per_sub_unit', 'sub_unit_buying_price'].contains(fieldName)) {
+                // Convert to double
+                final numValue = _parseDouble(cell!.value);
+                if (numValue != null) {
+                  productData[fieldName] = numValue;
+                } else {
+                  print('Warning: Could not parse "${cell.value}" as double for field $fieldName');
+                }
+              } else if (['quantity', 'sub_unit_quantity', 'number_of_sub_units'].contains(fieldName)) {
+                // Convert to int
+                final numValue = _parseInt(cell!.value);
+                if (numValue != null) {
+                  productData[fieldName] = numValue;
+                } else {
+                  print('Warning: Could not parse "${cell.value}" as int for field $fieldName');
+                }
+              } else if (fieldName == 'has_sub_units') {
+                // Convert Yes/No to 1/0
+                final strValue = cell!.value.toString().trim().toLowerCase();
+                productData[fieldName] = (strValue == 'yes' || strValue == 'true' || strValue == '1') ? 1 : 0;
+              } else if (fieldName == 'received_date') {
+                // Parse date
+                try {
+                  final dateStr = cell!.value.toString().trim();
+                  DateTime dateValue;
+                  
+                  if (dateStr.contains('T')) {
+                    // ISO format
+                    dateValue = DateTime.parse(dateStr);
+                  } else {
+                    // Attempt to parse MM/DD/YYYY or similar formats
+                    final parts = dateStr.split(RegExp(r'[/\-]'));
+                    if (parts.length == 3) {
+                      // Assume month/day/year format
+                      dateValue = DateTime(int.parse(parts[2]), int.parse(parts[0]), int.parse(parts[1]));
+                    } else {
+                      // Default to current date if format is unrecognized
+                      dateValue = DateTime.now();
+                    }
+                  }
+                  
+                  productData[fieldName] = dateValue.toIso8601String();
+                } catch (e) {
+                  // Default to current date if parsing fails
+                  productData[fieldName] = DateTime.now().toIso8601String();
+                }
+              } else if (fieldName == 'department') {
+                // Use the department value from the Excel or default if empty
+                String departmentValue = cell!.value.toString().trim();
+                if (departmentValue.isEmpty) {
+                  productData[fieldName] = Product.deptLubricants;
+                } else {
+                  productData[fieldName] = Product.normalizeDepartment(departmentValue);
+                }
+              } else if (fieldName == 'supplier') {
+                // Use "System" as default for empty supplier
+                String supplierValue = cell!.value.toString().trim();
+                productData[fieldName] = supplierValue.isEmpty ? "System" : supplierValue;
+              } else {
+                // String fields
+                productData[fieldName] = cell!.value.toString().trim();
+              }
+            }
+          }
+          
+          // Set defaults for missing fields
+          if (!productData.containsKey('received_date') || productData['received_date'] == null) {
+            productData['received_date'] = DateTime.now().toIso8601String();
+          }
+          
+          if (!productData.containsKey('description')) {
+            productData['description'] = '';
+          }
+          
+          // Set default supplier if not provided
+          if (!productData.containsKey('supplier') || productData['supplier'] == null || productData['supplier'].toString().isEmpty) {
+            productData['supplier'] = 'System';
+          }
+          
+          // Set default department if not provided
+          if (!productData.containsKey('department') || productData['department'] == null) {
+            productData['department'] = Product.deptLubricants;
+          }
+          
+          // Set has_sub_units based on whether sub_unit fields are provided
+          if (productData.containsKey('sub_unit_name') && productData['sub_unit_name'] != null && productData['sub_unit_name'].toString().isNotEmpty) {
+            productData['has_sub_units'] = 1;
+          } else {
+            productData['has_sub_units'] = 0;
+          }
+          
+          // Fill in default values for required numeric fields
+          if (productData['buying_price'] == null) productData['buying_price'] = 0.0;
+          if (productData['selling_price'] == null) productData['selling_price'] = 0.0;
+          if (productData['quantity'] == null) productData['quantity'] = 0;
+          
+          // Make sure product_name is not empty
+          if (!productData.containsKey('product_name') || productData['product_name'] == null || 
+              productData['product_name'].toString().trim().isEmpty) {
+            // For product name, we need some value - use a generated name
+            productData['product_name'] = 'Product_${DateTime.now().millisecondsSinceEpoch}';
+            print('Warning: Generated placeholder name for product at row ${i+1}');
+          }
+          
+          // Print product data for debugging
+          print('Row ${i+1} data: ${productData.toString()}');
+          
+          // Check if product with same name exists
+          final result = await createProduct(productData);
+          if (result > 0) {
+            imported++;
+          } else {
+            failed++;
+            errors.add('Row ${i+1}: Failed to import product "${productData['product_name']}"');
+          }
+        } catch (e) {
+          errors.add('Row ${i+1}: Error processing row: $e');
+          failed++;
+        }
+      }
+      
+      // Return results
+      return {
+        'success': true,
+        'message': 'Imported $imported products successfully. Failed: $failed',
+        'imported': imported,
+        'failed': failed,
+        'errors': errors,
+      };
+    } catch (e) {
+      print('❌ Error importing products from Excel: $e');
+      return {
+        'success': false,
+        'message': 'Error importing products: $e',
+        'imported': imported,
+        'failed': failed,
+        'errors': errors,
+      };
+    }
+  }
+  
+  // Analyze column types based on sample data
+  Map<int, String> _analyzeColumnTypes(Sheet sheet, List<String> headers) {
+    Map<int, String> columnTypes = {};
+    
+    // Use first few data rows to determine column types
+    final sampleSize = min(5, sheet.rows.length - 1);
+    
+    for (int colIndex = 0; colIndex < headers.length; colIndex++) {
+      int numericCount = 0;
+      int dateCount = 0;
+      int textCount = 0;
+      
+      for (int rowIndex = 1; rowIndex <= sampleSize; rowIndex++) {
+        if (rowIndex < sheet.rows.length && 
+            colIndex < sheet.rows[rowIndex].length && 
+            sheet.rows[rowIndex][colIndex]?.value != null) {
+          final value = sheet.rows[rowIndex][colIndex]!.value;
+          
+          if (value is double || value is int) {
+            numericCount++;
+          } else {
+            final stringValue = value.toString().trim();
+            if (stringValue.isEmpty) continue;
+            
+            // Check if it's a numeric string
+            if (double.tryParse(stringValue) != null) {
+              numericCount++;
+            }
+            // Check if it's a date string
+            else if (RegExp(r'^\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}$').hasMatch(stringValue) ||
+                    DateTime.tryParse(stringValue) != null) {
+              dateCount++;
+            }
+            // Otherwise it's text
+            else {
+              textCount++;
+            }
+          }
+        }
+      }
+      
+      // Determine most common type for this column
+      if (numericCount > textCount && numericCount > dateCount) {
+        columnTypes[colIndex] = 'numeric';
+      } else if (dateCount > numericCount && dateCount > textCount) {
+        columnTypes[colIndex] = 'date';
+      } else {
+        columnTypes[colIndex] = 'text';
+      }
+    }
+    
+    return columnTypes;
+  }
+
+  /// Delete all products from the database
+  Future<int> deleteAllProducts() async {
+    final db = await database;
+    print('Deleting all products from the database...');
+    return await db.delete(tableProducts);
+  }
+
+  // Get all orders
+  Future<List<Map<String, dynamic>>> getAllOrders() async {
+    final db = await database;
+    return await db.query(tableOrders, orderBy: 'created_at DESC');
+  }
+
+  // Delete order
+  Future<int> deleteOrder(int id) async {
+    final db = await database;
+    try {
+      return await withTransaction((txn) async {
+        // First delete all order items
+        await txn.delete(
+          tableOrderItems,
+          where: 'order_id = ?',
+          whereArgs: [id],
+        );
+        
+        // Then delete the order
+        return await txn.delete(
+          tableOrders,
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+      });
+    } catch (e) {
+      print('Error deleting order: $e');
+      // Try using the more resilient method with retries
+      await deleteOrderTransaction(id);
+      return 1; // Return 1 to indicate success
     }
   }
 }
