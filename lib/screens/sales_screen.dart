@@ -9,6 +9,7 @@ import 'package:my_flutter_app/widgets/receipt_panel.dart';
 import 'package:my_flutter_app/services/order_service.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/widgets/order_cart_panel.dart';
+import 'dart:convert';
 
 class SalesScreen extends StatefulWidget {
   const SalesScreen({super.key});
@@ -53,49 +54,84 @@ class _SalesScreenState extends State<SalesScreen> {
         for (var entry in groupedOrders.entries) {
           final firstOrder = entry.value.first;
           
-          // Create order items
-          final orderItems = entry.value.map((o) => OrderItem(
-            id: o['item_id'],
-            orderId: o['id'],
-            productId: o['product_id'],
-            quantity: o['quantity'],
-            unitPrice: (o['unit_price'] as num).toDouble(),
-            sellingPrice: (o['selling_price'] as num).toDouble(),
-            adjustedPrice: (o['adjusted_price'] as num?)?.toDouble() ?? 
-                         (o['selling_price'] as num).toDouble(),
-            totalAmount: (o['item_total'] as num).toDouble(),
-            productName: o['product_name'] ?? 'Unknown Product',
-            isSubUnit: o['is_sub_unit'] == 1,
-            subUnitName: o['sub_unit_name'],
-          )).toList();
-
-          try {
-            // Calculate total amount from items
-            final totalAmount = orderItems.fold<double>(
-              0, 
-              (sum, item) => sum + item.totalAmount
-            );
-
-            // Create order with customer information
-            final order = Order(
-              id: firstOrder['id'],
-              orderNumber: firstOrder['order_number'],
-              totalAmount: totalAmount,
-              customerName: firstOrder['customer_name'] ?? 'Unknown Customer',
-              customerId: firstOrder['customer_id'],
-              orderStatus: firstOrder['status'] ?? 'PENDING',
-              paymentStatus: firstOrder['payment_status'] ?? 'PENDING',
-              createdBy: firstOrder['created_by'],
-              createdAt: DateTime.parse(firstOrder['created_at']),
-              orderDate: DateTime.parse(firstOrder['order_date']),
-              items: orderItems,
-            );
-            combinedOrders.add(order);
-          } catch (e) {
-            print('Error creating order object: $e');
-            print('Order data: ${firstOrder.toString()}');
-            continue;
+          // Parse items_json to get the actual order items
+          List<OrderItem> orderItems = [];
+          if (firstOrder['items_json'] != null) {
+            try {
+              final String jsonStr = firstOrder['items_json'].toString();
+              if (jsonStr.startsWith('[') && jsonStr.endsWith(']') && jsonStr != '[null]') {
+                final List<dynamic> itemsList = json.decode(jsonStr);
+                print('Parsed ${itemsList.length} items from items_json');
+                
+                for (var item in itemsList) {
+                  // Skip null entries
+                  if (item == null) continue;
+                  
+                  // Extract required fields with safe type casting
+                  final productId = (item['product_id'] as num?)?.toInt() ?? 0;
+                  final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
+                  final unitPrice = (item['unit_price'] as num?)?.toDouble() ?? 0.0;
+                  final sellingPrice = (item['selling_price'] as num?)?.toDouble() ?? 0.0;
+                  final itemTotal = (item['total_amount'] as num?)?.toDouble() ?? 
+                                   (quantity * sellingPrice);
+                  final productName = item['product_name'] as String? ?? 'Unknown Product';
+                  
+                  // Skip items with invalid product IDs or quantities
+                  if (productId <= 0 || quantity <= 0) {
+                    print('Skipping invalid item: $productName (ID: $productId, Qty: $quantity)');
+                    continue;
+                  }
+                  
+                  orderItems.add(OrderItem(
+                    id: (item['item_id'] as num?)?.toInt(),
+                    orderId: firstOrder['id'] as int,
+                    productId: productId,
+                    quantity: quantity,
+                    unitPrice: unitPrice,
+                    sellingPrice: sellingPrice,
+                    totalAmount: itemTotal,
+                    productName: productName,
+                    isSubUnit: item['is_sub_unit'] == 1,
+                    subUnitName: item['sub_unit_name'] as String?,
+                    subUnitQuantity: (item['sub_unit_quantity'] as num?)?.toDouble(),
+                    adjustedPrice: (item['adjusted_price'] as num?)?.toDouble(),
+                  ));
+                }
+              }
+            } catch (e) {
+              print('Error parsing items_json: $e');
+              print('Raw items_json: ${firstOrder['items_json']}');
+            }
           }
+
+          // Calculate total amount from items
+          final totalAmount = orderItems.fold<double>(
+            0, 
+            (sum, item) => sum + item.totalAmount
+          );
+
+          final order = Order(
+            id: firstOrder['id'] as int?,
+            orderNumber: firstOrder['order_number'] as String,
+            totalAmount: totalAmount > 0 ? totalAmount : (firstOrder['total_amount'] as num?)?.toDouble() ?? 0.0,
+            customerName: firstOrder['customer_name'] as String? ?? 'Unknown Customer',
+            customerId: firstOrder['customer_id'] as int?,
+            orderStatus: firstOrder['status'] as String? ?? 'PENDING',
+            paymentStatus: firstOrder['payment_status'] as String? ?? 'PENDING',
+            createdBy: firstOrder['created_by'] as int? ?? 1,
+            createdAt: DateTime.parse(firstOrder['created_at'] as String),
+            orderDate: DateTime.parse(firstOrder['order_date'] as String),
+            items: orderItems,
+          );
+          
+          print('Processed Order: ${order.orderNumber}');
+          print('- Items: ${orderItems.length}');
+          print('- Total Amount: ${order.totalAmount}');
+          for (var item in orderItems) {
+            print('  * ${item.productName}: ${item.quantity} x ${item.sellingPrice} = ${item.totalAmount}');
+          }
+          
+          combinedOrders.add(order);
         }
 
         setState(() {
@@ -103,8 +139,9 @@ class _SalesScreenState extends State<SalesScreen> {
           _isLoading = false;
         });
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('Error loading pending orders: $e');
+      print('Stack trace: $stackTrace');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -126,39 +163,52 @@ class _SalesScreenState extends State<SalesScreen> {
     }).toList();
   }
 
-  Future<void> _processSale(Order order) async {
+  void _processSale(Order order) async {
+    setState(() {
+      _isLoading = true;
+    });
+
     try {
-      await DatabaseService.instance.withTransaction((txn) async {
-        // First verify all items have sufficient stock
-        for (var item in order.items) {
-          final product = await txn.query(
-            DatabaseService.tableProducts,
-            where: 'id = ?',
-            whereArgs: [item.productId],
-            limit: 1,
-          );
-          
-          if (product.isEmpty) {
-            throw Exception('Product not found: ${item.productId}');
-          }
+      print('Processing sale with payment method: ${order.paymentMethod}');
+      print('Order items count: ${order.items.length}');
 
-          // Remove stock validation to allow negative inventory
-          // Note: We'll still calculate and display available quantity for information purposes,
-          // but we won't throw an exception anymore
-          final currentQuantity = (product.first['quantity'] as num).toDouble();
-          final subUnitQuantity = (product.first['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
-          
-          final availableQuantity = item.isSubUnit 
-              ? currentQuantity * subUnitQuantity 
-              : currentQuantity;
-
-          // Instead of preventing the order, we'll just log if the quantity exceeds available stock
-          if (item.quantity > availableQuantity) {
-            print('Warning: Selling more than available stock for ${product.first['product_name']}. '
-                 'Available: ${availableQuantity.toStringAsFixed(2)}, Requested: ${item.quantity}');
-          }
+      // Filter out invalid items (where productId = 0)
+      final validItems = order.items.where((item) => item.productId > 0).toList();
+      
+      if (validItems.isEmpty) {
+        throw Exception('No valid product items in order');
+      }
+      
+      // Create a new order with only the valid items
+      final validOrder = order.copyWith(items: validItems);
+      
+      // Verify stock for each product
+      for (final item in validOrder.items) {
+        final productId = item.productId;
+        
+        if (productId <= 0) {
+          print('Warning: Invalid product ID found: $productId');
+          continue;
         }
+        
+        // Get the product from the database
+        final productData = await DatabaseService.instance.getProductById(productId);
+        if (productData == null) {
+          throw Exception('Product not found: ID $productId');
+        }
+        
+        // Allow negative inventory, but log a warning
+        final currentQuantity = (productData['quantity'] as num).toDouble();
+        final requestedQuantity = item.isSubUnit
+            ? item.quantity / ((productData['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0)
+            : item.quantity.toDouble();
+            
+        if (currentQuantity < requestedQuantity) {
+          print('Warning: Insufficient stock for ${productData['product_name']}. Available: $currentQuantity, Requested: $requestedQuantity');
+        }
+      }
 
+      await DatabaseService.instance.withTransaction((txn) async {
         // Update order status using simple map
         await txn.update(
           DatabaseService.tableOrders,
@@ -171,8 +221,8 @@ class _SalesScreenState extends State<SalesScreen> {
           whereArgs: [order.orderNumber],
         );
 
-        // Update product quantities using simple values
-        for (var item in order.items) {
+        // Update product quantities using simple values - only for valid items
+        for (var item in validItems) {
           final product = await txn.query(
             DatabaseService.tableProducts,
             where: 'id = ?',
@@ -259,6 +309,10 @@ class _SalesScreenState extends State<SalesScreen> {
           ),
         );
       }
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
@@ -281,27 +335,99 @@ class _SalesScreenState extends State<SalesScreen> {
   Future<void> _editOrder(Order order) async {
     try {
       // Load order items
-      final orderItems = await DatabaseService.instance.getOrderItems(order.id!);
+      final orderItemsData = await DatabaseService.instance.getOrderItems(order.id!);
+      
+      print('Editing order: ${order.orderNumber} with ${orderItemsData.length} items');
+      
+      // Fix order items with invalid product IDs
+      final fixedOrderItems = await Future.wait(orderItemsData.map((item) async {
+        final productId = (item['product_id'] as int?) ?? 0;
+        if (productId > 0) return item;
+        
+        final productName = item['product_name'] as String? ?? '';
+        print('Fixing invalid product ID for item: $productName (ID: $productId)');
+        
+        if (productName.isEmpty) {
+          print('  Product name is empty, cannot fix');
+          return item;
+        }
+        
+        // Try to find the product by name
+        final products = await DatabaseService.instance.getProductByName(productName);
+        if (products.isNotEmpty) {
+          final newProductId = products.first['id'] as int;
+          print('  Found product by name: ${products.first['product_name']} (ID: $newProductId)');
+          // Return a copy of the item with updated product ID
+          final updatedItem = Map<String, dynamic>.from(item);
+          updatedItem['product_id'] = newProductId;
+          return updatedItem;
+        }
+        
+        // Try fuzzy matching with all products as a fallback
+        final allProducts = await DatabaseService.instance.getAllProducts();
+        final lowerProductName = productName.toLowerCase();
+        
+        for (final product in allProducts) {
+          final dbProductName = (product['product_name'] as String? ?? '').toLowerCase();
+          if (dbProductName.contains(lowerProductName) || lowerProductName.contains(dbProductName)) {
+            final newProductId = product['id'] as int;
+            print('  Found product by fuzzy match: ${product['product_name']} (ID: $newProductId)');
+            final updatedItem = Map<String, dynamic>.from(item);
+            updatedItem['product_id'] = newProductId;
+            return updatedItem;
+          }
+        }
+        
+        print('  Could not find any matching product for: $productName');
+        return item;
+      }));
       
       // Convert order items to CartItems
-      final cartItems = await Future.wait(orderItems.map((item) async {
-        final productData = await DatabaseService.instance.getProductById(item['product_id'] as int);
-        if (productData == null) return null;
+      final cartItems = await Future.wait(fixedOrderItems.map((item) async {
+        final productId = (item['product_id'] as int?) ?? 0;
+        if (productId <= 0) {
+          print('Skipping item with invalid product ID: ${item['product_name']}');
+          return null;
+        }
+
+        try {
+          final productData = await DatabaseService.instance.getProductById(productId);
+          if (productData == null) {
+            print('Product not found in database for ID: $productId');
+            return null;
+          }
         
         final product = Product.fromMap(productData);
         
         return CartItem(
           product: product,
-          quantity: item['quantity'] as int,
-          total: item['total_amount'] as double,
+            quantity: (item['quantity'] as int?) ?? 0,
+            total: (item['total_amount'] as num?)?.toDouble() ?? 0.0,
           isSubUnit: item['is_sub_unit'] == 1,
           subUnitName: item['sub_unit_name'] as String?,
           subUnitQuantity: product.subUnitQuantity,
+            adjustedPrice: (item['adjusted_price'] as num?)?.toDouble(),
         );
+        } catch (e) {
+          print('Error creating CartItem for product ID $productId: $e');
+          return null;
+        }
       }));
 
       // Filter out any null items
       List<CartItem> editableCartItems = cartItems.whereType<CartItem>().toList();
+      
+      print('Valid items after fixing: ${editableCartItems.length} of ${orderItemsData.length}');
+      
+      if (editableCartItems.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No valid products found in this order. Please create a new order.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
       
       if (mounted) {
         await Navigator.push(

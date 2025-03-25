@@ -4,7 +4,7 @@ import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/models/user_model.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:crypto/crypto.dart';
-import 'dart:convert'; // For utf8 encoding
+import 'dart:convert';
 import 'package:synchronized/synchronized.dart';
 import '../models/customer_model.dart';
 import 'dart:io';
@@ -1550,31 +1550,38 @@ class DatabaseService {
 
   Future<List<Map<String, dynamic>>> getOrdersByStatus(String status) async {
     final db = await database;
-    return await db.rawQuery('''
-      SELECT 
-        o.*,
-        json_group_array(
-          json_object(
-            'item_id', oi.id,
-            'product_id', oi.product_id,
-            'quantity', oi.quantity,
-            'unit_price', oi.unit_price,
-            'selling_price', oi.selling_price,
-            'adjusted_price', oi.adjusted_price,
-            'total_amount', oi.total_amount,
-            'product_name', oi.product_name,
-            'is_sub_unit', oi.is_sub_unit,
-            'sub_unit_name', oi.sub_unit_name,
-            'sub_unit_quantity', oi.sub_unit_quantity,
-            'status', oi.status
-          )
-        ) as items_json
-      FROM $tableOrders o
-      LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
-      WHERE o.status = ?
-      GROUP BY o.id, o.order_number
-      ORDER BY o.created_at DESC
-    ''', [status]);
+    try {
+      // First get the orders with items as JSON
+      final orders = await db.rawQuery('''
+        SELECT 
+          o.*,
+          json_group_array(
+            json_object(
+              'item_id', oi.id,
+              'product_id', oi.product_id,
+              'quantity', oi.quantity,
+              'unit_price', oi.unit_price,
+              'selling_price', oi.selling_price,
+              'adjusted_price', oi.adjusted_price,
+              'total_amount', oi.total_amount,
+              'product_name', oi.product_name,
+              'is_sub_unit', oi.is_sub_unit,
+              'sub_unit_name', oi.sub_unit_name,
+              'sub_unit_quantity', oi.sub_unit_quantity
+            )
+          ) as items_json
+        FROM $tableOrders o
+        LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
+        WHERE o.status = ?
+        GROUP BY o.id, o.order_number
+        ORDER BY o.created_at DESC
+      ''', [status]);
+
+      return orders;
+    } catch (e) {
+      print('Error in getOrdersByStatus: $e');
+      rethrow;
+    }
   }
 
   Future<void> ensureCustomerExists(String customerName) async {

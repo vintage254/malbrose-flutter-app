@@ -1,8 +1,8 @@
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:intl/intl.dart';
+import 'dart:convert';
 
 class OrderService extends ChangeNotifier {
   static final OrderService instance = OrderService._internal();
@@ -20,7 +20,7 @@ class OrderService extends ChangeNotifier {
   double _totalSales = 0.0;
   int _pendingOrdersCount = 0;
   List<Map<String, dynamic>> _recentOrders = [];
-  List<Map<String, dynamic>> _pendingOrders = [];
+  final List<Map<String, dynamic>> _pendingOrders = [];
 
   // Public getters
   int get todayOrders => _todayOrders;
@@ -73,14 +73,16 @@ class OrderService extends ChangeNotifier {
         _recentOrders = await txn.rawQuery('''
           SELECT 
             o.*,
-            GROUP_CONCAT(json_object(
-              'product_id', oi.product_id,
-              'quantity', oi.quantity,
-              'unit_price', oi.unit_price,
-              'selling_price', oi.selling_price,
-              'total_amount', oi.total_amount,
-              'product_name', p.product_name
-            )) as items_json
+            json_group_array(
+              json_object(
+                'product_id', oi.product_id,
+                'quantity', oi.quantity,
+                'unit_price', oi.unit_price,
+                'selling_price', oi.selling_price,
+                'total_amount', oi.total_amount,
+                'product_name', p.product_name
+              )
+            ) as items_json
           FROM $tableOrders o
           LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
           LEFT JOIN $tableProducts p ON oi.product_id = p.id
