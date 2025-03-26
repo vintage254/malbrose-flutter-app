@@ -5,7 +5,6 @@ import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/services/database.dart';
-import 'package:my_flutter_app/services/config_service.dart';
 import 'package:file_picker/file_picker.dart';
 
 class BackupService {

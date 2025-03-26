@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/services/order_service.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/widgets/order_cart_panel.dart';
 import 'package:my_flutter_app/models/cart_item_model.dart';
 import 'package:my_flutter_app/services/database.dart';

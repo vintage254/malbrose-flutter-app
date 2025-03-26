@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
+import 'package:path/path.dart' show join;
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/models/user_model.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
@@ -13,6 +13,7 @@ import 'dart:async';
 import 'package:my_flutter_app/models/product_model.dart';
 import 'package:excel/excel.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
@@ -20,27 +21,32 @@ class DatabaseService {
   final _lock = Lock();
   bool _initialized = false;
 
-  // Table Names
-  static const String tableProducts = 'products';
+  // Database constants
+  static const String dbName = 'malbrose_db.db';
+  static const int dbVersion = 1;
+  
+  // Table names
   static const String tableUsers = 'users';
-  static const String tableOrders = 'orders';
-  static const String tableActivityLogs = 'activity_logs';
   static const String tableCreditors = 'creditors';
   static const String tableDebtors = 'debtors';
+  static const String tableProducts = 'products';
+  static const String tableOrders = 'orders';
   static const String tableOrderItems = 'order_items';
+  static const String tableActivityLogs = 'activity_logs';
   static const String tableCustomers = 'customers';
   static const String tableCustomerReports = 'customer_reports';
   static const String tableReportItems = 'report_items';
 
-  // Add these constants at the top of the DatabaseService class
+  // Action constants
   static const String actionCreateOrder = 'create_order';
   static const String actionUpdateOrder = 'update_order';
   static const String actionCompleteSale = 'complete_sale';
   static const String actionRevertReceipt = 'revert_receipt';
-  static const String actionUpdateProduct = 'update_product';
   static const String actionCreateProduct = 'create_product';
+  static const String actionUpdateProduct = 'update_product';
   static const String actionCreateCreditor = 'create_creditor';
   static const String actionUpdateCreditor = 'update_creditor';
+  static const String actionDeleteCreditor = 'delete_creditor';
   static const String actionCreateDebtor = 'create_debtor';
   static const String actionUpdateDebtor = 'update_debtor';
   static const String actionLogin = 'login';
@@ -49,7 +55,7 @@ class DatabaseService {
   static const String actionUpdateCustomerReport = 'update_customer_report';
   static const String actionPrintCustomerReport = 'print_customer_report';
 
-  // Add these admin privilege constants at the top of DatabaseService class
+  // Role and permission constants
   static const String ROLE_ADMIN = 'ADMIN';
   static const String PERMISSION_FULL_ACCESS = 'FULL_ACCESS';
   static const String PERMISSION_BASIC = 'BASIC';
@@ -58,36 +64,12 @@ class DatabaseService {
 
   // Completely rewritten database getter to be more reliable
   Future<Database> get database async {
-    if (_database != null && _initialized) {
-      try {
-        // Test if database is still valid with a simple query
-        await _database!.rawQuery('SELECT 1');
-        return _database!;
-      } catch (e) {
-        print('Database connection invalid, recreating: $e');
-        await _closeDatabase();
-        _database = null;
-        _initialized = false;
-      }
-    }
+    if (_database != null) return _database!;
+
+    // Initialize the database
+    _database = await _initDB();
     
-    // Use a lock to prevent multiple initialization attempts
-    return await _lock.synchronized(() async {
-      if (_database != null && _initialized) return _database!;
-      
-      // Try to initialize the database
-      try {
-        _database = await _initDatabase();
-        _initialized = true;
-        return _database!;
-      } catch (e) {
-        print('Error initializing database: $e');
-        
-        // If initialization fails, try to reset the database
-        await resetDatabase();
-        return _database!;
-      }
-    });
+    return _database!;
   }
 
   // Add a method to explicitly close the database
@@ -183,40 +165,28 @@ class DatabaseService {
   }
 
   // Completely rewritten _initDatabase method
-  Future<Database> _initDatabase() async {
-    // Use a more reliable path for the database
-    final databasePath = await getDatabasesPath();
-    final path = join(databasePath, 'malbrose_db.db');
-
-    // Print the exact database path
-    print('DATABASE PATH: $path');
-
+  Future<Database> _initDB() async {
     try {
-      // Ensure the directory exists with proper permissions
-      final dbDir = Directory(databasePath);
-      if (!await dbDir.exists()) {
-        await dbDir.create(recursive: true);
+      // Set the database path
+      String dbPath = await getDatabasesPath();
+      if (dbPath.isEmpty) {
+        // For Flutter web or specific cases where default DB path is not available
+        final documentsDirectory = await getApplicationDocumentsDirectory();
+        dbPath = documentsDirectory.path;
       }
+      
+      final fullPath = join(dbPath, dbName);
+      print('Database path: $fullPath');
 
-      // Set permissions for Linux platform
-      if (Platform.isLinux) {
-        await Process.run('chmod', ['777', databasePath]);
-      }
-
-      // Open the database with the onCreate callback and onUpgrade handlers
-      final db = await openDatabase(
-        path,
-        version: 25, // Use the existing version number
-        onCreate: _createTables, // Use the existing method name
+      // Open/create the database
+      return await openDatabase(
+        fullPath,
+        version: dbVersion,
+        onCreate: _createTables,
         onUpgrade: _onUpgrade,
       );
-
-      // Apply specific department column migration if needed
-      await _migrateDatabase(db);
-
-      return db;
     } catch (e) {
-      print('Error during database initialization: $e');
+      print('Error initializing database: $e');
       rethrow;
     }
   }
@@ -305,52 +275,17 @@ class DatabaseService {
   }
 
   Future<void> _createTables(Database db, int version) async {
-    // First create users table since it's referenced by others
+    // Create users table
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tableUsers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE,
         password TEXT NOT NULL,
         full_name TEXT NOT NULL,
-        email TEXT NOT NULL,
+        email TEXT,
         role TEXT NOT NULL,
-        permissions TEXT NOT NULL DEFAULT '$PERMISSION_BASIC',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         last_login TEXT
-      )
-    ''');
-
-    // Check if admin exists before creating
-    final hasAdmin = await _adminExists(db);
-    
-    if (!hasAdmin) {
-      String plainPassword = 'admin123';
-      String hashedPassword = _hashPassword(plainPassword);
-
-      await db.insert(tableUsers, {
-        'username': 'admin',
-        'password': hashedPassword,
-        'full_name': 'System Administrator',
-        'email': 'admin@example.com',
-        'role': ROLE_ADMIN,
-        'permissions': PERMISSION_FULL_ACCESS,
-        'created_at': DateTime.now().toIso8601String(),
-      }, conflictAlgorithm: ConflictAlgorithm.ignore);
-    }
-
-    // Create customers table first
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableCustomers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        phone TEXT,
-        email TEXT,
-        address TEXT,
-        total_orders INTEGER DEFAULT 0,
-        total_amount REAL DEFAULT 0.0,
-        last_order_date TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT
       )
     ''');
 
@@ -358,12 +293,15 @@ class DatabaseService {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tableCreditors (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         balance REAL NOT NULL,
         details TEXT,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        last_updated TEXT
+        last_updated TEXT,
+        order_number TEXT,
+        order_details TEXT,
+        original_amount REAL
       )
     ''');
 
@@ -371,7 +309,7 @@ class DatabaseService {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS $tableDebtors (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
         balance REAL NOT NULL,
         details TEXT,
         status TEXT NOT NULL,
@@ -379,128 +317,16 @@ class DatabaseService {
         last_updated TEXT
       )
     ''');
-
-    // Create products table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableProducts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        image TEXT,
-        supplier TEXT NOT NULL,
-        received_date TEXT NOT NULL,
-        product_name TEXT NOT NULL,
-        buying_price REAL NOT NULL,
-        selling_price REAL NOT NULL,
-        quantity INTEGER NOT NULL,
-        description TEXT,
-        has_sub_units INTEGER DEFAULT 0,
-        sub_unit_quantity INTEGER,
-        sub_unit_price REAL,
-        sub_unit_buying_price REAL,
-        sub_unit_name TEXT,
-        created_by INTEGER,
-        updated_by INTEGER,
-        updated_at TEXT,
-        number_of_sub_units INTEGER,
-        price_per_sub_unit REAL,
-        department TEXT DEFAULT '${Product.deptLubricants}',
-        FOREIGN KEY (created_by) REFERENCES $tableUsers (id),
-        FOREIGN KEY (updated_by) REFERENCES $tableUsers (id)
-      )
-    ''');
-
-    // Create orders table with customer_id foreign key
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableOrders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_number TEXT NOT NULL UNIQUE,
-        customer_id INTEGER,
-        customer_name TEXT NOT NULL,
-        total_amount REAL NOT NULL,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        payment_status TEXT NOT NULL DEFAULT 'PENDING',
-        created_by INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT,
-        order_date TEXT NOT NULL,
-        FOREIGN KEY (created_by) REFERENCES $tableUsers (id),
-        FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
-      )
-    ''');
-
-    // Create activity logs table
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableActivityLogs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        username TEXT NOT NULL,
-        action TEXT NOT NULL,
-        action_type TEXT,
-        details TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES $tableUsers (id)
-      )
-    ''');
-
-    // Create order_items table with proper relations
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableOrderItems (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_id INTEGER NOT NULL,
-        product_id INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        unit_price REAL NOT NULL,
-        selling_price REAL NOT NULL,
-        adjusted_price REAL,
-        total_amount REAL NOT NULL,
-        product_name TEXT NOT NULL,
-        is_sub_unit INTEGER DEFAULT 0,
-        sub_unit_name TEXT,
-        sub_unit_quantity INTEGER,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
-        FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
-      )
-    ''');
     
-    // Create customer reports table with proper relations
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableCustomerReports (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        report_number TEXT NOT NULL,
-        customer_id INTEGER NOT NULL,
-        customer_name TEXT NOT NULL,
-        total_amount REAL NOT NULL,
-        completed_amount REAL NOT NULL,
-        pending_amount REAL NOT NULL,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        payment_status TEXT NOT NULL DEFAULT 'PENDING',
-        created_at TEXT NOT NULL,
-        due_date TEXT,
-        FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id)
-      )
-    ''');
-
-    // Create report items table with proper schema
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableReportItems (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        report_id INTEGER NOT NULL,
-        order_id INTEGER NOT NULL,
-        product_id INTEGER NOT NULL,
-        product_name TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        unit_price REAL NOT NULL,
-        selling_price REAL NOT NULL,
-        total_amount REAL NOT NULL,
-        is_sub_unit INTEGER NOT NULL DEFAULT 0,
-        sub_unit_name TEXT,
-        status TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (report_id) REFERENCES $tableCustomerReports (id) ON DELETE CASCADE,
-        FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
-        FOREIGN KEY (product_id) REFERENCES $tableProducts (id)
-      )
-    ''');
+    // Add default admin user
+    await db.insert(tableUsers, {
+      'username': 'admin',
+      'password': 'admin123', // Should use hashed password in production
+      'full_name': 'Administrator',
+      'email': 'admin@example.com',
+      'role': 'ADMIN',
+      'created_at': DateTime.now().toIso8601String(),
+    });
   }
 
   String _hashPassword(String password) {
@@ -570,74 +396,63 @@ class DatabaseService {
 
   // Migration logic
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 18) {
-      // Add payment_status column if it doesn't exist
-      try {
-        await db.execute(
-          'ALTER TABLE $tableOrders ADD COLUMN payment_status TEXT NOT NULL DEFAULT "PENDING"'
-        );
-      } catch (e) {
-        print('Column might already exist: $e');
-      }
-    }
+    print('Upgrading database from version $oldVersion to $newVersion');
     
-    if (oldVersion < 21) {
-      // Drop invoice tables if they exist
-      try {
-        await db.execute('DROP TABLE IF EXISTS invoice_items');
-        await db.execute('DROP TABLE IF EXISTS invoices');
-      } catch (e) {
-        print('Error dropping invoice tables: $e');
-      }
-    }
-    
-    if (oldVersion < 22) {
-      // Add product_name column to report_items table if it doesn't exist
-      try {
-        await db.execute('ALTER TABLE $tableReportItems ADD COLUMN product_name TEXT');
-        print('Added product_name column to report_items table');
-      } catch (e) {
-        print('Error adding product_name column: $e');
-      }
-    }
-    
-    if (oldVersion < 23) {
-      // Add created_at column to report_items table if it doesn't exist
-      try {
-        await db.execute('ALTER TABLE $tableReportItems ADD COLUMN created_at TEXT');
-        print('Added created_at column to report_items table');
-      } catch (e) {
-        print('Error adding created_at column: $e');
-      }
-    }
-    
-    if (oldVersion < 24) {
-      // Migrate passwords if needed
-      await _migrateUnhashedPasswords(db);
+    try {
+      // Check if creditors table has necessary columns
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableCreditors)');
+      List<String> columnNames = tableInfo.map((col) => col['name'].toString()).toList();
       
-      // Migrate activity logs if needed
-      await _migrateActivityLogs(db);
-    }
-    
-    if (oldVersion < 25) {
-      // Add department column to products table if it doesn't exist
-      try {
-        await db.execute('ALTER TABLE $tableProducts ADD COLUMN department TEXT DEFAULT "${Product.deptLubricants}"');
-        print('Added department column to products table in migration to v25');
-      } catch (e) {
-        print('Error adding department column during upgrade: $e');
-        // If the column already exists, SQLite will throw an error
-        // We can safely ignore it
+      // Add missing columns if they don't exist
+      if (!columnNames.contains('order_number')) {
+        await db.execute('ALTER TABLE $tableCreditors ADD COLUMN order_number TEXT');
+      }
+      if (!columnNames.contains('order_details')) {
+        await db.execute('ALTER TABLE $tableCreditors ADD COLUMN order_details TEXT');
+      }
+      if (!columnNames.contains('original_amount')) {
+        await db.execute('ALTER TABLE $tableCreditors ADD COLUMN original_amount REAL');
       }
       
-      // Add number_of_sub_units and price_per_sub_unit columns if they don't exist
-      try {
-        await db.execute('ALTER TABLE $tableProducts ADD COLUMN number_of_sub_units INTEGER');
-        await db.execute('ALTER TABLE $tableProducts ADD COLUMN price_per_sub_unit REAL');
-        print('Added sub-unit related columns to products table');
-      } catch (e) {
-        print('Error adding sub-unit columns: $e');
+      // Handle removal of UNIQUE constraint if it exists
+      var tableSQL = await db.rawQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name='$tableCreditors'");
+      if (tableSQL.isNotEmpty) {
+        String createSql = tableSQL.first['sql'].toString().toUpperCase();
+        if (createSql.contains('UNIQUE') && createSql.contains('NAME')) {
+          print('Removing UNIQUE constraint from creditors.name');
+          
+          // Create temporary table without the constraint
+          await db.execute('''
+            CREATE TABLE temp_creditors (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL,
+              balance REAL NOT NULL,
+              details TEXT,
+              status TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              last_updated TEXT,
+              order_number TEXT,
+              order_details TEXT,
+              original_amount REAL
+            )
+          ''');
+          
+          // Copy data
+          await db.execute('''
+            INSERT INTO temp_creditors (
+              id, name, balance, details, status, created_at, last_updated
+            ) SELECT 
+              id, name, balance, details, status, created_at, last_updated 
+            FROM $tableCreditors
+          ''');
+          
+          // Drop old table and rename new one
+          await db.execute('DROP TABLE $tableCreditors');
+          await db.execute('ALTER TABLE temp_creditors RENAME TO $tableCreditors');
+        }
       }
+    } catch (e) {
+      print('Error during database upgrade: $e');
     }
   }
 
@@ -1380,17 +1195,47 @@ class DatabaseService {
   Future<int> addCreditor(Map<String, dynamic> creditor) async {
     try {
     final db = await database;
-      int creditorId = await db.insert(tableCreditors, creditor);
+      
+      // Create base creditor data with required fields
+      final Map<String, dynamic> creditorData = {
+        'name': creditor['name'],
+        'balance': creditor['balance'],
+        'details': creditor['details'],
+        'status': creditor['status'],
+        'created_at': creditor['created_at'] ?? DateTime.now().toIso8601String(),
+      };
+
+      // Add optional fields if they exist and are not empty
+      if (creditor['order_number'] != null && creditor['order_number'].toString().isNotEmpty) {
+        creditorData['order_number'] = creditor['order_number'];
+      }
+      if (creditor['order_details'] != null && creditor['order_details'].toString().isNotEmpty) {
+        creditorData['order_details'] = creditor['order_details'];
+      }
+      if (creditor['original_amount'] != null) {
+        creditorData['original_amount'] = creditor['original_amount'];
+      }
+      if (creditor['last_updated'] != null) {
+        creditorData['last_updated'] = creditor['last_updated'];
+      }
+
+      print('Adding creditor with data: $creditorData');
+      
+      int creditorId = await db.insert(tableCreditors, creditorData);
       
       // Log the activity
       final currentUser = AuthService.instance.currentUser;
       if (currentUser != null) {
+        final orderInfo = creditorData.containsKey('order_number') 
+            ? ' for order ${creditorData['order_number']}'
+            : '';
+            
         await logActivity(
           currentUser.id!,
           currentUser.username,
           actionCreateCreditor,
           'Create creditor',
-          'Created creditor: ${creditor['name']} with balance: ${creditor['balance']}'
+          'Created creditor: ${creditor['name']} with balance: ${creditor['balance']}$orderInfo'
         );
       }
       
@@ -1405,8 +1250,9 @@ class DatabaseService {
     int id,
     double newBalance,
     String details,
-    String status,
-  ) async {
+    String status, {
+    String? orderNumber,
+  }) async {
     try {
     final db = await database;
       
@@ -1428,6 +1274,8 @@ class DatabaseService {
         'details': details,
         'status': status,
         'last_updated': DateTime.now().toIso8601String(),
+          if (orderNumber != null && orderNumber.isNotEmpty)
+            'order_number': orderNumber,
       },
       where: 'id = ?',
       whereArgs: [id],
@@ -1441,7 +1289,7 @@ class DatabaseService {
           currentUser.username,
           actionUpdateCreditor,
           'Update creditor',
-          'Updated creditor: $creditorName, new balance: $newBalance, status: $status'
+          'Updated creditor: $creditorName, new balance: $newBalance, status: $status${orderNumber != null ? ", order: $orderNumber" : ""}'
         );
       }
     } catch (e) {
@@ -1781,7 +1629,7 @@ class DatabaseService {
             WHERE oi.order_id = ?
           ''', [order.id]);
 
-          // Update product quantities directly within this transaction
+          // Update product quantities
           for (var item in orderItems) {
             final productId = item['product_id'] as int;
             final quantity = (item['quantity'] as num).toInt();
@@ -1792,21 +1640,13 @@ class DatabaseService {
             // Calculate quantity to deduct
             double quantityToDeduct;
             if (isSubUnit && subUnitQuantity != null && subUnitQuantity > 0) {
-              // For sub-units, convert to whole units
               quantityToDeduct = quantity / subUnitQuantity;
             } else {
               quantityToDeduct = quantity.toDouble();
             }
             
-            // Calculate new quantity - allow negative inventory for tracking oversold items
             final newQuantity = currentQuantity - quantityToDeduct;
             
-            // Log a warning if inventory is going negative
-            if (newQuantity < 0) {
-              print('WARNING: Product ID $productId going to negative inventory: $newQuantity');
-            }
-            
-            // Update product quantity directly in this transaction
             await txn.update(
               tableProducts,
               {'quantity': newQuantity},
@@ -1824,53 +1664,25 @@ class DatabaseService {
               '${item['product_name']} (${item['quantity']})'
             ).join(', ');
             
-            // Check if customer already exists in creditors
-            final existingCreditor = await txn.query(
+            // Create new creditor entry
+            await txn.insert(
               tableCreditors,
-              where: 'name = ?',
-              whereArgs: [customerName],
-              limit: 1,
+              {
+                'name': customerName,
+                'balance': order.totalAmount,
+                'details': 'Credit for Order #${order.orderNumber}. $itemNames',
+                'status': 'PENDING',
+                'created_at': DateTime.now().toIso8601String(),
+                'order_number': order.orderNumber,
+                'order_details': itemNames,
+                'original_amount': order.totalAmount,
+              },
             );
             
-            if (existingCreditor.isNotEmpty) {
-              // Update existing creditor
-              final currentBalance = (existingCreditor.first['balance'] as num).toDouble();
-              final newBalance = currentBalance + order.totalAmount;
-              final currentDetails = existingCreditor.first['details'] as String? ?? '';
-              final newDetails = '$currentDetails\nOrder #${order.orderNumber}: $itemNames';
-              
-              await txn.update(
-                tableCreditors,
-                {
-                  'balance': newBalance,
-                  'details': newDetails,
-                  'status': 'PENDING',
-                  'updated_at': DateTime.now().toIso8601String(),
-                },
-                where: 'id = ?',
-                whereArgs: [existingCreditor.first['id']],
-              );
-              
-              print('Updated existing creditor: $customerName, new balance: $newBalance');
-            } else {
-              // Create new creditor
-              await txn.insert(
-                tableCreditors,
-                {
-                  'name': customerName,
-                  'balance': order.totalAmount,
-                  'details': 'Order #${order.orderNumber}: $itemNames',
-                  'status': 'PENDING',
-                  'created_at': DateTime.now().toIso8601String(),
-                  'updated_at': DateTime.now().toIso8601String(),
-                },
-              );
-              
-              print('Added new creditor: $customerName, balance: ${order.totalAmount}');
-            }
+            print('Added new credit entry for: $customerName, order: ${order.orderNumber}, amount: ${order.totalAmount}');
           }
           
-          // Log the completed sale directly within this transaction
+          // Log the completed sale
           final currentUser = AuthService.instance.currentUser;
           if (currentUser != null) {
             await txn.insert(tableActivityLogs, {
@@ -1884,7 +1696,6 @@ class DatabaseService {
           }
         });
         
-        // If we get here, the transaction was successful
         return;
       } catch (e) {
         print('Error completing sale (attempt ${retryCount + 1}): $e');
@@ -1894,14 +1705,12 @@ class DatabaseService {
              e.toString().contains('database locked')) && 
             retryCount < maxRetries) {
           retryCount++;
-          // Exponential backoff with jitter
           final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
           print('Database locked. Retrying in $delay ms...');
           await Future.delayed(Duration(milliseconds: delay));
           continue;
         }
         
-        // If we've reached max retries or it's not a locking issue, rethrow
         rethrow;
       }
     }
@@ -2782,17 +2591,116 @@ class DatabaseService {
   // Add a method to explicitly initialize the database
   Future<void> initialize() async {
     try {
-      // Get a database connection to trigger initialization
+      // Get the database
       final db = await database;
       
-      // Test the connection with a simple query
-      final result = await db.rawQuery('SELECT 1');
-      print('Database initialized successfully: $result');
+      // Check if all tables exist and create them if they don't
+      await _createTablesIfNotExist(db);
+      
+      // Check and add any missing columns to existing tables
+      await _addMissingColumnsToTables(db);
+      
+      // Fix UNIQUE constraint on creditors table
+      await fixUniqueConstraint();
+      
+      print('Database initialized successfully');
     } catch (e) {
       print('Error initializing database: $e');
+      rethrow;
+    }
+  }
+  
+  // Check if admin user exists
+  Future<bool> checkAdminUserExists() async {
+    try {
+      final db = await database;
+      final result = await db.query(
+        tableUsers,
+        where: 'role = ?',
+        whereArgs: ['ADMIN'],
+        limit: 1,
+      );
+      return result.isNotEmpty;
+    } catch (e) {
+      print('Error checking admin user: $e');
+      return false;
+    }
+  }
+  
+  // Create tables if they don't exist
+  Future<void> _createTablesIfNotExist(Database db) async {
+    try {
+      // Check if creditors table exists
+      var result = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='$tableCreditors'"
+      );
       
-      // If initialization fails, try to reset the database
-      await resetDatabase();
+      if (result.isEmpty) {
+        // Create creditors table
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS $tableCreditors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            balance REAL NOT NULL,
+            details TEXT,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_updated TEXT,
+            order_number TEXT,
+            order_details TEXT,
+            original_amount REAL
+          )
+        ''');
+      }
+      
+      // Check if debtors table exists
+      result = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='$tableDebtors'"
+      );
+      
+      if (result.isEmpty) {
+        // Create debtors table
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS $tableDebtors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            balance REAL NOT NULL,
+            details TEXT,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_updated TEXT
+          )
+        ''');
+      }
+      
+      // Add other table checks as needed
+    } catch (e) {
+      print('Error creating tables: $e');
+      rethrow;
+    }
+  }
+  
+  // Add missing columns to tables
+  Future<void> _addMissingColumnsToTables(Database db) async {
+    try {
+      // Check if creditors table has all required columns
+      var tableInfo = await db.rawQuery('PRAGMA table_info($tableCreditors)');
+      List<String> columnNames = tableInfo.map((col) => col['name'].toString()).toList();
+      
+      if (!columnNames.contains('order_number')) {
+        await db.execute('ALTER TABLE $tableCreditors ADD COLUMN order_number TEXT');
+      }
+      if (!columnNames.contains('order_details')) {
+        await db.execute('ALTER TABLE $tableCreditors ADD COLUMN order_details TEXT');
+      }
+      if (!columnNames.contains('original_amount')) {
+        await db.execute('ALTER TABLE $tableCreditors ADD COLUMN original_amount REAL');
+      }
+      
+      // Add checks for other tables if needed
+    } catch (e) {
+      print('Error adding missing columns: $e');
+      // Don't rethrow as this might not be critical
     }
   }
 
@@ -3667,6 +3575,184 @@ class DatabaseService {
       // Try using the more resilient method with retries
       await deleteOrderTransaction(id);
       return 1; // Return 1 to indicate success
+    }
+  }
+
+  // Add delete methods for creditors and debtors
+  Future<void> deleteCreditor(int id) async {
+    try {
+      final db = await database;
+      
+      // Get creditor details for logging
+      final creditor = await db.query(
+        tableCreditors,
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      
+      await db.delete(
+        tableCreditors,
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      
+      // Log the activity
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null && creditor.isNotEmpty) {
+        await logActivity(
+          currentUser.id!,
+          currentUser.username,
+          'delete_creditor',
+          'Delete creditor',
+          'Deleted credit record for: ${creditor.first['name']}'
+        );
+      }
+    } catch (e) {
+      print('Error deleting creditor: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteDebtor(int id) async {
+    try {
+      final db = await database;
+      
+      // Get debtor details for logging
+      final debtor = await db.query(
+        tableDebtors,
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      
+      await db.delete(
+        tableDebtors,
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      
+      // Log the activity
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null && debtor.isNotEmpty) {
+        await logActivity(
+          currentUser.id!,
+          currentUser.username,
+          'delete_debtor',
+          'Delete debtor',
+          'Deleted debit record for: ${debtor.first['name']}'
+        );
+      }
+    } catch (e) {
+      print('Error deleting debtor: $e');
+      rethrow;
+    }
+  }
+
+  // Initialize the database (backward compatibility method name)
+  Future<Database> _initDatabase() => _initDB();
+
+  // Force recreate creditors table to remove UNIQUE constraint - improved version
+  Future<void> fixUniqueConstraint() async {
+    // Make sure database is initialized with FFI
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+    
+    print('Manually recreating creditors table to remove UNIQUE constraint');
+    
+    // Get database path but don't use the getter that might trigger initialization logic
+    final dbPath = await getDatabasesPath();
+    final dbFile = join(dbPath, dbName);
+    print('Database path: $dbFile');
+    
+    try {
+      // Open database manually with explicit readOnly: false
+      final db = await openDatabase(
+        dbFile,
+        readOnly: false,
+        singleInstance: true,
+      );
+      
+      // Check if creditors table exists
+      final tableExists = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='$tableCreditors'"
+      );
+      
+      if (tableExists.isNotEmpty) {
+        print('Found creditors table, checking for data...');
+        
+        // Backup existing data if possible
+        List<Map<String, dynamic>> existingData = [];
+        try {
+          existingData = await db.query(tableCreditors);
+          print('Backed up ${existingData.length} creditor records');
+        } catch (e) {
+          print('Could not backup existing data: $e');
+        }
+        
+        // Drop the table
+        await db.execute('DROP TABLE IF EXISTS $tableCreditors');
+        print('Dropped creditors table');
+        
+        // Recreate table without UNIQUE constraint
+        await db.execute('''
+          CREATE TABLE $tableCreditors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            balance REAL NOT NULL,
+            details TEXT,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_updated TEXT,
+            order_number TEXT,
+            order_details TEXT,
+            original_amount REAL
+          )
+        ''');
+        print('Recreated creditors table without UNIQUE constraint');
+        
+        // Restore data if any
+        if (existingData.isNotEmpty) {
+          for (var record in existingData) {
+            // Remove id to let it auto-increment
+            record.remove('id');
+            try {
+              await db.insert(tableCreditors, record);
+            } catch (e) {
+              print('Error restoring record: $e');
+            }
+          }
+          print('Restored ${existingData.length} creditor records');
+        }
+      } else {
+        // Create creditors table if it doesn't exist
+        await db.execute('''
+          CREATE TABLE $tableCreditors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            balance REAL NOT NULL,
+            details TEXT,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_updated TEXT,
+            order_number TEXT,
+            order_details TEXT,
+            original_amount REAL
+          )
+        ''');
+        print('Created new creditors table without UNIQUE constraint');
+      }
+      
+      // Close the database
+      await db.close();
+      print('Fixed database successfully');
+      
+      // Clear the cached database instance to force reinitialization
+      _database = null;
+      
+    } catch (e) {
+      print('Error fixing UNIQUE constraint: $e');
+      rethrow;
     }
   }
 }

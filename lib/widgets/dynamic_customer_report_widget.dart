@@ -6,7 +6,6 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import 'package:my_flutter_app/services/printer_service.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -135,7 +134,7 @@ class DynamicCustomerReportWidget extends StatelessWidget {
                         child: DataTable(
                           horizontalMargin: 20,
                           columnSpacing: 30,
-                          headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
+                          headingRowColor: WidgetStateProperty.all(Colors.grey.shade200),
                           columns: const [
                             DataColumn(label: Text('Order #')),
                             DataColumn(label: Text('Date')),
@@ -152,7 +151,7 @@ class DynamicCustomerReportWidget extends StatelessWidget {
                             final status = order['status'] as String;
                             
                             return DataRow(
-                              color: MaterialStateProperty.resolveWith<Color?>((Set<MaterialState> states) {
+                              color: WidgetStateProperty.resolveWith<Color?>((Set<WidgetState> states) {
                                 return status == 'COMPLETED' ? Colors.green.shade50 : Colors.orange.shade50;
                               }),
                               cells: [

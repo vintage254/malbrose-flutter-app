@@ -3,6 +3,7 @@ import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/debtor_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
+import 'package:my_flutter_app/utils/ui_helpers.dart';
 
 class DebtorsScreen extends StatefulWidget {
   const DebtorsScreen({super.key});
@@ -39,8 +40,10 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading debtors: $e')),
+        UIHelpers.showSnackBarWithContext(
+          context,
+          'Error loading debtors: $e',
+          isError: true,
         );
       }
     }
@@ -63,21 +66,6 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
   Future<void> _addDebtor() async {
     if (_formKey.currentState!.validate()) {
       try {
-        final exists = await DatabaseService.instance.checkDebtorExists(
-          _nameController.text.trim(),
-        );
-
-        if (exists) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('A debtor with this name already exists'),
-              backgroundColor: Colors.red,
-            ),
-          );
-          return;
-        }
-
         final debtor = {
           'name': _nameController.text.trim(),
           'balance': double.parse(_balanceController.text),
@@ -93,16 +81,17 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
         await _loadDebtors();
 
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Debtor added successfully'),
-            backgroundColor: Colors.green,
-          ),
+        UIHelpers.showSnackBarWithContext(
+          context,
+          'Debtor added successfully',
+          isError: false,
         );
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error adding debtor: $e')),
+        UIHelpers.showSnackBarWithContext(
+          context,
+          'Error adding debtor: $e',
+          isError: true,
         );
       }
     }
@@ -158,15 +147,16 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                 Navigator.pop(context);
                 await _loadDebtors();
                 
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Balance updated successfully'),
-                    backgroundColor: Colors.green,
-                  ),
+                UIHelpers.showSnackBarWithContext(
+                  context,
+                  'Balance updated successfully',
+                  isError: false,
                 );
               } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Error updating balance: $e')),
+                UIHelpers.showSnackBarWithContext(
+                  context,
+                  'Error updating balance: $e',
+                  isError: true,
                 );
               }
             },
@@ -175,6 +165,49 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _deleteDebtor(Debtor debtor) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Debtor'),
+        content: Text('Are you sure you want to delete this debit record for ${debtor.name}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await DatabaseService.instance.deleteDebtor(debtor.id!);
+        await _loadDebtors();
+        if (mounted) {
+          UIHelpers.showSnackBarWithContext(
+            context,
+            'Debit record deleted successfully',
+            isError: false,
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          UIHelpers.showSnackBarWithContext(
+            context,
+            'Error deleting debit record: $e',
+            isError: true,
+          );
+        }
+      }
+    }
   }
 
   @override
@@ -303,13 +336,17 @@ class _DebtorsScreenState extends State<DebtorsScreen> {
                                     ],
                                   ),
                                   trailing: SizedBox(
-                                    width: 120,
+                                    width: 160,
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         IconButton(
                                           icon: const Icon(Icons.edit),
                                           onPressed: () => _updateDebtorBalance(debtor),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete, color: Colors.red),
+                                          onPressed: () => _deleteDebtor(debtor),
                                         ),
                                         Expanded(
                                           child: Chip(

@@ -118,6 +118,16 @@ class DashboardWidgetState extends State<DashboardWidget> {
                 SizedBox(
                   width: cardWidth,
                   child: _ActionCard(
+                    title: 'Held Orders',
+                    icon: Icons.pause_circle_filled,
+                    color: Colors.orange,
+                    onPressed: () => Navigator.pushNamed(context, '/held-orders'),
+                  ),
+                ),
+                
+                SizedBox(
+                  width: cardWidth,
+                  child: _ActionCard(
                     title: 'Make Sale',
                     icon: Icons.point_of_sale,
                     color: Colors.purple,

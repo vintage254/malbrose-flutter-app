@@ -6,6 +6,9 @@ class Creditor {
   final String status;
   final DateTime? createdAt;
   final DateTime? lastUpdated;
+  final String? orderNumber;
+  final String? orderDetails;
+  final double? originalAmount;
 
   Creditor({
     this.id,
@@ -15,6 +18,9 @@ class Creditor {
     this.status = 'PENDING',
     this.createdAt,
     this.lastUpdated,
+    this.orderNumber,
+    this.orderDetails,
+    this.originalAmount,
   });
 
   Map<String, dynamic> toMap() {
@@ -26,6 +32,9 @@ class Creditor {
       'status': status,
       'created_at': createdAt?.toIso8601String(),
       'last_updated': lastUpdated?.toIso8601String(),
+      'order_number': orderNumber,
+      'order_details': orderDetails,
+      'original_amount': originalAmount,
     };
   }
 
@@ -42,6 +51,9 @@ class Creditor {
       lastUpdated: map['last_updated'] != null 
           ? DateTime.parse(map['last_updated'] as String)
           : null,
+      orderNumber: map['order_number'] as String?,
+      orderDetails: map['order_details'] as String?,
+      originalAmount: map['original_amount'] as double?,
     );
   }
 
@@ -53,6 +65,9 @@ class Creditor {
     String? status,
     DateTime? createdAt,
     DateTime? lastUpdated,
+    String? orderNumber,
+    String? orderDetails,
+    double? originalAmount,
   }) {
     return Creditor(
       id: id ?? this.id,
@@ -62,6 +77,9 @@ class Creditor {
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       lastUpdated: lastUpdated ?? this.lastUpdated,
+      orderNumber: orderNumber ?? this.orderNumber,
+      orderDetails: orderDetails ?? this.orderDetails,
+      originalAmount: originalAmount ?? this.originalAmount,
     );
   }
 } 

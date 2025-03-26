@@ -6,6 +6,9 @@ class Debtor {
   final String status;
   final DateTime createdAt;
   final DateTime? lastUpdated;
+  final String? orderNumber;
+  final String? orderDetails;
+  final double? originalAmount;
 
   Debtor({
     this.id,
@@ -15,6 +18,9 @@ class Debtor {
     required this.status,
     required this.createdAt,
     this.lastUpdated,
+    this.orderNumber,
+    this.orderDetails,
+    this.originalAmount,
   });
 
   Map<String, dynamic> toMap() {
@@ -26,6 +32,9 @@ class Debtor {
       'status': status,
       'created_at': createdAt.toIso8601String(),
       'last_updated': lastUpdated?.toIso8601String(),
+      'order_number': orderNumber,
+      'order_details': orderDetails,
+      'original_amount': originalAmount,
     };
   }
 
@@ -40,6 +49,35 @@ class Debtor {
       lastUpdated: map['last_updated'] != null 
           ? DateTime.parse(map['last_updated'])
           : null,
+      orderNumber: map['order_number'] as String?,
+      orderDetails: map['order_details'] as String?,
+      originalAmount: map['original_amount'] as double?,
+    );
+  }
+
+  Debtor copyWith({
+    int? id,
+    String? name,
+    double? balance,
+    String? details,
+    String? status,
+    DateTime? createdAt,
+    DateTime? lastUpdated,
+    String? orderNumber,
+    String? orderDetails,
+    double? originalAmount,
+  }) {
+    return Debtor(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      balance: balance ?? this.balance,
+      details: details ?? this.details,
+      status: status ?? this.status,
+      createdAt: createdAt ?? this.createdAt,
+      lastUpdated: lastUpdated ?? this.lastUpdated,
+      orderNumber: orderNumber ?? this.orderNumber,
+      orderDetails: orderDetails ?? this.orderDetails,
+      originalAmount: originalAmount ?? this.originalAmount,
     );
   }
 } 

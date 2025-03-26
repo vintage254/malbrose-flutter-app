@@ -31,6 +31,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   final _subUnitQuantityController = TextEditingController();
   final _subUnitPriceController = TextEditingController();
   bool _hasSubUnits = false;
+  String _selectedDepartment = Product.deptLubricants;
 
   @override
   void initState() {
@@ -43,6 +44,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       _quantityController.text = widget.product!.quantity.toString();
       _descriptionController.text = widget.product!.description ?? '';
       _hasSubUnits = widget.product!.hasSubUnits;
+      _selectedDepartment = widget.product!.department;
       if (_hasSubUnits) {
         _subUnitNameController.text = widget.product!.subUnitName ?? '';
         _subUnitQuantityController.text = widget.product!.subUnitQuantity?.toString() ?? '';
@@ -68,21 +70,39 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       if (pickedFile != null) {
         // Get application documents directory
         final appDir = await getApplicationDocumentsDirectory();
-        final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final savedImage = File('${appDir.path}/products/$fileName');
-
+        final fileName = 'product_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        
         // Create the products directory if it doesn't exist
-        await Directory('${appDir.path}/products').create(recursive: true);
-
+        final productsDir = Directory('${appDir.path}/products');
+        if (!await productsDir.exists()) {
+          await productsDir.create(recursive: true);
+        }
+        
+        final savedImagePath = '${appDir.path}/products/$fileName';
+        final savedImage = File(savedImagePath);
+        
         // Copy the picked image to app's directory
-        await File(pickedFile.path).copy(savedImage.path);
-
+        await File(pickedFile.path).copy(savedImagePath);
+        
+        print('Image saved successfully at: $savedImagePath');
+        
         setState(() {
-          _imageFile = XFile(savedImage.path);
+          _imageFile = XFile(savedImagePath);
         });
+        
+        // Show success message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Image selected successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (!mounted) return;
+      print('Error picking image: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error picking image: $e')),
       );
@@ -151,6 +171,34 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Please enter supplier name';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: defaultPadding),
+                // Department dropdown
+                DropdownButtonFormField<String>(
+                  value: _selectedDepartment,
+                  decoration: const InputDecoration(
+                    labelText: 'Department',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: Product.getDepartments().map((String department) {
+                    return DropdownMenuItem<String>(
+                      value: department,
+                      child: Text(department),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    if (newValue != null) {
+                      setState(() {
+                        _selectedDepartment = newValue;
+                      });
+                    }
+                  },
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please select a department';
                     }
                     return null;
                   },
@@ -304,51 +352,73 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   Future<void> _saveProduct() async {
     if (!_formKey.currentState!.validate()) return;
 
-      String? imagePath;
-      if (_imageFile != null) {
-        final appDir = await getApplicationDocumentsDirectory();
-      final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final savedImage = File('${appDir.path}/products/$fileName');
-      
-      // Create products directory if it doesn't exist
-      await Directory('${appDir.path}/products').create(recursive: true);
-      
-        await File(_imageFile!.path).copy(savedImage.path);
-        imagePath = savedImage.path;
-      }
-
-    final currentUser = AuthService.instance.currentUser;
-    if (currentUser == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('User not logged in')),
+    // Show a loading indicator
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
       );
-      return;
     }
 
     try {
+      String? imagePath;
+      if (_imageFile != null) {
+        // Check if the image file exists
+        final imageFile = File(_imageFile!.path);
+        if (await imageFile.exists()) {
+          imagePath = _imageFile!.path;
+          print('Using image path: $imagePath');
+        } else {
+          print('Warning: Image file does not exist at path: ${_imageFile!.path}');
+          
+          // If we're updating a product, reuse the existing image
+          if (widget.product != null && widget.product!.image != null) {
+            imagePath = widget.product!.image;
+            print('Falling back to existing image: $imagePath');
+          }
+        }
+      } else if (widget.product != null && widget.product!.image != null) {
+        // Keep existing image for updates
+        imagePath = widget.product!.image;
+        print('Keeping existing image: $imagePath');
+      }
+
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser == null) {
+        throw Exception('User not logged in');
+      }
+
       if (widget.product != null) {
         // Update existing product
         final updatedProduct = Product(
           id: widget.product!.id,
-          image: imagePath ?? widget.product!.image,
-        supplier: _supplierController.text,
-        receivedDate: _receivedDate,
-        productName: _productNameController.text,
-        buyingPrice: double.parse(_buyingPriceController.text),
-        sellingPrice: double.parse(_sellingPriceController.text),
-        quantity: int.parse(_quantityController.text),
-        description: _descriptionController.text,
-        hasSubUnits: _hasSubUnits,
-        subUnitName: _subUnitNameController.text,
-        subUnitQuantity: _subUnitQuantityController.text.isEmpty ? null : int.parse(_subUnitQuantityController.text),
-        subUnitPrice: _subUnitPriceController.text.isEmpty ? null : double.parse(_subUnitPriceController.text),
+          image: imagePath,
+          supplier: _supplierController.text,
+          receivedDate: _receivedDate,
+          productName: _productNameController.text,
+          buyingPrice: double.parse(_buyingPriceController.text),
+          sellingPrice: double.parse(_sellingPriceController.text),
+          quantity: int.parse(_quantityController.text),
+          description: _descriptionController.text,
+          hasSubUnits: _hasSubUnits,
+          subUnitName: _hasSubUnits ? _subUnitNameController.text : null,
+          subUnitQuantity: _hasSubUnits && _subUnitQuantityController.text.isNotEmpty 
+              ? int.parse(_subUnitQuantityController.text) 
+              : null,
+          subUnitPrice: _hasSubUnits && _subUnitPriceController.text.isNotEmpty 
+              ? double.parse(_subUnitPriceController.text) 
+              : null,
           createdBy: widget.product!.createdBy,
           updatedBy: currentUser.id,
+          department: _selectedDepartment,
         );
 
+        print('Updating product with ID: ${updatedProduct.id}, Image: $imagePath');
         await DatabaseService.instance.updateProduct(updatedProduct.toMap());
-        } else {
+      } else {
         // Create new product
         final newProduct = Product(
           image: imagePath,
@@ -360,12 +430,18 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           quantity: int.parse(_quantityController.text),
           description: _descriptionController.text,
           hasSubUnits: _hasSubUnits,
-          subUnitName: _subUnitNameController.text,
-          subUnitQuantity: _subUnitQuantityController.text.isEmpty ? null : int.parse(_subUnitQuantityController.text),
-          subUnitPrice: _subUnitPriceController.text.isEmpty ? null : double.parse(_subUnitPriceController.text),
+          subUnitName: _hasSubUnits ? _subUnitNameController.text : null,
+          subUnitQuantity: _hasSubUnits && _subUnitQuantityController.text.isNotEmpty 
+              ? int.parse(_subUnitQuantityController.text) 
+              : null,
+          subUnitPrice: _hasSubUnits && _subUnitPriceController.text.isNotEmpty 
+              ? double.parse(_subUnitPriceController.text) 
+              : null,
           createdBy: currentUser.id,
+          department: _selectedDepartment,
         );
 
+        print('Creating new product with image: $imagePath');
         await DatabaseService.instance.insertProduct(newProduct.toMap());
       }
 
@@ -378,19 +454,34 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         '${widget.product != null ? 'Updated' : 'Created'} product: ${_productNameController.text}'
       );
 
-        if (!mounted) return;
-        Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Product saved successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving product: $e')),
-        );
+      // Close the loading dialog
+      if (mounted) {
+        Navigator.pop(context); // Close the loading indicator
+      }
+
+      if (!mounted) return;
+      Navigator.pop(context, true); // Return to previous screen with success result
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Product saved successfully!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      print('Error saving product: $e');
+      
+      // Close the loading dialog
+      if (mounted) {
+        Navigator.pop(context); // Close the loading indicator
+      }
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error saving product: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 

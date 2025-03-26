@@ -25,7 +25,7 @@ class ConfigService {
   String _businessLogo = '';
   
   // App configuration
-  String _appVersion = '1.0.0';
+  final String _appVersion = '1.0.0';
   bool _setupCompleted = false;
   
   // Getters

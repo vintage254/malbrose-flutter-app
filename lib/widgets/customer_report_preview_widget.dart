@@ -5,9 +5,7 @@ import 'package:my_flutter_app/models/customer_model.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/services/customer_report_service.dart';
-import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
-import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 
@@ -309,7 +307,7 @@ class CustomerReportPreviewWidget extends StatelessWidget {
               ],
             ),
           );
-        }).toList(),
+        }),
         Align(
           alignment: Alignment.centerRight,
           child: Padding(

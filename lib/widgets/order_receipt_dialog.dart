@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:my_flutter_app/models/product_model.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/cart_item_model.dart';
-import 'package:my_flutter_app/services/database.dart';
-import 'package:printing/printing.dart';
-import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/services/printer_service.dart';
@@ -27,7 +23,7 @@ class OrderReceiptDialog extends StatefulWidget {
 
 class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
   late List<CartItem> _orderItems;
-  bool _isLoading = false;
+  final bool _isLoading = false;
 
   @override
   void initState() {
@@ -288,7 +284,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                           pw.Expanded(
                             flex: 1,
                             child: pw.Text(
-                              '${item.quantity}${item.isSubUnit ? item.subUnitName != null ? " " + item.subUnitName! : "" : ""}',
+                              '${item.quantity}${item.isSubUnit ? item.subUnitName != null ? " ${item.subUnitName!}" : "" : ""}',
                               style: const pw.TextStyle(fontSize: 9),
                               textAlign: pw.TextAlign.right,
                             ),
@@ -296,7 +292,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                           pw.Expanded(
                             flex: 1,
                             child: pw.Text(
-                              '${item.effectivePrice.toStringAsFixed(2)}',
+                              item.effectivePrice.toStringAsFixed(2),
                               style: const pw.TextStyle(fontSize: 9),
                               textAlign: pw.TextAlign.right,
                             ),
@@ -304,7 +300,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                           pw.Expanded(
                             flex: 1,
                             child: pw.Text(
-                              '${item.total.toStringAsFixed(2)}',
+                              item.total.toStringAsFixed(2),
                               style: const pw.TextStyle(fontSize: 9),
                               textAlign: pw.TextAlign.right,
                             ),

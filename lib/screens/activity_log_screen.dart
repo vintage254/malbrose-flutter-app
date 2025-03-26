@@ -9,7 +9,6 @@ import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'dart:async';
-import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:my_flutter_app/services/printer_service.dart';
 import 'package:file_picker/file_picker.dart';

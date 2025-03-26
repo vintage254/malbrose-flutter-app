@@ -19,8 +19,8 @@ class User {
     String? permissions,
     DateTime? createdAt,
     this.lastLogin,
-  }) : this.permissions = permissions ?? (role == 'ADMIN' ? 'FULL_ACCESS' : 'BASIC'),
-       this.createdAt = createdAt ?? DateTime.now();
+  }) : permissions = permissions ?? (role == 'ADMIN' ? 'FULL_ACCESS' : 'BASIC'),
+       createdAt = createdAt ?? DateTime.now();
 
   bool get isAdmin => role == 'ADMIN';
 

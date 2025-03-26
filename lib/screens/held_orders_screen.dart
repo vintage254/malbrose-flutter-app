@@ -6,6 +6,8 @@ import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
+import 'package:my_flutter_app/models/product_model.dart';
+import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
 import 'dart:convert';
 
 class HeldOrdersScreen extends StatefulWidget {
@@ -165,20 +167,22 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
         items: validItems,
         orderStatus: 'PENDING'
       );
-      
+
       // Close loading dialog
       Navigator.of(context, rootNavigator: true).pop();
       
-      // Navigate to the order screen with the restored order
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => OrderScreen(
-            editingOrder: updatedOrder,
-            isEditing: true,
+      // Navigate to order screen with the restored order
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => OrderScreen(
+              editingOrder: updatedOrder,
+              isEditing: true,
+            ),
           ),
-        ),
-      );
+        );
+      }
     } catch (e) {
       // Close loading dialog if open
       Navigator.of(context, rootNavigator: true).pop();

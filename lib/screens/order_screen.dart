@@ -10,7 +10,8 @@ import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
 import 'package:my_flutter_app/widgets/order_cart_panel.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:my_flutter_app/services/order_service.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:my_flutter_app/screens/held_orders_screen.dart';
+import 'dart:io';
 
 class OrderScreen extends StatefulWidget {
   final Order? editingOrder;
@@ -33,6 +34,7 @@ class _OrderScreenState extends State<OrderScreen> {
   String _searchQuery = '';
   bool _isLoading = true;
   List<CartItem> _cartItems = [];
+  String? _selectedDepartment;
 
   @override
   void initState() {
@@ -43,11 +45,17 @@ class _OrderScreenState extends State<OrderScreen> {
     if (widget.isEditing && widget.editingOrder != null) {
       _customerNameController.text = widget.editingOrder!.customerName ?? '';
       
-      // Convert order items to cart items
-      _cartItems = widget.editingOrder!.items.map((item) => CartItem.fromOrderItem(item)).toList();
-      
       print('OrderScreen - Editing order #${widget.editingOrder!.orderNumber}');
-      print('OrderScreen - Loaded ${_cartItems.length} items from order');
+      
+      if (widget.editingOrder!.items.isNotEmpty) {
+        // Convert order items to cart items
+        _cartItems = widget.editingOrder!.items.map((item) => CartItem.fromOrderItem(item)).toList();
+        print('OrderScreen - Loaded ${_cartItems.length} items from order items list');
+      } else {
+        print('OrderScreen - No items in order.items, trying to load from database');
+        // Attempt to load the order items from the database
+        _loadOrderItems(widget.editingOrder!.id!);
+      }
     }
   }
 
@@ -72,11 +80,51 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
+  Future<void> _loadOrderItems(int orderId) async {
+    try {
+      final orderItemsData = await DatabaseService.instance.getOrderItems(orderId);
+      
+      if (orderItemsData.isEmpty) {
+        print('No order items found in database for order ID: $orderId');
+        return;
+      }
+      
+      // Convert the map data to OrderItem objects
+      final orderItems = orderItemsData.map((map) => OrderItem.fromMap(map)).toList();
+      
+      // Convert OrderItems to CartItems
+      final cartItems = orderItems.map((item) => CartItem.fromOrderItem(item)).toList();
+      
+      if (mounted) {
+        setState(() {
+          _cartItems = cartItems;
+        });
+        print('OrderScreen - Loaded ${_cartItems.length} items from database');
+      }
+    } catch (e) {
+      print('Error loading order items: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading order items: $e')),
+        );
+      }
+    }
+  }
+
   List<Product> get _filteredProducts {
-    if (_searchQuery.isEmpty) return _products;
+    if (_searchQuery.isEmpty && _selectedDepartment == null) return _products;
     return _products.where((product) {
-      final search = _searchQuery.toLowerCase();
-      return product.productName.toLowerCase().contains(search);
+      // Handle search query filter
+      final matchesSearch = _searchQuery.isEmpty || 
+          product.productName.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+          (product.description?.toLowerCase() ?? '').contains(_searchQuery.toLowerCase()) ||
+          product.supplier.toLowerCase().contains(_searchQuery.toLowerCase());
+      
+      // Handle department filter
+      final matchesDepartment = _selectedDepartment == null || 
+          product.department == _selectedDepartment;
+      
+      return matchesSearch && matchesDepartment;
     }).toList();
   }
 
@@ -163,10 +211,33 @@ class _OrderScreenState extends State<OrderScreen> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        ElevatedButton.icon(
-                          onPressed: _exportQuotation,
-                          icon: const Icon(Icons.file_download),
-                          label: const Text('Export'),
+                        Flexible(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ElevatedButton.icon(
+                                  onPressed: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (context) => const HeldOrdersScreen()),
+                                  ),
+                                  icon: const Icon(Icons.pause_circle_filled),
+                                  label: const Text('Held Orders'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.orange,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton.icon(
+                                  onPressed: _exportQuotation,
+                                  icon: const Icon(Icons.file_download),
+                                  label: const Text('Export'),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -175,20 +246,62 @@ class _OrderScreenState extends State<OrderScreen> {
                   // Search bar
                   Padding(
                     padding: const EdgeInsets.all(defaultPadding),
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: InputDecoration(
-                        hintText: 'Search products...',
-                        prefixIcon: const Icon(Icons.search),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _searchController,
+                                decoration: InputDecoration(
+                                  hintText: 'Search products by name, description or supplier...',
+                                  prefixIcon: const Icon(Icons.search),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _searchQuery = value;
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      onChanged: (value) {
-                        setState(() {
-                          _searchQuery = value;
-                        });
-                      },
+                        const SizedBox(height: 10),
+                        // Department filter as a separate row to avoid flex issues
+                        Container(
+                          width: 200,
+                          child: DropdownButton<String?>(
+                            value: _selectedDepartment,
+                            hint: const Text('All Departments'),
+                            isExpanded: true,
+                            underline: Container(
+                              height: 1,
+                              color: Colors.grey,
+                            ),
+                            items: [
+                              const DropdownMenuItem<String?>(
+                                value: null,
+                                child: Text('All Departments'),
+                              ),
+                              ...Product.getDepartments().map((dept) => 
+                                DropdownMenuItem<String?>(
+                                  value: dept,
+                                  child: Text(dept),
+                                )
+                              ),
+                            ],
+                            onChanged: (value) {
+                              setState(() {
+                                _selectedDepartment = value;
+                              });
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ),
 
@@ -230,6 +343,7 @@ class _OrderScreenState extends State<OrderScreen> {
               },
               isEditing: widget.isEditing,
               orderButtonText: widget.isEditing ? 'Update Order' : 'Place Order',
+              onHoldOrderPressed: widget.isEditing ? null : () => _holdOrder(),
             ),
           ),
         ],
@@ -241,21 +355,43 @@ class _OrderScreenState extends State<OrderScreen> {
     return Card(
       child: InkWell(
         onTap: () => _showOrderDialog(product),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.shopping_bag, size: 40),
-            const SizedBox(height: 8),
-            Text(
-              product.productName,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              '\$${product.sellingPrice.toStringAsFixed(2)}',
-              style: const TextStyle(color: Colors.green),
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Expanded(
+                child: product.image != null && product.image!.isNotEmpty
+                  ? Image.file(
+                      File(product.image!),
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        print('Error loading image: $error');
+                        return const Icon(Icons.shopping_bag, size: 40);
+                      },
+                    )
+                  : const Icon(Icons.shopping_bag, size: 40),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                product.productName,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              Text(
+                'KSH ${product.sellingPrice.toStringAsFixed(2)}',
+                style: const TextStyle(color: Colors.green),
+              ),
+              if (product.hasSubUnits)
+                Text(
+                  '(${product.subUnitName ?? 'pieces'} available)',
+                  style: const TextStyle(fontSize: 10, fontStyle: FontStyle.italic),
+                  textAlign: TextAlign.center,
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -383,6 +519,133 @@ class _OrderScreenState extends State<OrderScreen> {
       _cartItems.clear();
       _customerNameController.clear();
     });
+  }
+
+  // Method to handle holding an order
+  Future<void> _holdOrder() async {
+    if (_cartItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot hold an empty order. Please add items first.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (_customerNameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a customer name before holding the order.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    try {
+      // Show loading dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Saving order on hold...'),
+            ],
+          ),
+        ),
+      );
+      
+      // Get customer ID or create new customer
+      final customerName = _customerNameController.text.trim();
+      int? customerId;
+      final customerData = await DatabaseService.instance.getCustomerByName(customerName);
+      if (customerData != null) {
+        customerId = customerData['id'] as int;
+      } else {
+        // Create a new customer if they don't exist
+        final customer = Customer(
+          name: customerName,
+          createdAt: DateTime.now(),
+        );
+        customerId = await DatabaseService.instance.createCustomer(customer);
+      }
+
+      final now = DateTime.now();
+      final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
+      final orderNumber = 'HLD-$datePrefix-$timeComponent';
+      
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser == null) throw Exception('User not logged in');
+      
+      // Create order with proper customer information
+      final order = Order(
+        orderNumber: orderNumber,
+        customerId: customerId,
+        customerName: customerName,
+        totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
+        orderStatus: 'ON_HOLD',
+        paymentStatus: 'PENDING',
+        createdBy: currentUser.id!,
+        createdAt: now,
+        orderDate: now,
+        items: _cartItems.map((item) => OrderItem(
+          orderId: 0, // Will be set when order is created
+          productId: item.product.id!,
+          quantity: item.quantity,
+          unitPrice: item.product.buyingPrice,
+          sellingPrice: item.product.sellingPrice,
+          totalAmount: item.total,
+          productName: item.product.productName,
+          isSubUnit: item.isSubUnit,
+          subUnitName: item.subUnitName,
+          subUnitQuantity: item.subUnitQuantity?.toDouble(),
+          adjustedPrice: item.adjustedPrice,
+        )).toList(),
+      );
+
+      // Create the order
+      await DatabaseService.instance.createOrder(order);
+      
+      // Close loading dialog
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      
+      // Show success message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Order #$orderNumber placed on hold successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+      
+      // Clear the cart
+      _clearCart();
+      
+    } catch (e) {
+      // Close loading dialog
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error holding order: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _addToCart(Product product, int quantity, bool isSubUnit, String? selectedSubUnit, [double? adjustedPrice]) {

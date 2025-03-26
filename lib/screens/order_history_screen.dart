@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/services/database.dart';
-import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:intl/intl.dart';
 import 'package:data_table_2/data_table_2.dart';

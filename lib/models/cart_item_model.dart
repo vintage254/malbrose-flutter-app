@@ -20,9 +20,9 @@ class CartItem {
     this.adjustedPrice,
   });
 
-  double get unitPrice => product.buyingPrice;
-  double get sellingPrice => product.sellingPrice;
   int get productId => product.id!;
+  double get unitPrice => product.buyingPrice;
+  double get sellingPrice => adjustedPrice ?? product.sellingPrice;
 
   double get effectivePrice => adjustedPrice ?? 
     (isSubUnit && product.subUnitPrice != null ? 
@@ -35,27 +35,17 @@ class CartItem {
 
   double get profit => (effectivePrice - unitPrice) * effectiveQuantity;
 
-  factory CartItem.fromOrderItem(OrderItem orderItem) {
-    final product = Product(
-      id: orderItem.productId,
-      productName: orderItem.productName,
-      buyingPrice: orderItem.unitPrice,
-      sellingPrice: orderItem.sellingPrice,
-      quantity: orderItem.quantity,
-      supplier: 'Unknown',
-      receivedDate: DateTime.now(),
-      subUnitQuantity: orderItem.subUnitQuantity?.toInt(),
-      subUnitName: orderItem.subUnitName,
-    );
-
+  // Create CartItem from OrderItem
+  static CartItem fromOrderItem(OrderItem item) {
+    final product = item.toProductModel();
     return CartItem(
       product: product,
-      quantity: orderItem.quantity,
-      total: orderItem.totalAmount,
-      isSubUnit: orderItem.isSubUnit,
-      subUnitName: orderItem.subUnitName,
-      subUnitQuantity: orderItem.subUnitQuantity?.toInt(),
-      adjustedPrice: orderItem.adjustedPrice,
+      quantity: item.quantity,
+      total: item.totalAmount,
+      isSubUnit: item.isSubUnit,
+      subUnitName: item.subUnitName,
+      subUnitQuantity: item.subUnitQuantity?.toInt(),
+      adjustedPrice: item.adjustedPrice,
     );
   }
 

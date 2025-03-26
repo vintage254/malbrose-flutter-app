@@ -1,20 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/order_model.dart';
-import 'package:my_flutter_app/models/product_model.dart';
 import 'package:my_flutter_app/services/database.dart';
-import 'package:printing/printing.dart';
-import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:intl/intl.dart';
-import 'package:my_flutter_app/widgets/order_cart_panel.dart';
-import 'package:my_flutter_app/models/cart_item_model.dart';
-import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
 import 'package:my_flutter_app/services/printer_service.dart';
 import 'package:my_flutter_app/models/customer_model.dart';
 import 'dart:async';
-import 'dart:math';
+import 'package:my_flutter_app/utils/ui_helpers.dart';
 
 class ReceiptPanel extends StatefulWidget {
   final Order order;
@@ -68,8 +62,10 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
         setState(() {
           _isLoading = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading order items: $e')),
+        UIHelpers.showSnackBarWithContext(
+          context, 
+          'Error loading order items: $e',
+          isError: true,
         );
       }
     }
@@ -290,24 +286,46 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
   }
 
   void _completeSale() {
-    // Create a copy of the order with the selected payment method
+    // Check for invalid product IDs first
+    final validItems = widget.order.items.where((item) => item.productId > 0).toList();
+    
+    print('ReceiptPanel - Attempting to complete sale for order ${widget.order.orderNumber}');
+    print('ReceiptPanel - Valid items: ${validItems.length} of ${widget.order.items.length}');
+    
+    if (widget.order.items.any((item) => item.productId <= 0)) {
+      print('ReceiptPanel - Warning: Order contains invalid products:');
+      for (var item in widget.order.items.where((item) => item.productId <= 0)) {
+        print('  - ${item.productName} (ID: ${item.productId})');
+      }
+    }
+    
+    if (validItems.isEmpty) {
+      UIHelpers.showSnackBarWithContext(
+        context, 
+        'Cannot complete sale - no valid product items in order',
+        isError: true,
+      );
+      return;
+    }
+    
+    // Create a copy of the order with the selected payment method and only valid items
     final updatedOrder = Order(
       id: widget.order.id,
       orderNumber: widget.order.orderNumber,
       customerId: widget.order.customerId,
       customerName: widget.order.customerName,
-      totalAmount: widget.order.totalAmount,
+      totalAmount: validItems.fold<double>(0, (sum, item) => sum + item.totalAmount),
       orderStatus: widget.order.orderStatus,
       paymentStatus: widget.order.paymentStatus,
       paymentMethod: _selectedPaymentMethod,
       createdBy: widget.order.createdBy,
       createdAt: widget.order.createdAt,
       orderDate: widget.order.orderDate,
-      items: widget.order.items,
+      items: validItems,
     );
     
-    print('ReceiptPanel - Completing sale with payment method: ${_selectedPaymentMethod}');
-    print('ReceiptPanel - Order items count: ${widget.order.items.length}');
+    print('ReceiptPanel - Completing sale with payment method: $_selectedPaymentMethod');
+    print('ReceiptPanel - Order items count: ${validItems.length}');
     
     // Call the onProcessSale callback with the updated order
     widget.onProcessSale(updatedOrder);
@@ -466,7 +484,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                         pw.Expanded(
                           flex: 1,
                           child: pw.Text(
-                            '${effectivePrice.toStringAsFixed(2)}',
+                            effectivePrice.toStringAsFixed(2),
                             style: const pw.TextStyle(fontSize: 9),
                             textAlign: pw.TextAlign.right,
                           ),
@@ -474,7 +492,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                         pw.Expanded(
                           flex: 1,
                           child: pw.Text(
-                            '${(item['total_amount'] as num).toStringAsFixed(2)}',
+                            (item['total_amount'] as num).toStringAsFixed(2),
                             style: const pw.TextStyle(fontSize: 9),
                             textAlign: pw.TextAlign.right,
                           ),
@@ -646,18 +664,17 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       // Use the printer service to print the PDF
       await printerService.printPdf(
         pdf: pdf,
-        documentName: '${salePrefix}-${widget.order.orderNumber}',
+        documentName: '$salePrefix-${widget.order.orderNumber}',
         context: context,
       );
     } catch (e) {
       print('Error printing receipt: $e');
       if (!mounted) return;
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error printing receipt: $e'),
-          backgroundColor: Colors.red,
-        ),
+      UIHelpers.showSnackBarWithContext(
+        context, 
+        'Error printing receipt: $e',
+        isError: true,
       );
     }
   }
@@ -702,11 +719,10 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
         
         if (!mounted) return;
         
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Order deleted successfully'),
-            backgroundColor: Colors.green,
-          ),
+        UIHelpers.showSnackBarWithContext(
+          context, 
+          'Order deleted successfully',
+          isError: false,
         );
         
         // Navigate back
@@ -714,11 +730,10 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       } catch (e) {
         if (!mounted) return;
         
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error deleting order: $e'),
-            backgroundColor: Colors.red,
-          ),
+        UIHelpers.showSnackBarWithContext(
+          context, 
+          'Error deleting order: $e',
+          isError: true,
         );
       }
     }
@@ -789,8 +804,10 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
             onPressed: () async {
               // Validate customer name
               if (_creditCustomerNameController.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter customer name')),
+                UIHelpers.showSnackBarWithContext(
+                  context, 
+                  'Please enter customer name',
+                  isError: true,
                 );
                 return;
               }
@@ -814,19 +831,17 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                 await DatabaseService.instance.addCreditor(creditor);
                 
                 if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Credit record added successfully'),
-                    backgroundColor: Colors.green,
-                  ),
+                UIHelpers.showSnackBarWithContext(
+                  context, 
+                  'Credit record added successfully',
+                  isError: false,
                 );
               } catch (e) {
                 if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Error adding credit record: $e'),
-                    backgroundColor: Colors.red,
-                  ),
+                UIHelpers.showSnackBarWithContext(
+                  context, 
+                  'Error adding credit record: $e',
+                  isError: true,
                 );
               }
             },

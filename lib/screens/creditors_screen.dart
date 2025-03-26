@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/creditor_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
+import 'package:my_flutter_app/utils/ui_helpers.dart';
 
 class CreditorsScreen extends StatefulWidget {
   const CreditorsScreen({super.key});
@@ -39,8 +41,10 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading creditors: $e')),
+        UIHelpers.showSnackBarWithContext(
+          context,
+          'Error loading creditors: $e',
+          isError: true,
         );
       }
     }
@@ -63,27 +67,13 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
   Future<void> _addCreditor() async {
     if (_formKey.currentState!.validate()) {
       try {
-        final exists = await DatabaseService.instance.checkCreditorExists(
-          _nameController.text.trim(),
-        );
-
-        if (exists) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('A creditor with this name already exists'),
-              backgroundColor: Colors.red,
-            ),
-          );
-          return;
-        }
-
         final creditor = {
           'name': _nameController.text.trim(),
           'balance': double.parse(_balanceController.text),
           'details': _detailsController.text.trim(),
           'status': 'PENDING',
           'created_at': DateTime.now().toIso8601String(),
+          'original_amount': double.parse(_balanceController.text),
         };
 
         await DatabaseService.instance.addCreditor(creditor);
@@ -93,16 +83,17 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
         await _loadCreditors();
 
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Creditor added successfully'),
-            backgroundColor: Colors.green,
-          ),
+        UIHelpers.showSnackBarWithContext(
+          context,
+          'Creditor added successfully',
+          isError: false,
         );
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error adding creditor: $e')),
+        UIHelpers.showSnackBarWithContext(
+          context,
+          'Error adding creditor: $e',
+          isError: true,
         );
       }
     }
@@ -114,6 +105,9 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
     );
     final newDetailsController = TextEditingController(
       text: creditor.details,
+    );
+    final orderNumberController = TextEditingController(
+      text: creditor.orderNumber ?? '',
     );
 
     await showDialog(
@@ -127,6 +121,11 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
               controller: newBalanceController,
               decoration: const InputDecoration(labelText: 'New Balance'),
               keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: defaultPadding),
+            TextField(
+              controller: orderNumberController,
+              decoration: const InputDecoration(labelText: 'Order Number'),
             ),
             const SizedBox(height: defaultPadding),
             TextField(
@@ -152,21 +151,23 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
                   newBalance,
                   newDetailsController.text.trim(),
                   status,
+                  orderNumber: orderNumberController.text.trim(),
                 );
                 
                 if (!mounted) return;
                 Navigator.pop(context);
                 await _loadCreditors();
                 
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Balance updated successfully'),
-                    backgroundColor: Colors.green,
-                  ),
+                UIHelpers.showSnackBarWithContext(
+                  context,
+                  'Balance updated successfully',
+                  isError: false,
                 );
               } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Error updating balance: $e')),
+                UIHelpers.showSnackBarWithContext(
+                  context,
+                  'Error updating balance: $e',
+                  isError: true,
                 );
               }
             },
@@ -175,6 +176,91 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _deleteCreditor(Creditor creditor) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Creditor'),
+        content: Text('Are you sure you want to delete this credit record for ${creditor.name}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await DatabaseService.instance.deleteCreditor(creditor.id!);
+        await _loadCreditors();
+        if (mounted) {
+          UIHelpers.showSnackBarWithContext(
+            context,
+            'Credit record deleted successfully',
+            isError: false,
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          UIHelpers.showSnackBarWithContext(
+            context,
+            'Error deleting credit record: $e',
+            isError: true,
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _fixDatabase() async {
+    try {
+      // Show loading dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+      
+      await DatabaseService.instance.fixUniqueConstraint();
+      
+      if (!mounted) return;
+      
+      // Close loading dialog
+      Navigator.pop(context);
+      
+      // Reload data
+      await _loadCreditors();
+      
+      // Show success message
+      UIHelpers.showSnackBarWithContext(
+        context,
+        'Database schema fixed successfully. UNIQUE constraint removed.',
+        isError: false,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      
+      // Close loading dialog
+      Navigator.pop(context);
+      
+      // Show error message
+      UIHelpers.showSnackBarWithContext(
+        context,
+        'Error fixing database schema: $e',
+        isError: true,
+      );
+    }
   }
 
   @override
@@ -190,12 +276,26 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Creditors Management',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Creditors Management',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: _fixDatabase,
+                        icon: const Icon(Icons.build_circle),
+                        label: const Text('Fix DB Schema'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.purple,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: defaultPadding),
                   Card(
@@ -270,7 +370,6 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
                     ),
                   ),
                   const SizedBox(height: defaultPadding),
-                  // Search bar
                   TextField(
                     controller: _searchController,
                     decoration: InputDecoration(
@@ -293,24 +392,29 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
                               itemCount: _filteredCreditors.length,
                               itemBuilder: (context, index) {
                                 final creditor = _filteredCreditors[index];
-                                return ListTile(
+                                return ExpansionTile(
                                   title: Text(creditor.name),
                                   subtitle: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text('Balance: KSH ${creditor.balance.toStringAsFixed(2)}'),
-                                      Text('Details: ${creditor.details}'),
+                                      if (creditor.orderNumber != null && creditor.orderNumber!.isNotEmpty)
+                                        Text('Order: ${creditor.orderNumber}'),
                                       Text('Status: ${creditor.status}'),
                                     ],
                                   ),
                                   trailing: SizedBox(
-                                    width: 120,
+                                    width: 160,
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         IconButton(
                                           icon: const Icon(Icons.edit),
                                           onPressed: () => _updateCreditorBalance(creditor),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete, color: Colors.red),
+                                          onPressed: () => _deleteCreditor(creditor),
                                         ),
                                         Expanded(
                                           child: Chip(
@@ -326,6 +430,22 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
                                       ],
                                     ),
                                   ),
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.all(defaultPadding),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text('Details: ${creditor.details}'),
+                                          if (creditor.originalAmount != null)
+                                            Text('Original Amount: KSH ${creditor.originalAmount!.toStringAsFixed(2)}'),
+                                          Text('Created: ${creditor.createdAt != null ? DateFormat('MMM dd, yyyy HH:mm').format(creditor.createdAt!) : 'N/A'}'),
+                                          if (creditor.lastUpdated != null)
+                                            Text('Last Updated: ${DateFormat('MMM dd, yyyy HH:mm').format(creditor.lastUpdated!)}'),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
                                 );
                               },
                             ),

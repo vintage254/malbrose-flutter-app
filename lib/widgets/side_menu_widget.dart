@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/screens/home_screen.dart';
+import 'package:my_flutter_app/utils/ui_helpers.dart';
 
 class SideMenuWidget extends StatefulWidget {
   const SideMenuWidget({super.key});
@@ -22,20 +23,20 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
     final List<Map<String, dynamic>> items = [
       {'title': 'Home', 'icon': Icons.home, 'route': '/home'},
       {'title': 'Dashboard', 'icon': Icons.dashboard, 'route': '/main'},
-      {'title': 'Orders', 'icon': Icons.shopping_cart, 'route': '/orders'},
-      
-      {'title': 'Products', 'icon': Icons.inventory, 'route': '/products'},
+      {'title': 'Create Orders', 'icon': Icons.shopping_cart, 'route': '/orders'},
+      {'title': 'Held Orders', 'icon': Icons.pause_circle_filled, 'route': '/held-orders'},
+      {'title': 'Product Management', 'icon': Icons.inventory, 'route': '/products'},
       {'title': 'Creditors', 'icon': Icons.account_balance_wallet, 'route': '/creditors'},
       {'title': 'Debtors', 'icon': Icons.money_off, 'route': '/debtors'},
       {'title': 'Customer Reports', 'icon': Icons.receipt_long, 'route': '/customer-reports'},
-      {'title': 'Sales', 'icon': Icons.point_of_sale, 'route': '/sales'},
+      {'title': 'Complete Sales', 'icon': Icons.point_of_sale, 'route': '/sales'},
     ];
 
     // Add admin-only menu items
     if (isAdmin) {
       items.addAll([
         {'title': 'Order History', 'icon': Icons.history, 'route': '/order-history'},
-        {'title': 'Users', 'icon': Icons.people, 'route': '/users'},
+        {'title': 'Manage Users', 'icon': Icons.people, 'route': '/users'},
         {'title': 'Activity Log', 'icon': Icons.history, 'route': '/activity'},
         {'title': 'Sales Reports', 'icon': Icons.bar_chart, 'route': '/sales-report'},
         {'title': 'Printer Settings', 'icon': Icons.print, 'route': '/printer-settings'},
@@ -136,11 +137,10 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
                   // Close loading dialog if it's showing
                   Navigator.pop(context);
                   
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Error logging out: $e'),
-                      backgroundColor: Colors.red,
-                    ),
+                  UIHelpers.showSnackBarWithContext(
+                    context,
+                    'Error logging out: $e',
+                    isError: true,
                   );
                 }
               },

@@ -3,10 +3,13 @@ import 'package:intl/intl.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
-import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:my_flutter_app/services/printer_service.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:io';
+import 'package:excel/excel.dart' as xl;
+import 'package:path/path.dart' as path;
 
 class SalesReportScreen extends StatefulWidget {
   const SalesReportScreen({super.key});
@@ -19,6 +22,7 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
   List<Map<String, dynamic>> _salesData = [];
   Map<String, dynamic> _summary = {};
   bool _isLoading = false;
+  bool _isExporting = false;
   DateTime _startDate = DateTime.now().subtract(const Duration(days: 30));
   DateTime _endDate = DateTime.now();
 
@@ -120,6 +124,25 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
                                   label: const Text('Print Report'),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.blue,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton.icon(
+                                  onPressed: _isExporting ? null : _exportToExcel,
+                                  icon: _isExporting 
+                                    ? const SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: CircularProgressIndicator(
+                                          color: Colors.white,
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.file_download),
+                                  label: const Text('Export to Excel'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
                                     foregroundColor: Colors.white,
                                   ),
                                 ),
@@ -266,7 +289,7 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
         DataCell(Text(isFirstInOrder ? sale['customer_name']?.toString() ?? '-' : '')),
         DataCell(Text('${sale['product_name'] ?? 'Unknown'}${isSubUnit ? 
           ' (${sale['sub_unit_name'] ?? 'piece'})' : ''}')),
-        DataCell(Text('${quantity}${isSubUnit ? 
+        DataCell(Text('$quantity${isSubUnit ? 
           ' ${sale['sub_unit_name'] ?? 'pieces'}' : ''}')),
         DataCell(Text('KSH ${buyingPrice.toStringAsFixed(2)}')),
         DataCell(Text('KSH ${effectivePrice.toStringAsFixed(2)}')),
@@ -376,9 +399,9 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  _buildSummaryItem('Total Orders', '${(_summary['total_orders'] as num?)?.toString() ?? '0'}'),
+                  _buildSummaryItem('Total Orders', (_summary['total_orders'] as num?)?.toString() ?? '0'),
                   _buildSummaryItem('Items Sold', '${(_summary['total_quantity'] as num?)?.toString() ?? '0'} units'),
-                  _buildSummaryItem('Unique Customers', '${(_summary['unique_customers'] as num?)?.toString() ?? '0'}'),
+                  _buildSummaryItem('Unique Customers', (_summary['unique_customers'] as num?)?.toString() ?? '0'),
                 ],
               ),
               pw.SizedBox(height: 20),
@@ -519,12 +542,264 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
       isFirstInOrder ? sale['order_number']?.toString() ?? '-' : '',
       isFirstInOrder ? sale['customer_name']?.toString() ?? '-' : '',
       '${sale['product_name'] ?? 'Unknown'}${isSubUnit ? ' (${sale['sub_unit_name'] ?? 'piece'})' : ''}',
-      '${quantity}${isSubUnit ? ' ${sale['sub_unit_name'] ?? 'pieces'}' : ''}',
+      '$quantity${isSubUnit ? ' ${sale['sub_unit_name'] ?? 'pieces'}' : ''}',
       'KSH ${buyingPrice.toStringAsFixed(2)}',
       'KSH ${effectivePrice.toStringAsFixed(2)}',
       'KSH ${total.toStringAsFixed(2)}',
       'KSH ${profit.toStringAsFixed(2)}',
       '${marginPercent.toStringAsFixed(1)}%',
     ];
+  }
+  
+  Future<void> _exportToExcel() async {
+    try {
+      setState(() => _isExporting = true);
+      
+      // Show progress dialog
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const AlertDialog(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Generating Excel file...'),
+              ],
+            ),
+          ),
+        );
+      }
+      
+      // Create Excel file
+      final excel = xl.Excel.createExcel();
+      final sheet = excel['Sales Report'];
+      
+      // Add title
+      sheet.merge(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 0), 
+                 xl.CellIndex.indexByColumnRow(columnIndex: 9, rowIndex: 0));
+      final titleCell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 0));
+      titleCell.value = xl.TextCellValue('Sales Report: ${DateFormat('MMM dd, yyyy').format(_startDate)} - ${DateFormat('MMM dd, yyyy').format(_endDate)}');
+      titleCell.cellStyle = xl.CellStyle(
+        bold: true,
+        fontSize: 14,
+        horizontalAlign: xl.HorizontalAlign.Center,
+      );
+      
+      // Add summary section
+      sheet.merge(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 2), 
+                 xl.CellIndex.indexByColumnRow(columnIndex: 9, rowIndex: 2));
+      final summaryTitleCell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 2));
+      summaryTitleCell.value = xl.TextCellValue('Summary');
+      summaryTitleCell.cellStyle = xl.CellStyle(
+        bold: true,
+        fontSize: 12,
+      );
+      
+      // Add summary data
+      final totalSales = (_summary['total_sales'] as num?)?.toDouble() ?? 0.0;
+      final totalCost = (_summary['total_buying_cost'] as num?)?.toDouble() ?? 0.0;
+      final totalProfit = (_summary['total_profit'] as num?)?.toDouble() ?? 0.0;
+      final totalOrders = (_summary['total_orders'] as num?)?.toInt() ?? 0;
+      final totalQuantity = (_summary['total_quantity'] as num?)?.toInt() ?? 0;
+      final uniqueCustomers = (_summary['unique_customers'] as num?)?.toInt() ?? 0;
+      
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 3)).value = xl.TextCellValue('Total Sales:');
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 3)).value = xl.TextCellValue('KSH ${totalSales.toStringAsFixed(2)}');
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: 3)).value = xl.TextCellValue('Total Cost:');
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: 3)).value = xl.TextCellValue('KSH ${totalCost.toStringAsFixed(2)}');
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: 3)).value = xl.TextCellValue('Total Profit:');
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 7, rowIndex: 3)).value = xl.TextCellValue('KSH ${totalProfit.toStringAsFixed(2)}');
+      
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 4)).value = xl.TextCellValue('Total Orders:');
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 4)).value = xl.IntCellValue(totalOrders);
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: 4)).value = xl.TextCellValue('Items Sold:');
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: 4)).value = xl.TextCellValue('$totalQuantity units');
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: 4)).value = xl.TextCellValue('Unique Customers:');
+      sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 7, rowIndex: 4)).value = xl.IntCellValue(uniqueCustomers);
+      
+      // Add sales details title
+      sheet.merge(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 6), 
+                 xl.CellIndex.indexByColumnRow(columnIndex: 9, rowIndex: 6));
+      final detailsTitleCell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 6));
+      detailsTitleCell.value = xl.TextCellValue('Sales Details');
+      detailsTitleCell.cellStyle = xl.CellStyle(
+        bold: true,
+        fontSize: 12,
+      );
+      
+      // Add headers
+      final headers = ['Date', 'Order #', 'Customer', 'Product', 'Quantity', 'Buying Price', 'Selling Price', 'Total', 'Profit', 'Margin %'];
+      for (var i = 0; i < headers.length; i++) {
+        final cell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 7));
+        cell.value = xl.TextCellValue(headers[i]);
+        cell.cellStyle = xl.CellStyle(
+          bold: true,
+        );
+      }
+      
+      // Group sales data by order number to prevent duplicates
+      final Map<String, List<Map<String, dynamic>>> salesByOrder = {};
+      
+      for (var sale in _salesData) {
+        final orderNumber = sale['order_number'] as String;
+        if (!salesByOrder.containsKey(orderNumber)) {
+          salesByOrder[orderNumber] = [];
+        }
+        salesByOrder[orderNumber]!.add(sale);
+      }
+      
+      // Add sales data
+      var rowIndex = 8;
+      for (var entry in salesByOrder.entries) {
+        final orderItems = entry.value;
+        final firstItem = orderItems.first;
+        
+        for (var sale in orderItems) {
+          final isFirstInOrder = sale == firstItem;
+          final isSubUnit = sale['is_sub_unit'] == 1;
+          final totalAmount = (sale['total_amount'] as num?)?.toDouble() ?? 0.0;
+          final quantity = (sale['quantity'] as num?)?.toInt() ?? 0;
+          final effectivePrice = quantity > 0 ? totalAmount / quantity : 
+                                (sale['effective_price'] as num?)?.toDouble() ?? 0.0;
+          final buyingPrice = (sale['buying_price'] as num?)?.toDouble() ?? 0.0;
+          final total = totalAmount;
+          final cost = buyingPrice * quantity;
+          final profit = total - cost;
+          final marginPercent = cost > 0 ? (profit / cost * 100) : 0.0;
+
+          // Date
+          sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: rowIndex)).value = 
+            isFirstInOrder ? xl.TextCellValue(DateFormat('MMM dd, yyyy').format(DateTime.parse(sale['created_at'] as String? ?? DateTime.now().toIso8601String()))) : xl.TextCellValue('');
+          
+          // Order #
+          sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIndex)).value = 
+            isFirstInOrder ? xl.TextCellValue(sale['order_number']?.toString() ?? '-') : xl.TextCellValue('');
+          
+          // Customer
+          sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: rowIndex)).value = 
+            isFirstInOrder ? xl.TextCellValue(sale['customer_name']?.toString() ?? '-') : xl.TextCellValue('');
+          
+          // Product
+          sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: rowIndex)).value = 
+            xl.TextCellValue('${sale['product_name'] ?? 'Unknown'}${isSubUnit ? ' (${sale['sub_unit_name'] ?? 'piece'})' : ''}');
+          
+          // Quantity
+          sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: rowIndex)).value = 
+            xl.TextCellValue('$quantity${isSubUnit ? ' ${sale['sub_unit_name'] ?? 'pieces'}' : ''}');
+          
+          // Buying Price
+          sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: rowIndex)).value = 
+            xl.TextCellValue('KSH ${buyingPrice.toStringAsFixed(2)}');
+          
+          // Selling Price
+          sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: rowIndex)).value = 
+            xl.TextCellValue('KSH ${effectivePrice.toStringAsFixed(2)}');
+          
+          // Total
+          sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 7, rowIndex: rowIndex)).value = 
+            xl.TextCellValue('KSH ${total.toStringAsFixed(2)}');
+          
+          // Profit
+          final profitCell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 8, rowIndex: rowIndex));
+          profitCell.value = xl.TextCellValue('KSH ${profit.toStringAsFixed(2)}');
+          profitCell.cellStyle = xl.CellStyle(
+            bold: profit >= 0,
+          );
+          
+          // Margin %
+          final marginCell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 9, rowIndex: rowIndex));
+          marginCell.value = xl.TextCellValue('${marginPercent.toStringAsFixed(1)}%');
+          marginCell.cellStyle = xl.CellStyle(
+            bold: marginPercent >= 20,
+          );
+          
+          rowIndex++;
+        }
+      }
+      
+      // Auto-fit columns
+      for (var i = 0; i < headers.length; i++) {
+        sheet.setColumnAutoFit(i);
+      }
+      
+      // Create a temporary file
+      final tempDir = await Directory.systemTemp.createTemp('sales_report_');
+      final dateStr = DateFormat('yyyy-MM-dd').format(_startDate);
+      final endDateStr = DateFormat('yyyy-MM-dd').format(_endDate);
+      final tempFilePath = path.join(tempDir.path, 'sales_report_${dateStr}_to_$endDateStr.xlsx');
+      
+      // Save the Excel file
+      final fileBytes = excel.save();
+      if (fileBytes != null) {
+        final file = File(tempFilePath);
+        await file.writeAsBytes(fileBytes);
+      }
+      
+      // Close progress dialog
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      
+      // Ask user for save location
+      String? outputPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save Sales Report',
+        fileName: 'sales_report_${dateStr}_to_$endDateStr.xlsx',
+        allowedExtensions: ['xlsx'],
+        type: FileType.custom,
+      );
+      
+      if (outputPath == null) {
+        // User canceled the picker
+        setState(() => _isExporting = false);
+        
+        // Clean up temp directory
+        await tempDir.delete(recursive: true);
+        return;
+      }
+      
+      // Ensure proper extension
+      if (!outputPath.toLowerCase().endsWith('.xlsx')) {
+        outputPath += '.xlsx';
+      }
+      
+      // Copy the temp file to the chosen location
+      final tempFile = File(tempFilePath);
+      await tempFile.copy(outputPath);
+      
+      // Clean up temp directory
+      await tempDir.delete(recursive: true);
+      
+      setState(() => _isExporting = false);
+      
+      // Show success message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sales report exported to: $outputPath'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      // Close progress dialog if open
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).popUntil((route) => route.isFirst);
+      }
+      
+      setState(() => _isExporting = false);
+      
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error exporting sales report: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 } 

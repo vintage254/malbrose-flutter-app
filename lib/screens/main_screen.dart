@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/widgets/dashboard_widget.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
-import 'package:my_flutter_app/widgets/right_panel_widget.dart';
 import 'package:my_flutter_app/widgets/order_summary_widget.dart';
 import 'package:my_flutter_app/services/order_service.dart';
 import 'dart:async';

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:my_flutter_app/screens/login_screen.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/widgets/app_logo.dart';
 import 'package:my_flutter_app/widgets/login_form.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/utils/ui_helpers.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -102,6 +102,24 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      _FeatureCard(
+                        icon: Icons.dashboard,
+                        title: 'Dashboard',
+                        description: 'Monitor business performance at a glance',
+                        buttons: [
+                          _FeatureButton(
+                            label: 'View Dashboard',
+                            onPressed: () {
+                              if (AuthService.instance.isLoggedIn) {
+                                Navigator.pushNamed(context, '/main');
+                              } else {
+                                _redirectToLogin(context, '/main');
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: defaultPadding),
                       _FeatureCard(
                         icon: Icons.point_of_sale,
                         title: 'Point of Sale',
@@ -396,11 +414,10 @@ class _HomeScreenState extends State<HomeScreen> {
       // Refresh the current page to update UI
       setState(() {});
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Logged out successfully'),
-          backgroundColor: Colors.green,
-        ),
+      UIHelpers.showSnackBarWithContext(
+        context,
+        'Logged out successfully',
+        isError: false,
       );
     } catch (e) {
       if (!context.mounted) return;
@@ -408,11 +425,10 @@ class _HomeScreenState extends State<HomeScreen> {
       // Close loading dialog if it's showing
       Navigator.pop(context);
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error logging out: $e'),
-          backgroundColor: Colors.red,
-        ),
+      UIHelpers.showSnackBarWithContext(
+        context,
+        'Error logging out: $e',
+        isError: true,
       );
     }
   }

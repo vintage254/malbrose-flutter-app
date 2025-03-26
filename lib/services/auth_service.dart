@@ -3,7 +3,6 @@ import 'package:my_flutter_app/services/database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert';
-import 'package:my_flutter_app/models/activity_log_model.dart';
 
 class AuthService {
   static final AuthService instance = AuthService._internal();
