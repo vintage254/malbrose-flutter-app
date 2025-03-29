@@ -4,6 +4,8 @@ import 'dart:convert';
 class Order {
   final int? id;
   final String orderNumber;
+  final String? salesReceiptNumber;
+  final String? heldReceiptNumber;
   final double totalAmount;
   final String? customerName;
   final int? customerId;
@@ -19,6 +21,8 @@ class Order {
   Order({
     this.id,
     required this.orderNumber,
+    this.salesReceiptNumber,
+    this.heldReceiptNumber,
     required this.totalAmount,
     required this.customerName,
     this.customerId,
@@ -40,6 +44,8 @@ class Order {
     return {
       if (id != null) 'id': id,
       'order_number': orderNumber,
+      if (salesReceiptNumber != null) 'sales_receipt_number': salesReceiptNumber,
+      if (heldReceiptNumber != null) 'held_receipt_number': heldReceiptNumber,
       'customer_id': customerId,
       'customer_name': customerName ?? '',
       'total_amount': totalAmount,
@@ -125,6 +131,8 @@ class Order {
     return Order(
       id: map['id'] as int?,
       orderNumber: map['order_number'] as String,
+      salesReceiptNumber: map['sales_receipt_number'] as String?,
+      heldReceiptNumber: map['held_receipt_number'] as String?,
       totalAmount: totalAmount,
       customerName: customerName,
       customerId: map['customer_id'] as int?,
@@ -154,6 +162,8 @@ class Order {
   Order copyWith({
     int? id,
     String? orderNumber,
+    String? salesReceiptNumber,
+    String? heldReceiptNumber,
     double? totalAmount,
     String? customerName,
     int? customerId,
@@ -169,6 +179,8 @@ class Order {
     return Order(
       id: id ?? this.id,
       orderNumber: orderNumber ?? this.orderNumber,
+      salesReceiptNumber: salesReceiptNumber ?? this.salesReceiptNumber,
+      heldReceiptNumber: heldReceiptNumber ?? this.heldReceiptNumber,
       totalAmount: totalAmount ?? this.totalAmount,
       customerName: customerName ?? this.customerName,
       customerId: customerId ?? this.customerId,
@@ -318,4 +330,4 @@ class OrderItem {
       adjustedPrice: adjustedPrice ?? this.adjustedPrice,
     );
   }
-} 
+}

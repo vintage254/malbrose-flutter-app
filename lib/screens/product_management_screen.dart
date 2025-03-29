@@ -37,12 +37,20 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
         _isLoading = true;
       });
       
-      final productsData = await DatabaseService.instance.getAllProducts();
+      // Force database to refresh cached data by adding a timestamp parameter
+      final productsData = await DatabaseService.instance.getAllProducts(
+        forceRefresh: true,
+        timestamp: DateTime.now().millisecondsSinceEpoch,
+      );
+      
       if (mounted) {
         setState(() {
           _products = productsData.map((map) => Product.fromMap(map)).toList();
           _isLoading = false;
         });
+        
+        // For debugging
+        print('Loaded ${_products.length} products');
       }
     } catch (e) {
       if (mounted) {
@@ -434,16 +442,21 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
                   children: [
                     // First row with title and action buttons
                     Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Product Management',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
+                        const Flexible(
+                          child: Text(
+                            'Product Management',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 8),
                         // Action buttons in a horizontal scroll view
                         SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
@@ -646,4 +659,4 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
     _searchController.dispose();
     super.dispose();
   }
-} 
+}

@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class BackupService {
   static final BackupService instance = BackupService._init();
@@ -262,4 +263,243 @@ class BackupService {
       return false;
     }
   }
-} 
+  
+  // Get all table names from the database
+  Future<List<String>> getTableNames() async {
+    try {
+      // Get the database instance
+      final db = await DatabaseService.instance.database;
+      
+      // Query for all tables
+      final result = await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'android_%'");
+      
+      // Extract table names
+      final tableNames = result.map<String>((row) => row['name'] as String).toList();
+      
+      debugPrint('Found ${tableNames.length} tables: ${tableNames.join(', ')}');
+      return tableNames;
+    } catch (e) {
+      debugPrint('Error getting table names: $e');
+      return [];
+    }
+  }
+  
+  // Get table schema
+  Future<String?> getTableSchema(String tableName) async {
+    try {
+      // Get the database instance
+      final db = await DatabaseService.instance.database;
+      
+      // Query for table schema
+      final result = await db.rawQuery("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", [tableName]);
+      
+      if (result.isEmpty) {
+        return null;
+      }
+      
+      return result.first['sql'] as String;
+    } catch (e) {
+      debugPrint('Error getting schema for table $tableName: $e');
+      return null;
+    }
+  }
+  
+  // Get approximate table size
+  Future<int> getTableRowCount(String tableName) async {
+    try {
+      // Get the database instance
+      final db = await DatabaseService.instance.database;
+      
+      // Get row count
+      final result = await db.rawQuery('SELECT COUNT(*) as count FROM $tableName');
+      
+      return result.first['count'] as int;
+    } catch (e) {
+      debugPrint('Error getting row count for table $tableName: $e');
+      return 0;
+    }
+  }
+  
+  // Create a new empty database with schema but no data
+  Future<String> createEmptyDatabase(String dbName) async {
+    try {
+      // Ensure valid filename
+      if (!dbName.toLowerCase().endsWith('.db')) {
+        dbName = '$dbName.db';
+      }
+      
+      // Sanitize filename - remove any invalid characters
+      dbName = dbName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+      
+      // Get the backup directory
+      final backupDir = await _getBackupDirectory();
+      final newDbPath = '${backupDir.path}/$dbName';
+      
+      // Check if the file already exists
+      final newDbFile = File(newDbPath);
+      if (await newDbFile.exists()) {
+        throw Exception('A database with this name already exists');
+      }
+      
+      // Get the database schema from the current database
+      final tableNames = await getTableNames();
+      final schemas = <String>[];
+      
+      for (final tableName in tableNames) {
+        final schema = await getTableSchema(tableName);
+        if (schema != null) {
+          schemas.add(schema);
+        }
+      }
+      
+      // Create a new database with the schema
+      final factory = databaseFactory;
+      final newDb = await factory.openDatabase(
+        newDbPath,
+        options: OpenDatabaseOptions(
+          version: 1,
+          onCreate: (db, version) async {
+            for (final schema in schemas) {
+              await db.execute(schema);
+            }
+          }
+        )
+      );
+      
+      // Close the database properly
+      await newDb.close();
+      
+      debugPrint('Created new empty database at: $newDbPath');
+      return newDbPath;
+    } catch (e) {
+      debugPrint('Error creating empty database: $e');
+      rethrow;
+    }
+  }
+  
+  // Backup selected tables to a new database
+  Future<String> backupSelectedTables({
+    required String dbName,
+    required List<String> selectedTables,
+  }) async {
+    try {
+      // Ensure valid filename
+      if (!dbName.toLowerCase().endsWith('.db')) {
+        dbName = '$dbName.db';
+      }
+      
+      // Sanitize filename - remove any invalid characters
+      dbName = dbName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+      
+      // Get the backup directory
+      final backupDir = await _getBackupDirectory();
+      final newDbPath = '${backupDir.path}/$dbName';
+      
+      // Check if the file already exists
+      final newDbFile = File(newDbPath);
+      if (await newDbFile.exists()) {
+        throw Exception('A database with this name already exists');
+      }
+      
+      // Get the database instance
+      final sourceDb = await DatabaseService.instance.database;
+      
+      // Create a new database
+      final factory = databaseFactory;
+      final newDb = await factory.openDatabase(
+        newDbPath,
+        options: OpenDatabaseOptions(
+          version: 1,
+        )
+      );
+      
+      // Copy schemas and data for selected tables
+      for (final tableName in selectedTables) {
+        try {
+          // Get schema
+          final schemaResult = await sourceDb.rawQuery(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", 
+            [tableName]
+          );
+          
+          if (schemaResult.isEmpty) {
+            debugPrint('Warning: Schema not found for table $tableName, skipping...');
+            continue;
+          }
+          
+          final schema = schemaResult.first['sql'] as String;
+          
+          // Create table in new database
+          await newDb.execute(schema);
+          
+          // Copy data
+          final data = await sourceDb.query(tableName);
+          
+          // Use transaction for faster insertion
+          await newDb.transaction((txn) async {
+            for (final row in data) {
+              await txn.insert(tableName, row);
+            }
+          });
+          
+          debugPrint('Copied table $tableName with ${data.length} rows');
+        } catch (e) {
+          debugPrint('Error copying table $tableName: $e');
+          // Continue with other tables even if one fails
+        }
+      }
+      
+      // Close the new database properly
+      await newDb.close();
+      
+      debugPrint('Created backup with selected tables at: $newDbPath');
+      return newDbPath;
+    } catch (e) {
+      debugPrint('Error creating selective backup: $e');
+      rethrow;
+    }
+  }
+  
+  // Custom named backup of the entire database
+  Future<String> createNamedBackup(String dbName) async {
+    try {
+      // Ensure valid filename
+      if (!dbName.toLowerCase().endsWith('.db')) {
+        dbName = '$dbName.db';
+      }
+      
+      // Sanitize filename - remove any invalid characters
+      dbName = dbName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+      
+      // Get the backup directory
+      final backupDir = await _getBackupDirectory();
+      final backupPath = '${backupDir.path}/$dbName';
+      
+      // Check if the file already exists
+      final backupFile = File(backupPath);
+      if (await backupFile.exists()) {
+        throw Exception('A backup with this name already exists');
+      }
+      
+      // Get the database path
+      final dbPath = await _getDatabasePath();
+      final dbFile = File(dbPath);
+      
+      if (await dbFile.exists()) {
+        // Copy the database file to the backup location
+        await dbFile.copy(backupPath);
+        
+        // Clean up old backups
+        await _cleanupOldBackups();
+        
+        debugPrint('Named backup created at: $backupPath');
+        return backupPath;
+      } else {
+        throw Exception('Database file not found at $dbPath');
+      }
+    } catch (e) {
+      debugPrint('Error creating named backup: $e');
+      rethrow;
+    }
+  }
+}

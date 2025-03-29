@@ -9,6 +9,8 @@ import 'package:my_flutter_app/services/printer_service.dart';
 import 'package:my_flutter_app/models/customer_model.dart';
 import 'dart:async';
 import 'package:my_flutter_app/utils/ui_helpers.dart';
+import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/utils/receipt_number_generator.dart';
 
 class ReceiptPanel extends StatefulWidget {
   final Order order;
@@ -31,6 +33,13 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
   final _creditDetailsController = TextEditingController();
   final _creditCustomerNameController = TextEditingController();
   Customer? _selectedCustomer;
+  // Add these controllers and variables for split payment support
+  final _cashAmountController = TextEditingController();
+  final _mobileAmountController = TextEditingController();
+  final _bankAmountController = TextEditingController();
+  bool _showSplitPayment = false;
+  // Add sales receipt number variable
+  String? _salesReceiptNumber;
 
   @override
   void initState() {
@@ -42,6 +51,9 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
   void dispose() {
     _creditDetailsController.dispose();
     _creditCustomerNameController.dispose();
+    _cashAmountController.dispose();
+    _mobileAmountController.dispose();
+    _bankAmountController.dispose();
     super.dispose();
   }
 
@@ -308,10 +320,17 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       return;
     }
     
+    // Generate a distinct sales receipt number if not already generated
+    _salesReceiptNumber ??= ReceiptNumberGenerator.generateSalesReceiptNumber();
+    
+    print('ReceiptPanel - Generated sales receipt number: $_salesReceiptNumber');
+    
     // Create a copy of the order with the selected payment method and only valid items
     final updatedOrder = Order(
       id: widget.order.id,
       orderNumber: widget.order.orderNumber,
+      salesReceiptNumber: _salesReceiptNumber,
+      heldReceiptNumber: widget.order.heldReceiptNumber,
       customerId: widget.order.customerId,
       customerName: widget.order.customerName,
       totalAmount: validItems.fold<double>(0, (sum, item) => sum + item.totalAmount),
@@ -329,11 +348,39 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
     
     // Call the onProcessSale callback with the updated order
     widget.onProcessSale(updatedOrder);
+    
+    // Log the sales receipt in the activity log
+    _logSalesReceipt(updatedOrder);
+  }
+
+  // Method to log sales receipt information
+  Future<void> _logSalesReceipt(Order order) async {
+    try {
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null) {
+        await DatabaseService.instance.logActivity(
+          currentUser.id!,
+          currentUser.username,
+          'SALES_RECEIPT',
+          'Sales Receipt Generated',
+          'Order #${order.orderNumber} completed with Sales Receipt #$_salesReceiptNumber. '
+          'Total: KSH ${order.totalAmount.toStringAsFixed(2)}, '
+          'Payment Method: ${order.paymentMethod}',
+        );
+      }
+    } catch (e) {
+      print('Error logging sales receipt: $e');
+    }
   }
 
   Future<void> _printReceipt() async {
     try {
       print('ReceiptPanel - Printing receipt with ${_orderItems.length} items');
+      
+      // Generate a distinct sales receipt number if not already generated
+      _salesReceiptNumber ??= ReceiptNumberGenerator.generateSalesReceiptNumber();
+      
+      print('ReceiptPanel - Using sales receipt number: $_salesReceiptNumber');
       
       // Get the printer service
       final printerService = PrinterService.instance;
@@ -383,17 +430,49 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
               
               // Transaction Details
               pw.Divider(),
-              pw.Text(
-                'SALE #: ${widget.order.orderNumber}',
-                style: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold,
-                  fontSize: 10,
-                ),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Expanded(
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          'Order #: ${widget.order.orderNumber}',
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                            fontSize: 10,
+                          ),
+                        ),
+                        pw.SizedBox(height: 2),
+                        pw.Text(
+                          'Receipt #: $_salesReceiptNumber',
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  pw.Expanded(
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.end,
+                      children: [
+                        pw.Text(
+                          'Date: ${DateFormat('yyyy-MM-dd').format(widget.order.orderDate)}',
+                          style: const pw.TextStyle(fontSize: 10),
+                        ),
+                        pw.Text(
+                          'Time: ${DateFormat('HH:mm').format(widget.order.orderDate)}',
+                          style: const pw.TextStyle(fontSize: 10),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              pw.Text(
-                'Date: ${DateFormat('yyyy-MM-dd HH:mm').format(widget.order.orderDate)}',
-                style: const pw.TextStyle(fontSize: 10),
-              ),
+              pw.SizedBox(height: 5),
               pw.Text(
                 'Customer: ${widget.order.customerName ?? "Walk-in"}',
                 style: const pw.TextStyle(fontSize: 10),
@@ -743,7 +822,20 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
     // Reset the controllers
     _creditDetailsController.clear();
     _creditCustomerNameController.text = widget.order.customerName ?? '';
+    _cashAmountController.clear();
+    _mobileAmountController.clear();
+    _bankAmountController.clear();
     _selectedCustomer = null;
+    _showSplitPayment = false;
+    
+    // Calculate remaining credit amount (initially the full amount)
+    double totalAmount = widget.order.totalAmount;
+    double remainingCredit = totalAmount;
+    
+    // Generate a credit receipt number
+    final creditReceiptNumber = ReceiptNumberGenerator.generateCreditReceiptNumber();
+    
+    print('ReceiptPanel - Generated credit receipt number: $creditReceiptNumber');
     
     // If there's a customer ID in the order, try to get customer details
     if (widget.order.customerId != null) {
@@ -760,94 +852,258 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
     
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Credit Sale Details'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Order will be added as credit to:'),
-              const SizedBox(height: 8),
-              TextFormField(
-                controller: _creditCustomerNameController,
-                decoration: const InputDecoration(
-                  labelText: 'Customer Name',
-                  border: OutlineInputBorder(),
-                ),
-                readOnly: _selectedCustomer != null, // Read-only if customer is selected
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          // Calculate the remaining credit amount based on entered values
+          void updateRemainingCredit() {
+            double cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
+            double mobileAmount = double.tryParse(_mobileAmountController.text) ?? 0;
+            double bankAmount = double.tryParse(_bankAmountController.text) ?? 0;
+            
+            double totalPaid = cashAmount + mobileAmount + bankAmount;
+            remainingCredit = totalAmount - totalPaid;
+            
+            // Ensure we don't have negative credit
+            if (remainingCredit < 0) remainingCredit = 0;
+          }
+          
+          // Update initial remaining credit
+          updateRemainingCredit();
+          
+          return AlertDialog(
+            title: const Text('Payment Details'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Customer Information:'),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: _creditCustomerNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Customer Name',
+                      border: OutlineInputBorder(),
+                    ),
+                    readOnly: _selectedCustomer != null, // Read-only if customer is selected
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Total Order Amount: KSH ${totalAmount.toStringAsFixed(2)}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      TextButton.icon(
+                        icon: Icon(_showSplitPayment ? Icons.remove : Icons.add),
+                        label: Text(_showSplitPayment ? 'Hide Split Payment' : 'Split Payment'),
+                        onPressed: () {
+                          setState(() {
+                            _showSplitPayment = !_showSplitPayment;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                  if (_showSplitPayment) ...[
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Split Payment Options:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _cashAmountController,
+                            decoration: const InputDecoration(
+                              labelText: 'Cash Amount',
+                              border: OutlineInputBorder(),
+                              prefixText: 'KSH ',
+                            ),
+                            keyboardType: TextInputType.number,
+                            onChanged: (value) {
+                              setState(() {
+                                updateRemainingCredit();
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _mobileAmountController,
+                            decoration: const InputDecoration(
+                              labelText: 'Mobile Payment',
+                              border: OutlineInputBorder(),
+                              prefixText: 'KSH ',
+                            ),
+                            keyboardType: TextInputType.number,
+                            onChanged: (value) {
+                              setState(() {
+                                updateRemainingCredit();
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _bankAmountController,
+                            decoration: const InputDecoration(
+                              labelText: 'Bank Transfer',
+                              border: OutlineInputBorder(),
+                              prefixText: 'KSH ',
+                            ),
+                            keyboardType: TextInputType.number,
+                            onChanged: (value) {
+                              setState(() {
+                                updateRemainingCredit();
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey),
+                              borderRadius: BorderRadius.circular(4),
+                              color: Colors.grey.shade100,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Remaining Credit:'),
+                                Text(
+                                  'KSH ${remainingCredit.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: remainingCredit > 0 ? Colors.red : Colors.green,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _creditDetailsController,
+                    decoration: const InputDecoration(
+                      labelText: 'Payment Notes',
+                      border: OutlineInputBorder(),
+                      hintText: 'Enter any additional payment details',
+                    ),
+                    maxLines: 3,
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _creditDetailsController,
-                decoration: const InputDecoration(
-                  labelText: 'Credit Details',
-                  border: OutlineInputBorder(),
-                  hintText: 'Enter any additional details about this credit',
-                ),
-                maxLines: 3,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
               ),
-              const SizedBox(height: 16),
-              Text(
-                'Total Amount: KSH ${widget.order.totalAmount.toStringAsFixed(2)}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+              ElevatedButton(
+                onPressed: () async {
+                  // Validate customer name
+                  if (_creditCustomerNameController.text.trim().isEmpty) {
+                    UIHelpers.showSnackBarWithContext(
+                      context, 
+                      'Please enter customer name',
+                      isError: true,
+                    );
+                    return;
+                  }
+                  
+                  Navigator.of(context).pop();
+                  
+                  // Get the payment amounts
+                  double cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
+                  double mobileAmount = double.tryParse(_mobileAmountController.text) ?? 0;
+                  double bankAmount = double.tryParse(_bankAmountController.text) ?? 0;
+                  
+                  // Create payment details string
+                  List<String> paymentDetails = [];
+                  if (cashAmount > 0) paymentDetails.add('Cash: KSH ${cashAmount.toStringAsFixed(2)}');
+                  if (mobileAmount > 0) paymentDetails.add('Mobile: KSH ${mobileAmount.toStringAsFixed(2)}');
+                  if (bankAmount > 0) paymentDetails.add('Bank: KSH ${bankAmount.toStringAsFixed(2)}');
+                  if (remainingCredit > 0) paymentDetails.add('Credit: KSH ${remainingCredit.toStringAsFixed(2)}');
+                  
+                  String paymentMethodsUsed = paymentDetails.join(', ');
+                  
+                  // First complete the sale normally
+                  _completeSale();
+                  
+                  // Then add the credit record if there's a remaining balance
+                  if (remainingCredit > 0) {
+                    try {
+                      final creditor = {
+                        'name': _creditCustomerNameController.text.trim(),
+                        'balance': remainingCredit,
+                        'details': 'Credit for Order #${widget.order.orderNumber}. '
+                            '${_creditDetailsController.text.isNotEmpty ? _creditDetailsController.text : ''}'
+                            ' (Split payment: $paymentMethodsUsed)',
+                        'status': 'PENDING',
+                        'created_at': DateTime.now().toIso8601String(),
+                        'order_number': widget.order.orderNumber,
+                        'receipt_number': creditReceiptNumber,
+                        'order_details': widget.order.items.map((i) => i.productName).join(', '),
+                        'original_amount': widget.order.totalAmount,
+                      };
+                      
+                      await DatabaseService.instance.addCreditor(creditor);
+                      
+                      if (!mounted) return;
+                      UIHelpers.showSnackBarWithContext(
+                        context, 
+                        'Credit record added successfully',
+                        isError: false,
+                      );
+                    } catch (e) {
+                      if (!mounted) return;
+                      UIHelpers.showSnackBarWithContext(
+                        context, 
+                        'Error adding credit record: $e',
+                        isError: true,
+                      );
+                    }
+                  }
+                  
+                  // Log the split payment if used
+                  if (_showSplitPayment && (cashAmount > 0 || mobileAmount > 0 || bankAmount > 0)) {
+                    try {
+                      final currentUser = AuthService.instance.currentUser;
+                      if (currentUser != null) {
+                        await DatabaseService.instance.logActivity(
+                          currentUser.id!,
+                          currentUser.username,
+                          'split_payment',
+                          'Split Payment',
+                          'Order #${widget.order.orderNumber}: $paymentMethodsUsed',
+                        );
+                      }
+                    } catch (e) {
+                      print('Error logging split payment: $e');
+                    }
+                  }
+                },
+                child: const Text('Confirm Payment'),
               ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              // Validate customer name
-              if (_creditCustomerNameController.text.trim().isEmpty) {
-                UIHelpers.showSnackBarWithContext(
-                  context, 
-                  'Please enter customer name',
-                  isError: true,
-                );
-                return;
-              }
-              
-              Navigator.of(context).pop();
-              
-              // First complete the sale normally
-              _completeSale();
-              
-              // Then add the credit record
-              try {
-                final creditor = {
-                  'name': _creditCustomerNameController.text.trim(),
-                  'balance': widget.order.totalAmount,
-                  'details': 'Credit for Order #${widget.order.orderNumber}. '
-                      '${_creditDetailsController.text.isNotEmpty ? _creditDetailsController.text : ''}',
-                  'status': 'PENDING',
-                  'created_at': DateTime.now().toIso8601String(),
-                };
-                
-                await DatabaseService.instance.addCreditor(creditor);
-                
-                if (!mounted) return;
-                UIHelpers.showSnackBarWithContext(
-                  context, 
-                  'Credit record added successfully',
-                  isError: false,
-                );
-              } catch (e) {
-                if (!mounted) return;
-                UIHelpers.showSnackBarWithContext(
-                  context, 
-                  'Error adding credit record: $e',
-                  isError: true,
-                );
-              }
-            },
-            child: const Text('Confirm Credit Sale'),
-          ),
-        ],
+          );
+        }
       ),
     );
   }

@@ -220,12 +220,52 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     }
   }
   
+  Future<void> _resetAdminPassword() async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Resetting admin password...';
+    });
+    
+    try {
+      final success = await DatabaseService.instance.resetAdminPassword();
+      if (success) {
+        setState(() {
+          _statusMessage = 'Admin password reset to "admin123". You can now log in with these credentials.';
+        });
+      } else {
+        setState(() {
+          _statusMessage = 'Failed to reset admin password.';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Error resetting admin password: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+  
   @override
   Widget build(BuildContext context) {
+    print('Building SetupWizardScreen');
     return Scaffold(
       appBar: AppBar(
         title: const Text('Malbrose POS Setup Wizard'),
         centerTitle: true,
+        actions: [
+          // Add a button to reset admin password
+          TextButton.icon(
+            onPressed: _resetAdminPassword,
+            icon: const Icon(Icons.lock_reset),
+            label: const Text('Reset Admin Password'),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
       ),
       body: Form(
         key: _formKey,

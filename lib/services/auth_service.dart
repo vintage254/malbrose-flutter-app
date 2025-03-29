@@ -27,14 +27,15 @@ class AuthService {
       
       if (userMap != null) {
         final hashedPassword = hashPassword(password);
+        print('Input password hash: $hashedPassword');
+        print('Stored password hash: ${userMap['password']}');
         
         // Convert Map to User object
         final user = User.fromMap(userMap);
-        print('User Object: ${user.toMap()}');
         
         if (user.password == hashedPassword) {
           _currentUser = user;
-          print('Current User Role: ${_currentUser?.role}');
+          print('Password matched. Login successful.');
           
           // Update last login time
           final updatedUser = user.copyWith(lastLogin: DateTime.now());
@@ -53,7 +54,24 @@ class AuthService {
           );
           
           return _currentUser;
+        } else {
+          print('Password mismatch. Login failed.');
+          // Compare character by character to identify the issue
+          final storedHash = user.password;
+          final inputHash = hashedPassword;
+          if (storedHash.length != inputHash.length) {
+            print('Hash length mismatch: stored=${storedHash.length}, input=${inputHash.length}');
+          } else {
+            for (int i = 0; i < storedHash.length; i++) {
+              if (storedHash[i] != inputHash[i]) {
+                print('First mismatch at position $i: ${storedHash[i]} vs ${inputHash[i]}');
+                break;
+              }
+            }
+          }
         }
+      } else {
+        print('User not found: $username');
       }
       return null;
     } catch (e) {

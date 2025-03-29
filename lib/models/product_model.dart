@@ -264,7 +264,11 @@ class Product {
       sellingPrice: (map['selling_price'] is int)
           ? (map['selling_price'] as int).toDouble()
           : (map['selling_price'] as num?)?.toDouble() ?? 0.0,
-      quantity: map['quantity'] ?? 0,
+      quantity: map['quantity'] == null 
+          ? 0 
+          : (map['quantity'] is double) 
+              ? (map['quantity'] as double).toInt() 
+              : (map['quantity'] as num).toInt(),
       description: map['description'] as String?,
       hasSubUnits: map['has_sub_units'] == 1,
       subUnitQuantity: (map['sub_unit_quantity'] as num?)?.toInt(),

@@ -5,8 +5,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path;
-
+import 'package:path/path.dart' show join;
 
 import 'package:my_flutter_app/screens/order_screen.dart';
 import 'package:my_flutter_app/screens/sales_screen.dart';
@@ -39,11 +38,13 @@ void main() async {
 
   // Ensure Flutter is initialized
   WidgetsFlutterBinding.ensureInitialized();
+  print('Flutter initialized');
 
   // Initialize sqflite_ffi for desktop
   if (Platform.isWindows || Platform.isLinux) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
+    print('SQLite FFI initialized for desktop');
   }
 
   // Set preferred window size for desktop
@@ -55,15 +56,28 @@ void main() async {
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
       ]);
+      
+      // Ensure window is positioned correctly and of a reasonable size
+      // This requires a package like 'window_manager', but we'll use debug prints for now
+      print('Window orientation set');
+      print('Make sure your app window is not off-screen or minimized');
+      print('Check the taskbar or system tray for the app icon');
     } catch (e) {
       print('Error setting window properties: $e');
     }
   }
 
+  // Try clean start approach
+  print('Trying clean start approach');
+  await cleanStartApp();
+
   // Check if setup is completed
+  print('Checking if setup is completed...');
   bool setupCompleted = await checkSetupCompleted();
+  print('Setup completed: $setupCompleted');
 
   // Start the app with providers
+  print('Starting app with providers');
   runApp(
     MultiProvider(
       providers: [
@@ -74,6 +88,7 @@ void main() async {
       child: MyApp(setupCompleted: setupCompleted),
     ),
   );
+  print('App started');
 }
 
 // Check if setup is completed
@@ -86,7 +101,39 @@ Future<bool> checkSetupCompleted() async {
     return adminExists;
   } catch (e) {
     print('Error checking setup completion: $e');
+    
+    // If there's a database error, try to reset and recreate it
+    if (e.toString().contains('database') || 
+        e.toString().contains('file') || 
+        e.toString().contains('SQL')) {
+      print('Attempting database recovery due to initialization error');
+      try {
+        // Try to reset and recreate the database
+        await DatabaseService.instance.resetAndRecreateDatabase();
+        // Check again if admin exists
+        return await DatabaseService.instance.checkAdminUserExists();
+      } catch (resetError) {
+        print('Critical error during database recovery: $resetError');
+        return false;
+      }
+    }
+    
     return false;
+  }
+}
+
+// More concise cleanStartApp function that uses DatabaseService properly
+Future<void> cleanStartApp() async {
+  try {
+    print('Cleaning up for fresh app start');
+    
+    // Just call the improved resetAndRecreateDatabase function
+    // which handles everything we need - closing connections, deleting files, and recreating the database
+    await DatabaseService.instance.resetAndRecreateDatabase();
+    print('Database initialized successfully');
+    
+  } catch (e) {
+    print('Error during clean start: $e');
   }
 }
 
@@ -97,6 +144,11 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    print('Building MyApp widget, setupCompleted: $setupCompleted');
+    
+    final home = setupCompleted ? const HomeScreen() : const SetupWizardScreen();
+    print('Home widget selected: ${home.runtimeType}');
+    
     return MaterialApp(
       title: 'Malbrose App',
       debugShowCheckedModeBanner: false,
@@ -106,7 +158,7 @@ class MyApp extends StatelessWidget {
       ),
       scaffoldMessengerKey: UIHelpers.scaffoldMessengerKey,
       // Show setup wizard if setup is not completed, otherwise show home screen
-      home: setupCompleted ? const HomeScreen() : const SetupWizardScreen(),
+      home: home,
       routes: {
         '/login': (context) => const LoginScreen(),
         '/home': (context) => const HomeScreen(),

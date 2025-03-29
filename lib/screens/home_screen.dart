@@ -3,6 +3,7 @@ import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/widgets/app_logo.dart';
 import 'package:my_flutter_app/widgets/login_form.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/utils/ui_helpers.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -15,6 +16,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
+    print('Building HomeScreen');
     final isLoggedIn = AuthService.instance.isLoggedIn;
     final currentUser = AuthService.instance.currentUser;
     final isAdmin = currentUser?.role == 'ADMIN';
@@ -29,6 +31,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          if (isLoggedIn && isAdmin)
+            IconButton(
+              icon: const Icon(Icons.lock_reset),
+              tooltip: 'Reset Admin Password',
+              onPressed: _resetAdminPassword,
+            ),
           if (isLoggedIn)
             Row(
               children: [
@@ -394,6 +402,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _handleLogout(BuildContext context) async {
+    await AuthService.instance.logout();
+    if (mounted) {
+      setState(() {});
+    }
+  }
+  
+  Future<void> _resetAdminPassword() async {
     try {
       // Show loading dialog
       showDialog(
@@ -403,31 +418,31 @@ class _HomeScreenState extends State<HomeScreen> {
           child: CircularProgressIndicator(),
         ),
       );
-
-      await AuthService.instance.logout();
       
-      if (!context.mounted) return;
+      final success = await DatabaseService.instance.resetAdminPassword();
       
-      // Close loading dialog
-      Navigator.pop(context);
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Close loading dialog
       
-      // Refresh the current page to update UI
-      setState(() {});
-      
-      UIHelpers.showSnackBarWithContext(
-        context,
-        'Logged out successfully',
-        isError: false,
-      );
+      if (success) {
+        UIHelpers.showSnackBarWithContext(
+          context,
+          'Admin password reset to "admin123" successfully',
+          isError: false,
+        );
+      } else {
+        UIHelpers.showSnackBarWithContext(
+          context,
+          'Failed to reset admin password',
+          isError: true,
+        );
+      }
     } catch (e) {
-      if (!context.mounted) return;
-      
-      // Close loading dialog if it's showing
-      Navigator.pop(context);
-      
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Close loading dialog
       UIHelpers.showSnackBarWithContext(
         context,
-        'Error logging out: $e',
+        'Error resetting admin password: $e',
         isError: true,
       );
     }

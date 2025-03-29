@@ -6,7 +6,9 @@ import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/models/customer_model.dart';
 import 'package:my_flutter_app/models/order_model.dart';
+import 'package:my_flutter_app/utils/receipt_number_generator.dart';
 import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
+import 'package:my_flutter_app/widgets/credit_orders_dialog.dart';
 
 class OrderCartPanel extends StatefulWidget {
   final List<CartItem> initialItems;
@@ -235,27 +237,27 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         }
 
         // Generate a more consistent order number with date prefix for better tracking
-        // Add milliseconds for even more uniqueness
-        final now = DateTime.now();
-        final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
-        final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
-        final orderNumber = 'ORD-$datePrefix-$timeComponent';
+        // Using the new ReceiptNumberGenerator utility
+        final orderNumber = ReceiptNumberGenerator.generateOrderNumber();
+        
+        // Generate a held receipt number for pending orders
+        final heldReceiptNumber = ReceiptNumberGenerator.generateHeldReceiptNumber();
+        
         final currentUser = AuthService.instance.currentUser;
-        if (currentUser == null) {
-          throw Exception('User not logged in');
-        }
+        if (currentUser == null) throw Exception('User not logged in');
         
         // Create order with customer information
         final order = Order(
           orderNumber: orderNumber,
+          heldReceiptNumber: heldReceiptNumber,
           customerId: customerId,
           customerName: customerName,
           totalAmount: _total,
           orderStatus: 'PENDING',
           paymentStatus: 'PENDING',
           createdBy: currentUser.id!,
-          createdAt: now, // Use the same timestamp throughout
-          orderDate: now,
+          createdAt: DateTime.now(), // Use the same timestamp throughout
+          orderDate: DateTime.now(),
           items: widget.initialItems.map((item) => _createOrderItem(item)).toList(),
         );
 
@@ -409,36 +411,61 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                   controller.text = _customerNameController.text;
                 }
                 
-                return TextField(
-                  controller: controller,
-                  focusNode: focusNode,
-                  decoration: InputDecoration(
-                    labelText: 'Customer Name',
-                    border: const OutlineInputBorder(),
-                    filled: true,
-                    fillColor: Colors.white,
-                    suffixIcon: _isLoadingCustomers
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : IconButton(
-                            icon: const Icon(Icons.add),
-                            onPressed: () {
-                              if (controller.text.isNotEmpty) {
-                                _createNewCustomer(controller.text);
-                              }
-                            },
-                          ),
-                  ),
-                  onChanged: (value) {
-                    _customerNameController.text = value;
-                    _onCustomerSearchChanged(value);
-                    if (widget.onCustomerNameChanged != null) {
-                      widget.onCustomerNameChanged!(value);
-                    }
-                  },
+                return Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        decoration: InputDecoration(
+                          labelText: 'Customer Name',
+                          border: const OutlineInputBorder(),
+                          filled: true,
+                          fillColor: Colors.white,
+                          suffixIcon: _isLoadingCustomers
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : IconButton(
+                                  icon: const Icon(Icons.add),
+                                  onPressed: () {
+                                    if (controller.text.isNotEmpty) {
+                                      _createNewCustomer(controller.text);
+                                    }
+                                  },
+                                ),
+                        ),
+                        onChanged: (value) {
+                          _customerNameController.text = value;
+                          _onCustomerSearchChanged(value);
+                          if (widget.onCustomerNameChanged != null) {
+                            widget.onCustomerNameChanged!(value);
+                          }
+                        },
+                      ),
+                    ),
+                    if (_customerNameController.text.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          showDialog(
+                            context: context,
+                            builder: (context) => CreditOrdersDialog(
+                              customerName: _customerNameController.text,
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.credit_card),
+                        label: const Text("View Credit Orders"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ],
                 );
               },
               optionsViewBuilder: (context, onSelected, options) {
@@ -456,7 +483,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                           final customer = options.elementAt(index);
                           return ListTile(
                             title: Text(customer.name),
-                            subtitle: customer.phone != null ? Text(customer.phone!) : null,
+                            subtitle: null,
                             onTap: () => onSelected(customer),
                           );
                         },
@@ -800,4 +827,4 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
       }
     }
   }
-} 
+}
