@@ -16,11 +16,13 @@ import 'dart:io';
 class OrderScreen extends StatefulWidget {
   final Order? editingOrder;
   final bool isEditing;
+  final VoidCallback? onHoldOrderPressed;
 
   const OrderScreen({
     super.key, 
     this.editingOrder,
     this.isEditing = false,
+    this.onHoldOrderPressed,
   });
 
   @override
@@ -35,6 +37,7 @@ class _OrderScreenState extends State<OrderScreen> {
   bool _isLoading = true;
   List<CartItem> _cartItems = [];
   String? _selectedDepartment;
+  int customerId = 0; // Already set to 0 as default
 
   @override
   void initState() {
@@ -343,7 +346,7 @@ class _OrderScreenState extends State<OrderScreen> {
               },
               isEditing: widget.isEditing,
               orderButtonText: widget.isEditing ? 'Update Order' : 'Place Order',
-              onHoldOrderPressed: widget.isEditing ? null : () => _holdOrder(),
+              onHoldOrderPressed: widget.isEditing ? null : _holdOrder,
             ),
           ),
         ],
@@ -523,26 +526,22 @@ class _OrderScreenState extends State<OrderScreen> {
 
   // Method to handle holding an order
   Future<void> _holdOrder() async {
-    if (_cartItems.isEmpty) {
+    if (_cartItems.isEmpty || _customerNameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Cannot hold an empty order. Please add items first.'),
+          content: Text('Please add items and enter a customer name before holding an order'),
           backgroundColor: Colors.red,
         ),
       );
       return;
     }
 
-    if (_customerNameController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a customer name before holding the order.'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    // If a callback is provided, use it instead of the default implementation
+    if (widget.onHoldOrderPressed != null) {
+      widget.onHoldOrderPressed!();
       return;
     }
-
+    
     try {
       // Show loading dialog
       showDialog(
@@ -560,21 +559,7 @@ class _OrderScreenState extends State<OrderScreen> {
         ),
       );
       
-      // Get customer ID or create new customer
       final customerName = _customerNameController.text.trim();
-      int? customerId;
-      final customerData = await DatabaseService.instance.getCustomerByName(customerName);
-      if (customerData != null) {
-        customerId = customerData['id'] as int;
-      } else {
-        // Create a new customer if they don't exist
-        final customer = Customer(
-          name: customerName,
-          createdAt: DateTime.now(),
-        );
-        customerId = await DatabaseService.instance.createCustomer(customer);
-      }
-
       final now = DateTime.now();
       final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
       final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
@@ -583,34 +568,37 @@ class _OrderScreenState extends State<OrderScreen> {
       final currentUser = AuthService.instance.currentUser;
       if (currentUser == null) throw Exception('User not logged in');
       
-      // Create order with proper customer information
-      final order = Order(
-        orderNumber: orderNumber,
-        customerId: customerId,
-        customerName: customerName,
-        totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
-        orderStatus: 'ON_HOLD',
-        paymentStatus: 'PENDING',
-        createdBy: currentUser.id!,
-        createdAt: now,
-        orderDate: now,
-        items: _cartItems.map((item) => OrderItem(
-          orderId: 0, // Will be set when order is created
-          productId: item.product.id!,
-          quantity: item.quantity,
-          unitPrice: item.product.buyingPrice,
-          sellingPrice: item.product.sellingPrice,
-          totalAmount: item.total,
-          productName: item.product.productName,
-          isSubUnit: item.isSubUnit,
-          subUnitName: item.subUnitName,
-          subUnitQuantity: item.subUnitQuantity?.toDouble(),
-          adjustedPrice: item.adjustedPrice,
-        )).toList(),
-      );
+      // Create order map with customer information
+      final orderMap = {
+        'order_number': orderNumber,
+        'customer_id': customerId > 0 ? customerId : null,
+        'customer_name': customerName,
+        'total_amount': _cartItems.fold<double>(0, (sum, item) => sum + item.total),
+        'order_status': 'ON_HOLD',
+        'payment_status': 'PENDING',
+        'created_by': currentUser.id is String 
+            ? int.tryParse(currentUser.id as String) ?? 0 
+            : (currentUser.id as int? ?? 0),
+        'created_at': now.toIso8601String(),
+        'order_date': now.toIso8601String(),
+      };
+      
+      // Convert cart items to order items
+      final orderItems = _cartItems.map((item) => {
+        'product_id': item.product.id ?? 0,
+        'quantity': item.quantity,
+        'unit_price': item.product.buyingPrice,
+        'selling_price': item.product.sellingPrice,
+        'total_amount': item.total,
+        'product_name': item.product.productName,
+        'is_sub_unit': item.isSubUnit ? 1 : 0,
+        'sub_unit_name': item.subUnitName,
+        'sub_unit_quantity': item.subUnitQuantity != null ? item.subUnitQuantity!.toDouble() : null,
+        'adjusted_price': item.adjustedPrice,
+      }).toList();
 
       // Create the order
-      await DatabaseService.instance.createOrder(order);
+      await DatabaseService.instance.createOrder(orderMap, orderItems);
       
       // Close loading dialog
       if (mounted) {
@@ -675,26 +663,11 @@ class _OrderScreenState extends State<OrderScreen> {
       if (currentUser == null) throw Exception('User not logged in');
 
       final customerName = _customerNameController.text.trim();
-      print('OrderScreen - Customer name: "$customerName"');
       
       if (customerName.isEmpty) {
         throw Exception('Customer name is required');
       }
       
-      // First check if customer exists and get their ID
-      int? customerId;
-      final customerData = await DatabaseService.instance.getCustomerByName(customerName);
-      if (customerData != null) {
-        customerId = customerData['id'] as int;
-      } else {
-        // Create a new customer if they don't exist
-        final customer = Customer(
-          name: customerName,
-          createdAt: DateTime.now(),
-        );
-        customerId = await DatabaseService.instance.createCustomer(customer);
-      }
-
       final now = DateTime.now();
       
       if (widget.isEditing && widget.editingOrder != null) {
@@ -702,7 +675,7 @@ class _OrderScreenState extends State<OrderScreen> {
         final updatedOrder = Order(
           id: widget.editingOrder!.id,
           orderNumber: widget.editingOrder!.orderNumber,
-          customerId: customerId,
+          customerId: null, // Let createOrder handle it
           customerName: customerName,
           totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
           orderStatus: widget.editingOrder!.orderStatus,
@@ -713,7 +686,7 @@ class _OrderScreenState extends State<OrderScreen> {
           orderDate: widget.editingOrder!.orderDate,
           items: _cartItems.map((item) => OrderItem(
             orderId: widget.editingOrder!.id ?? 0,
-            productId: item.product.id!,
+            productId: item.product.id ?? 0,
             quantity: item.quantity,
             unitPrice: item.product.buyingPrice,
             sellingPrice: item.product.sellingPrice,
@@ -726,8 +699,12 @@ class _OrderScreenState extends State<OrderScreen> {
           )).toList(),
         );
         
+        // Convert to map for database update
+        final orderMap = updatedOrder.toMap();
+        final orderItems = updatedOrder.items?.map((item) => item.toMap()).toList() ?? [];
+        
         // Update the order in the database
-        await DatabaseService.instance.updateOrder(updatedOrder);
+        await DatabaseService.instance.updateOrder(updatedOrder.id!, orderMap, orderItems);
         
         // Log the update
         await DatabaseService.instance.logActivity(
@@ -756,33 +733,36 @@ class _OrderScreenState extends State<OrderScreen> {
         final orderNumber = 'ORD-$datePrefix-$timeComponent';
         
         // Create order with proper customer information
-        final order = Order(
-          orderNumber: orderNumber,
-          customerId: customerId,
-          customerName: customerName,
-          totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
-          orderStatus: 'PENDING',
-          paymentStatus: 'PENDING',
-          createdBy: currentUser.id!,
-          createdAt: now,
-          orderDate: now,
-          items: _cartItems.map((item) => OrderItem(
-            orderId: 0, // Will be set when order is created
-            productId: item.product.id!,
-            quantity: item.quantity,
-            unitPrice: item.product.buyingPrice,
-            sellingPrice: item.product.sellingPrice,
-            totalAmount: item.total,
-            productName: item.product.productName,
-            isSubUnit: item.isSubUnit,
-            subUnitName: item.subUnitName,
-            subUnitQuantity: item.subUnitQuantity?.toDouble(),
-            adjustedPrice: item.adjustedPrice,
-          )).toList(),
-        );
+        final orderMap = {
+          'order_number': orderNumber,
+          'customer_id': customerId > 0 ? customerId : null,
+          'customer_name': customerName,
+          'total_amount': _cartItems.fold<double>(0, (sum, item) => sum + item.total),
+          'order_status': 'PENDING',
+          'payment_status': 'PENDING',
+          'created_by': currentUser.id is String 
+              ? int.tryParse(currentUser.id as String) ?? 0 
+              : (currentUser.id as int? ?? 0),
+          'created_at': now.toIso8601String(),
+          'order_date': now.toIso8601String(),
+        };
+        
+        // Convert cart items to order items
+        final orderItems = _cartItems.map((item) => {
+          'product_id': item.product.id ?? 0,
+          'quantity': item.quantity,
+          'unit_price': item.product.buyingPrice,
+          'selling_price': item.product.sellingPrice,
+          'total_amount': item.total,
+          'product_name': item.product.productName,
+          'is_sub_unit': item.isSubUnit ? 1 : 0,
+          'sub_unit_name': item.subUnitName,
+          'sub_unit_quantity': item.subUnitQuantity != null ? item.subUnitQuantity!.toDouble() : null,
+          'adjusted_price': item.adjustedPrice,
+        }).toList();
 
         // Use the DatabaseService to handle the transaction
-        await DatabaseService.instance.createOrder(order);
+        await DatabaseService.instance.createOrder(orderMap, orderItems);
 
         if (!mounted) return;
         

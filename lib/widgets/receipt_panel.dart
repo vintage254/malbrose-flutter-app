@@ -840,9 +840,9 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
     // If there's a customer ID in the order, try to get customer details
     if (widget.order.customerId != null) {
       try {
-        final customerData = await DatabaseService.instance.getCustomerById(widget.order.customerId!);
-        if (customerData != null) {
-          _selectedCustomer = Customer.fromMap(customerData);
+        final customer = await DatabaseService.instance.getCustomerById(widget.order.customerId!);
+        if (customer != null) {
+          _selectedCustomer = customer;
           _creditCustomerNameController.text = _selectedCustomer!.name;
         }
       } catch (e) {

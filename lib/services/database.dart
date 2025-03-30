@@ -15,6 +15,7 @@ import 'package:excel/excel.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
@@ -2754,18 +2755,19 @@ class DatabaseService {
   }
 
   /// Get customer by name
-  Future<List<Map<String, dynamic>>> getCustomerByName(String name) async {
+  Future<Map<String, dynamic>?> getCustomerByName(String name) async {
     try {
       final db = await database;
-      final results = await db.query(
+      final result = await db.query(
         tableCustomers,
-        where: 'name LIKE ?',
-        whereArgs: ['%$name%'],
+        where: 'name = ?',
+        whereArgs: [name],
+        limit: 1,
       );
-      return results;
+      return result.isNotEmpty ? result.first : null;
     } catch (e) {
       print('Error getting customer by name: $e');
-      return [];
+      return null;
     }
   }
 
@@ -2773,34 +2775,7 @@ class DatabaseService {
   Future<Map<String, dynamic>?> createCustomer(Map<String, dynamic> customer) async {
     try {
       final db = await database;
-      
-      // Set timestamps if not provided
-      if (!customer.containsKey('created_at')) {
-        customer['created_at'] = DateTime.now().toIso8601String();
-      }
-      if (!customer.containsKey('updated_at')) {
-        customer['updated_at'] = customer['created_at'];
-      }
-      
-      // Ensure total_purchases exists with default value
-      if (!customer.containsKey('total_purchases')) {
-        customer['total_purchases'] = 0.0;
-      }
-      
       final id = await db.insert(tableCustomers, customer);
-      
-      // Log the activity if a current user is authenticated
-      final currentUser = await getCurrentUser();
-      if (currentUser != null) {
-        await logActivity(
-          currentUser['id'] as int,
-          currentUser['username'] as String,
-          actionCreateCustomer,
-          'Create customer',
-          'Created customer: ${customer['name']}'
-        );
-      }
-      
       return {...customer, 'id': id};
     } catch (e) {
       print('Error creating customer: $e');
@@ -2808,69 +2783,64 @@ class DatabaseService {
     }
   }
 
-  /// Create a new order with support for Order object or Map input
-  Future<Map<String, dynamic>?> createOrder(dynamic orderData, [List<Map<String, dynamic>>? items]) async {
+  /// Create a new order with transaction-safety
+  Future<Map<String, dynamic>?> createOrder(Map<String, dynamic> orderMap, List<Map<String, dynamic>> orderItems) async {
     try {
       final db = await database;
       
-      // Convert Order object to Map if needed
-      Map<String, dynamic> orderMap;
-      List<Map<String, dynamic>> orderItems;
-      
-      if (orderData is Order) {
-        // Convert Order to Map
-        orderMap = orderData.toMap();
-        orderItems = orderData.items?.map((item) => item.toMap()).toList() ?? [];
-      } else if (orderData is Map<String, dynamic>) {
-        // Already a Map
-        orderMap = orderData;
-        orderItems = items ?? [];
-      } else {
-        throw ArgumentError('Invalid order data type. Must be Order or Map<String, dynamic>');
-      }
-      
       return await withTransaction((txn) async {
-        // Create order number if not provided
+        // Generate a unique order number
         if (!orderMap.containsKey('order_number') || orderMap['order_number'] == null) {
-          final orderNumber = await _generateOrderNumber(txn);
-          orderMap['order_number'] = orderNumber;
+          orderMap['order_number'] = await _generateOrderNumber(txn);
         }
         
-        // Set timestamps if not provided
-        if (!orderMap.containsKey('created_at') || orderMap['created_at'] == null) {
-          orderMap['created_at'] = DateTime.now().toIso8601String();
-        }
-        if (!orderMap.containsKey('updated_at') || orderMap['updated_at'] == null) {
-          orderMap['updated_at'] = orderMap['created_at'];
+        // Set timestamps
+        final now = DateTime.now().toIso8601String();
+        orderMap['created_at'] = now;
+        orderMap['updated_at'] = now;
+        
+        // Create customer if not exists
+        if (orderMap.containsKey('customer_id') && orderMap['customer_id'] == null && 
+            orderMap.containsKey('customer_name') && orderMap['customer_name'] != null) {
+          final customerId = await _getOrCreateCustomer(txn, orderMap['customer_name'] as String);
+          orderMap['customer_id'] = customerId;
         }
         
-        // Insert order
+        // Insert the order
         final orderId = await txn.insert(tableOrders, orderMap);
         
-        // Insert order items
+        // Process order items
         for (final item in orderItems) {
+          // Set order ID for the item
           item['order_id'] = orderId;
+          
+          // Insert order item
           await txn.insert(tableOrderItems, item);
           
-          // Update product quantity if not a sub-unit
-          if (item['is_sub_unit'] != 1) {
-            await _updateProductQuantity(
-              txn, 
-              item['product_id'] as int, 
-              -(item['quantity'] as int)
-            );
-          } else {
-            // Update sub-unit quantity
-            final product = await getProductById(item['product_id'] as int);
-            if (product != null) {
-              final subUnitQuantity = product['sub_unit_quantity'] as int? ?? 0;
-              final quantityToReduce = (item['quantity'] as int) ~/ subUnitQuantity;
-              if (quantityToReduce > 0) {
-                await _updateProductQuantity(
-                  txn, 
-                  item['product_id'] as int, 
-                  -quantityToReduce
-                );
+          // Update product quantity
+          if (item.containsKey('product_id') && item['product_id'] != null) {
+            if (item['is_sub_unit'] != 1) {
+              // For main units, simply decrease quantity
+              await txn.rawUpdate(
+                'UPDATE $tableProducts SET quantity = quantity - ? WHERE id = ?',
+                [item['quantity'], item['product_id']],
+              );
+            } else {
+              // For sub-units, fetch product details and calculate main unit quantity
+              final product = await getProductByIdWithTxn(txn, item['product_id'] as int);
+              if (product != null && product.containsKey('sub_unit_quantity') && 
+                  product['sub_unit_quantity'] != null) {
+                final subUnitQuantity = (product['sub_unit_quantity'] as num?)?.toDouble() ?? 0;
+                if (subUnitQuantity > 0) {
+                  // Calculate how many main units to reduce
+                  final quantityToDeduct = ((item['quantity'] as int) / subUnitQuantity).floor();
+                  if (quantityToDeduct > 0) {
+                    await txn.rawUpdate(
+                      'UPDATE $tableProducts SET quantity = quantity - ? WHERE id = ?',
+                      [quantityToDeduct, item['product_id']],
+                    );
+                  }
+                }
               }
             }
           }
@@ -2885,8 +2855,8 @@ class DatabaseService {
           );
         }
         
-        // Log the activity
-        final currentUser = await getCurrentUser();
+        // Log the activity - using transaction-safe method
+        final currentUser = await getCurrentUserWithTxn(txn);
         if (currentUser != null) {
           await txn.insert(
             tableActivityLogs,
@@ -2906,6 +2876,39 @@ class DatabaseService {
     } catch (e) {
       print('Error creating order: $e');
       return null;
+    }
+  }
+
+  /// Helper method to get or create a customer by name within transaction
+  Future<int> _getOrCreateCustomer(DatabaseExecutor txn, String name) async {
+    try {
+      // Check if customer exists
+      final customers = await txn.query(
+        tableCustomers,
+        where: 'name = ?',
+        whereArgs: [name],
+        limit: 1,
+      );
+      
+      if (customers.isNotEmpty) {
+        return customers.first['id'] as int;
+      }
+      
+      // Create new customer
+      final now = DateTime.now().toIso8601String();
+      final id = await txn.insert(
+        tableCustomers,
+        {
+          'name': name,
+          'created_at': now,
+          'updated_at': now,
+        },
+      );
+      
+      return id;
+    } catch (e) {
+      print('Error getting or creating customer: $e');
+      return -1;
     }
   }
 
@@ -2965,8 +2968,8 @@ class DatabaseService {
           await txn.insert(tableOrderItems, item);
         }
         
-        // Log the activity
-        final currentUser = await getCurrentUser();
+        // Log the activity - using transaction-safe method
+        final currentUser = await getCurrentUserWithTxn(txn);
         if (currentUser != null) {
           await txn.insert(
             tableActivityLogs,
@@ -3204,7 +3207,7 @@ class DatabaseService {
   Future<List<Map<String, dynamic>>> getAllCustomers() async {
     try {
       final db = await database;
-      final results = await db.query(tableCustomers, orderBy: 'name ASC');
+      final results = await db.query(tableCustomers);
       return results;
     } catch (e) {
       print('Error getting all customers: $e');
@@ -3304,17 +3307,21 @@ class DatabaseService {
               item['quantity'] as int
             );
           } else {
-            // Restore sub-unit quantity
-            final product = await getProductById(item['product_id'] as int);
+            // Restore sub-unit quantity - using transaction-safe method
+            final product = await getProductByIdWithTxn(txn, item['product_id'] as int);
             if (product != null) {
-              final subUnitQuantity = product['sub_unit_quantity'] as int? ?? 0;
-              final quantityToAdd = (item['quantity'] as int) ~/ subUnitQuantity;
-              if (quantityToAdd > 0) {
-                await _updateProductQuantity(
-                  txn, 
-                  item['product_id'] as int, 
-                  quantityToAdd
-                );
+              // Handle sub_unit_quantity as double since it's stored as REAL
+              final subUnitQuantity = (product['sub_unit_quantity'] as num?)?.toDouble() ?? 0;
+              if (subUnitQuantity > 0) {
+                // Calculate how many main units to add back
+                final quantityToAdd = ((item['quantity'] as int) / subUnitQuantity).floor();
+                if (quantityToAdd > 0) {
+                  await _updateProductQuantity(
+                    txn, 
+                    item['product_id'] as int, 
+                    quantityToAdd
+                  );
+                }
               }
             }
           }
@@ -3334,8 +3341,8 @@ class DatabaseService {
           whereArgs: [orderId],
         );
         
-        // Log the activity
-        final currentUser = await getCurrentUser();
+        // Log the activity - using transaction-safe method
+        final currentUser = await getCurrentUserWithTxn(txn);
         if (currentUser != null) {
           await txn.insert(
             tableActivityLogs,
@@ -3460,6 +3467,47 @@ class DatabaseService {
       return {...userData, 'id': id};
     } catch (e) {
       print('Error creating user: $e');
+      return null;
+    }
+  }
+
+  /// Get a product by ID with transaction
+  Future<Map<String, dynamic>?> getProductByIdWithTxn(DatabaseExecutor txn, int id) async {
+    try {
+      final results = await txn.query(
+        tableProducts,
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      
+      return results.isNotEmpty ? results.first : null;
+    } catch (e) {
+      print('Error getting product by ID with transaction: $e');
+      return null;
+    }
+  }
+
+  /// Get current user with transaction
+  Future<Map<String, dynamic>?> getCurrentUserWithTxn(DatabaseExecutor txn) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('userId');
+      
+      if (userId == null) {
+        return null;
+      }
+      
+      final results = await txn.query(
+        tableUsers,
+        where: 'id = ?',
+        whereArgs: [userId],
+        limit: 1,
+      );
+      
+      return results.isNotEmpty ? results.first : null;
+    } catch (e) {
+      print('Error getting current user with transaction: $e');
       return null;
     }
   }

@@ -46,6 +46,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
   Customer? _selectedCustomer;
   bool _isLoadingCustomers = false;
   Timer? _debounceTimer;
+  int customerId = 0; // Default to 0
 
   @override
   void initState() {
@@ -73,6 +74,13 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         if (customer != null) {
           setState(() {
             _selectedCustomer = Customer.fromMap(customer);
+            // Set customerId from the loaded customer, ensuring proper type conversion
+            if (customer['id'] is int) {
+              customerId = customer['id'] as int;
+            } else if (customer['id'] != null) {
+              // Handle any other potential types
+              customerId = int.tryParse(customer['id'].toString()) ?? 0;
+            }
           });
         }
       } catch (e) {
@@ -132,10 +140,19 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         createdAt: DateTime.now(),
       );
       
-      final customerId = await DatabaseService.instance.createCustomer(customer);
+      final customerMap = {
+        'name': name,
+        'created_at': DateTime.now().toIso8601String(),
+      };
+      
+      final customerResult = await DatabaseService.instance.createCustomer(customerMap);
       setState(() {
-        _selectedCustomer = customer.copyWith(id: customerId);
+        _selectedCustomer = customer.copyWith(id: customerResult != null ? customerResult['id'] as int : null);
         _customerNameController.text = name;
+        // Set customerId from the newly created customer
+        if (customerResult != null) {
+          customerId = customerResult['id'] is String ? int.parse(customerResult['id'] as String) : customerResult['id'] as int;
+        }
       });
       if (widget.onCustomerNameChanged != null) {
         widget.onCustomerNameChanged!(name);
@@ -222,20 +239,6 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         }
         
         // Otherwise, create the order here
-        // First check if customer exists and get their ID
-        int? customerId;
-        final customerData = await DatabaseService.instance.getCustomerByName(customerName);
-        if (customerData != null) {
-          customerId = customerData['id'] as int;
-        } else {
-          // Create a new customer if they don't exist
-          final customer = Customer(
-            name: customerName,
-            createdAt: DateTime.now(),
-          );
-          customerId = await DatabaseService.instance.createCustomer(customer);
-        }
-
         // Generate a more consistent order number with date prefix for better tracking
         // Using the new ReceiptNumberGenerator utility
         final orderNumber = ReceiptNumberGenerator.generateOrderNumber();
@@ -246,23 +249,37 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         final currentUser = AuthService.instance.currentUser;
         if (currentUser == null) throw Exception('User not logged in');
         
-        // Create order with customer information
-        final order = Order(
-          orderNumber: orderNumber,
-          heldReceiptNumber: heldReceiptNumber,
-          customerId: customerId,
-          customerName: customerName,
-          totalAmount: _total,
-          orderStatus: 'PENDING',
-          paymentStatus: 'PENDING',
-          createdBy: currentUser.id!,
-          createdAt: DateTime.now(), // Use the same timestamp throughout
-          orderDate: DateTime.now(),
-          items: widget.initialItems.map((item) => _createOrderItem(item)).toList(),
-        );
+        // Create order map with customer information
+        final orderMap = {
+          'order_number': orderNumber,
+          'held_receipt_number': heldReceiptNumber,
+          'customer_id': customerId > 0 ? customerId : null,
+          'customer_name': customerName,
+          'total_amount': _total,
+          'order_status': 'PENDING',
+          'payment_status': 'PENDING',
+          'created_by': currentUser.id is String 
+              ? int.tryParse(currentUser.id as String) ?? 0 
+              : (currentUser.id as int? ?? 0),
+          'created_at': DateTime.now().toIso8601String(), // Use the same timestamp throughout
+          'order_date': DateTime.now().toIso8601String(),
+        };
+
+        // Convert cart items to order items
+        final orderItems = widget.initialItems.map((item) => {
+          'product_id': item.product.id ?? 0,
+          'quantity': item.quantity,
+          'unit_price': item.unitPrice,
+          'selling_price': item.sellingPrice,
+          'total_amount': item.total,
+          'product_name': item.product.productName,
+          'is_sub_unit': item.isSubUnit ? 1 : 0,
+          'sub_unit_name': item.subUnitName,
+          'sub_unit_quantity': item.subUnitQuantity != null ? item.subUnitQuantity!.toDouble() : null,
+        }).toList();
 
         // Let DatabaseService handle the transaction
-        await DatabaseService.instance.createOrder(order);
+        await DatabaseService.instance.createOrder(orderMap, orderItems);
         
         // Close loading dialog
         if (mounted) {
@@ -328,7 +345,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
   OrderItem _createOrderItem(CartItem item) {
     return OrderItem(
       orderId: 0,  // Will be set when order is created
-      productId: item.productId,
+      productId: item.product.id is int ? (item.product.id as int) : (item.product.id ?? 0),
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       sellingPrice: item.sellingPrice,
@@ -336,7 +353,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
       productName: item.product.productName,
       isSubUnit: item.isSubUnit,
       subUnitName: item.subUnitName,
-      subUnitQuantity: item.subUnitQuantity?.toDouble(),
+      subUnitQuantity: item.subUnitQuantity != null ? item.subUnitQuantity!.toDouble() : null,
     );
   }
 
@@ -399,6 +416,10 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                 setState(() {
                   _selectedCustomer = customer;
                   _customerNameController.text = customer.name;
+                  // Update customerId when customer is selected
+                  if (customer.id != null) {
+                    customerId = customer.id!;
+                  }
                 });
                 if (widget.onCustomerNameChanged != null) {
                   widget.onCustomerNameChanged!(customer.name);
@@ -484,7 +505,9 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                           return ListTile(
                             title: Text(customer.name),
                             subtitle: null,
-                            onTap: () => onSelected(customer),
+                            onTap: () {
+                              onSelected(customer);
+                            },
                           );
                         },
                       ),
@@ -494,8 +517,9 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
               },
             ),
             const SizedBox(height: defaultPadding),
+            // Convert orderId to string for display purposes
             Text(
-              'Order #${widget.orderId ?? DateTime.now().millisecondsSinceEpoch}',
+              'Order #${widget.orderId != null ? widget.orderId.toString() : DateTime.now().millisecondsSinceEpoch.toString()}',
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
@@ -738,21 +762,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         ),
       );
       
-      // Get customer ID or create new customer
       final customerName = _customerNameController.text.trim();
-      int? customerId;
-      final customerData = await DatabaseService.instance.getCustomerByName(customerName);
-      if (customerData != null) {
-        customerId = customerData['id'] as int;
-      } else {
-        // Create a new customer if they don't exist
-        final customer = Customer(
-          name: customerName,
-          createdAt: DateTime.now(),
-        );
-        customerId = await DatabaseService.instance.createCustomer(customer);
-      }
-
       final now = DateTime.now();
       final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
       final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
@@ -761,34 +771,37 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
       final currentUser = AuthService.instance.currentUser;
       if (currentUser == null) throw Exception('User not logged in');
       
-      // Create order with proper customer information
-      final order = Order(
-        orderNumber: orderNumber,
-        customerId: customerId,
-        customerName: customerName,
-        totalAmount: widget.initialItems.fold<double>(0, (sum, item) => sum + item.total),
-        orderStatus: 'ON_HOLD',
-        paymentStatus: 'PENDING',
-        createdBy: currentUser.id!,
-        createdAt: now,
-        orderDate: now,
-        items: widget.initialItems.map((item) => OrderItem(
-          orderId: 0, // Will be set when order is created
-          productId: item.product.id!,
-          quantity: item.quantity,
-          unitPrice: item.product.buyingPrice,
-          sellingPrice: item.product.sellingPrice,
-          totalAmount: item.total,
-          productName: item.product.productName,
-          isSubUnit: item.isSubUnit,
-          subUnitName: item.subUnitName,
-          subUnitQuantity: item.subUnitQuantity?.toDouble(),
-          adjustedPrice: item.adjustedPrice,
-        )).toList(),
-      );
+      // Create order map with customer information
+      final orderMap = {
+        'order_number': orderNumber,
+        'customer_id': customerId > 0 ? customerId : null,
+        'customer_name': customerName,
+        'total_amount': widget.initialItems.fold<double>(0, (sum, item) => sum + item.total),
+        'order_status': 'ON_HOLD',
+        'payment_status': 'PENDING',
+        'created_by': currentUser.id is String 
+            ? int.tryParse(currentUser.id as String) ?? 0 
+            : (currentUser.id as int? ?? 0),
+        'created_at': now.toIso8601String(),
+        'order_date': now.toIso8601String(),
+      };
+      
+      // Convert cart items to order items
+      final orderItems = widget.initialItems.map((item) => {
+        'product_id': item.product.id ?? 0,
+        'quantity': item.quantity,
+        'unit_price': item.product.buyingPrice,
+        'selling_price': item.product.sellingPrice,
+        'total_amount': item.total,
+        'product_name': item.product.productName,
+        'is_sub_unit': item.isSubUnit ? 1 : 0,
+        'sub_unit_name': item.subUnitName,
+        'sub_unit_quantity': item.subUnitQuantity != null ? item.subUnitQuantity!.toDouble() : null,
+        'adjusted_price': item.adjustedPrice,
+      }).toList();
 
       // Create the order
-      await DatabaseService.instance.createOrder(order);
+      await DatabaseService.instance.createOrder(orderMap, orderItems);
       
       // Close loading dialog
       if (mounted) {
