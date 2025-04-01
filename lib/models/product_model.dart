@@ -255,9 +255,11 @@ class Product {
     return Product(
       id: map['id'] as int?,
       image: map['image'] as String?,
-      supplier: map['supplier'] as String,
-      receivedDate: DateTime.parse(map['received_date'] as String),
-      productName: map['product_name'] as String,
+      supplier: (map['supplier'] as String?) ?? 'Unknown Supplier',
+      receivedDate: map['received_date'] != null 
+          ? DateTime.parse(map['received_date'] as String)
+          : DateTime.now(),
+      productName: (map['product_name'] as String?) ?? 'Unknown Product',
       buyingPrice: (map['buying_price'] is int)
           ? (map['buying_price'] as int).toDouble()
           : (map['buying_price'] as num?)?.toDouble() ?? 0.0,
@@ -268,20 +270,24 @@ class Product {
           ? 0 
           : (map['quantity'] is double) 
               ? (map['quantity'] as double).toInt() 
-              : (map['quantity'] as num).toInt(),
+              : (map['quantity'] as num? ?? 0).toInt(),
       description: map['description'] as String?,
-      hasSubUnits: map['has_sub_units'] == 1,
+      hasSubUnits: (map['has_sub_units'] as int?) == 1,
       subUnitQuantity: (map['sub_unit_quantity'] as num?)?.toInt(),
-      subUnitPrice: map['sub_unit_price'] as double?,
+      subUnitPrice: (map['sub_unit_price'] as num?)?.toDouble(),
       subUnitBuyingPrice: (map['sub_unit_buying_price'] as num?)?.toDouble(),
       subUnitName: map['sub_unit_name'] as String?,
       createdBy: map['created_by'] as int?,
       updatedBy: map['updated_by'] as int?,
-      numberOfSubUnits: map['number_of_sub_units'],
+      numberOfSubUnits: map['number_of_sub_units'] != null 
+          ? (map['number_of_sub_units'] is double)
+              ? (map['number_of_sub_units'] as double).toInt()
+              : (map['number_of_sub_units'] as int)
+          : null,
       pricePerSubUnit: (map['price_per_sub_unit'] is int)
           ? (map['price_per_sub_unit'] as int).toDouble()
           : (map['price_per_sub_unit'] as num?)?.toDouble(),
-      department: map['department'] as String? ?? deptLubricants,
+      department: (map['department'] as String?) ?? Product.deptLubricants,
     );
   }
 

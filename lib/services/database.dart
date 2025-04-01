@@ -16,6 +16,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:bcrypt/bcrypt.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
@@ -234,6 +235,9 @@ class DatabaseService {
           // a comprehensive schema creation in _createTables
           onUpgrade: null, // Remove onUpgrade to avoid unnecessary schema changes
           onOpen: (db) async {
+            // Ensure all tables exist when opening
+            await _ensureTablesExist(db);
+            
             // Enable foreign keys
             await db.execute('PRAGMA foreign_keys = ON');
             
@@ -250,6 +254,15 @@ class DatabaseService {
     } catch (e) {
       print('Error initializing database: $e');
       rethrow;
+    }
+  }
+  
+  // New method to ensure all tables exist
+  Future<void> _ensureTablesExist(Database db) async {
+    try {
+      await _createTables(db, dbVersion);
+    } catch (e) {
+      print('Error ensuring tables exist: $e');
     }
   }
 
@@ -364,17 +377,16 @@ class DatabaseService {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
             password TEXT NOT NULL,
-            full_name TEXT,
-            email TEXT,
-            role TEXT NOT NULL,
-            permissions TEXT NOT NULL,
-            created_at TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'USER',
+            permissions TEXT NOT NULL DEFAULT 'BASIC',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             last_login TEXT
           )
         ''');
         print('Users table created or already exists');
       }
-      
       // Create creditors table if it doesn't exist
       if (!tableNames.contains(tableCreditors)) {
         await db.execute('''
@@ -383,8 +395,8 @@ class DatabaseService {
             name TEXT NOT NULL,
             balance REAL NOT NULL,
             details TEXT,
-            status TEXT NOT NULL,
-            created_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             last_updated TEXT,
             order_number TEXT,
             order_details TEXT,
@@ -401,28 +413,30 @@ class DatabaseService {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             balance REAL NOT NULL,
-            details TEXT,
+            details TEXT NOT NULL,
             status TEXT NOT NULL,
-            created_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             last_updated TEXT,
             contact TEXT,
-            id_number TEXT
+            id_number TEXT,
+            order_number TEXT,
+            order_details TEXT,
+            original_amount REAL
           )
         ''');
         print('Debtors table created or already exists');
       }
-      
       // Create activity_logs table if it doesn't exist
       if (!tableNames.contains(tableActivityLogs)) {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS $tableActivityLogs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            username TEXT,
+            username TEXT NOT NULL,
             action TEXT NOT NULL,
             action_type TEXT,
-            details TEXT,
-            timestamp TEXT NOT NULL
+            details TEXT NOT NULL,
+            timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
           )
         ''');
         print('Activity logs table created or already exists');
@@ -434,16 +448,16 @@ class DatabaseService {
           CREATE TABLE IF NOT EXISTS $tableCustomers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            total_orders INTEGER DEFAULT 0,
-            total_amount REAL DEFAULT 0.0,
+            total_orders INTEGER NOT NULL DEFAULT 0,
+            total_amount REAL NOT NULL DEFAULT 0.0,
             last_order_date TEXT,
-            created_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT,
             total_purchases REAL DEFAULT 0.0,
             last_purchase_date TEXT
           )
         ''');
-        print('Created customers table');
+        print('Customers table created or already exists');
       }
       
       // Create customer_reports table if it doesn't exist
@@ -455,9 +469,9 @@ class DatabaseService {
             customer_id INTEGER NOT NULL,
             customer_name TEXT NOT NULL,
             total_amount REAL NOT NULL,
-            completed_amount REAL NOT NULL,
-            pending_amount REAL NOT NULL,
-            created_at TEXT NOT NULL,
+            completed_amount REAL NOT NULL DEFAULT 0.0,
+            pending_amount REAL NOT NULL DEFAULT 0.0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             start_date TEXT,
             end_date TEXT,
             payment_status TEXT,
@@ -480,10 +494,10 @@ class DatabaseService {
             unit_price REAL NOT NULL,
             selling_price REAL NOT NULL,
             total_amount REAL NOT NULL,
-            status TEXT NOT NULL,
-            is_sub_unit INTEGER DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            is_sub_unit INTEGER NOT NULL DEFAULT 0,
             sub_unit_name TEXT,
-            created_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (report_id) REFERENCES $tableCustomerReports (id) ON DELETE CASCADE,
             FOREIGN KEY (product_id) REFERENCES $tableProducts (id) ON DELETE SET NULL
           )
@@ -496,52 +510,82 @@ class DatabaseService {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS $tableProducts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            product_name TEXT,
-            description TEXT,
+            image TEXT,
+            supplier TEXT NOT NULL,
+            received_date TEXT NOT NULL,
+            product_name TEXT NOT NULL,
             buying_price REAL NOT NULL,
             selling_price REAL NOT NULL,
-            quantity REAL NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT,
-            department TEXT DEFAULT 'Lubricants & others',
-            has_sub_units INTEGER DEFAULT 0,
-            sub_unit_name TEXT,
-            sub_unit_quantity REAL,
-            sub_unit_selling_price REAL,
+            quantity INTEGER NOT NULL DEFAULT 0,
+            description TEXT,
+            has_sub_units INTEGER NOT NULL DEFAULT 0,
+            sub_unit_quantity INTEGER,
+            sub_unit_price REAL,
             sub_unit_buying_price REAL,
-            supplier TEXT,
+            sub_unit_name TEXT,
             created_by INTEGER,
-            updated_by INTEGER
+            updated_by INTEGER,
+            number_of_sub_units INTEGER,
+            price_per_sub_unit REAL,
+            department TEXT NOT NULL DEFAULT 'Lubricants & others',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT
           )
         ''');
         print('Products table created or already exists');
-        
-        // Make sure product_name is populated
-        try {
-          await db.execute('UPDATE $tableProducts SET product_name = name');
-          print('Updated product_name from name column');
-        } catch (e) {
-          print('Error updating product_name from name: $e');
-        }
       }
       
-      // Create customers table if it doesn't exist
-      if (!tableNames.contains(tableCustomers)) {
+      // Create orders table if it doesn't exist
+      if (!tableNames.contains(tableOrders)) {
         await db.execute('''
-          CREATE TABLE IF NOT EXISTS $tableCustomers (
+          CREATE TABLE IF NOT EXISTS $tableOrders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            total_orders INTEGER DEFAULT 0,
-            total_amount REAL DEFAULT 0.0,
-            last_order_date TEXT,
-            created_at TEXT NOT NULL,
+            order_number TEXT NOT NULL UNIQUE,
+            sales_receipt_number TEXT,
+            held_receipt_number TEXT,
+            customer_id INTEGER,
+            customer_name TEXT NOT NULL,
+            total_amount REAL NOT NULL DEFAULT 0.0,
+            order_status TEXT NOT NULL DEFAULT 'PENDING',
+            payment_status TEXT NOT NULL DEFAULT 'PENDING',
+            payment_method TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT,
-            total_purchases REAL DEFAULT 0.0,
-            last_purchase_date TEXT
+            order_date TEXT NOT NULL,
+            created_by INTEGER NOT NULL,
+            adjusted_price REAL,
+            status TEXT,
+            FOREIGN KEY (customer_id) REFERENCES $tableCustomers (id) ON DELETE SET NULL
           )
         ''');
-        print('Created customers table');
+        print('Orders table created or already exists');
+      }
+      
+      // Create order_items table if it doesn't exist
+      if (!tableNames.contains(tableOrderItems)) {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS $tableOrderItems (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            product_name TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            unit_price REAL NOT NULL,
+            selling_price REAL NOT NULL,
+            adjusted_price REAL,
+            total_amount REAL NOT NULL,
+            is_sub_unit INTEGER NOT NULL DEFAULT 0,
+            sub_unit_name TEXT,
+            sub_unit_quantity REAL,
+            order_number TEXT,
+            order_date TEXT,
+            status TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (order_id) REFERENCES $tableOrders (id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES $tableProducts (id) ON DELETE SET NULL
+          )
+        ''');
+        print('Order items table created or already exists');
       }
       
       // Add other table checks as needed
@@ -951,13 +995,6 @@ class DatabaseService {
     try {
       final db = await database;
       
-      // Ensure name field is always populated from product_name if it doesn't exist
-      if (!productData.containsKey('name') && productData.containsKey('product_name')) {
-        productData['name'] = productData['product_name'];
-      } else if (!productData.containsKey('product_name') && productData.containsKey('name')) {
-        productData['product_name'] = productData['name'];
-      }
-      
       // Make sure the current timestamp is set for created_at
       if (!productData.containsKey('created_at')) {
         productData['created_at'] = DateTime.now().toIso8601String();
@@ -968,12 +1005,16 @@ class DatabaseService {
         productData['updated_at'] = DateTime.now().toIso8601String();
       }
       
-      // Check if product with same name exists (using either name or product_name)
-      final nameToCheck = productData['name'] ?? productData['product_name'];
+      // Check if product with same name exists (using product_name)
+      final productName = productData['product_name'];
+      if (productName == null || productName.toString().trim().isEmpty) {
+        throw Exception('Product name is required');
+      }
+      
       final existingProducts = await db.query(
         tableProducts,
-        where: 'name = ? OR product_name = ?',
-        whereArgs: [nameToCheck, nameToCheck],
+        where: 'product_name = ?',
+        whereArgs: [productName],
         limit: 1,
       );
       
@@ -1386,15 +1427,10 @@ class DatabaseService {
             }
           }
           
-          // Ensure the required 'name' field is also populated when 'product_name' exists
-          if (productData.containsKey('product_name') && 
-              !productData.containsKey('name')) {
-            productData['name'] = productData['product_name'];
-          } else if (!productData.containsKey('name') && 
-                    !productData.containsKey('product_name')) {
-            // Both fields are missing - generate placeholder
-            productData['name'] = 'Product_${DateTime.now().millisecondsSinceEpoch}';
-            productData['product_name'] = productData['name'];
+          // Check if product_name exists, if not generate a placeholder
+          if (!productData.containsKey('product_name')) {
+            // Generate placeholder for product_name
+            productData['product_name'] = 'Product_${DateTime.now().millisecondsSinceEpoch}';
             print('Warning: Generated placeholder name for product at row ${i+1}');
           }
           
@@ -1406,7 +1442,6 @@ class DatabaseService {
           if (!productData.containsKey('description')) {
             productData['description'] = '';
           }
-          
           // Set default supplier if not provided
           if (!productData.containsKey('supplier') || productData['supplier'] == null || productData['supplier'].toString().isEmpty) {
             productData['supplier'] = 'System';
@@ -1435,6 +1470,12 @@ class DatabaseService {
             // For product name, we need some value - use a generated name
             productData['product_name'] = 'Product_${DateTime.now().millisecondsSinceEpoch}';
             print('Warning: Generated placeholder name for product at row ${i+1}');
+          }
+          
+          // Ensure supplier has a value
+          if (!productData.containsKey('supplier') || productData['supplier'] == null || 
+              productData['supplier'].toString().trim().isEmpty) {
+            productData['supplier'] = 'Unknown Supplier';
           }
           
           // Print product data for debugging
@@ -2598,9 +2639,11 @@ class DatabaseService {
         product['updated_at'] = DateTime.now().toIso8601String();
       }
       
-      // Ensure name field matches product_name for compatibility
-      if (!product.containsKey('name') && product.containsKey('product_name')) {
-        product['name'] = product['product_name'];
+      // Validate product_name
+      if (!product.containsKey('product_name') || 
+          product['product_name'] == null || 
+          product['product_name'].toString().trim().isEmpty) {
+        throw Exception('Product name is required');
       }
       
       return await db.insert(tableProducts, product);
@@ -2620,9 +2663,11 @@ class DatabaseService {
         product['updated_at'] = DateTime.now().toIso8601String();
       }
       
-      // Ensure name field matches product_name for compatibility
-      if (!product.containsKey('name') && product.containsKey('product_name')) {
-        product['name'] = product['product_name'];
+      // Validate product_name if it's being updated
+      if (product.containsKey('product_name') && 
+          (product['product_name'] == null || 
+           product['product_name'].toString().trim().isEmpty)) {
+        throw Exception('Product name cannot be empty');
       }
       
       return await db.update(
@@ -2814,6 +2859,9 @@ class DatabaseService {
           // Set order ID for the item
           item['order_id'] = orderId;
           
+          // Add created_at timestamp to the item
+          item['created_at'] = DateTime.now().toIso8601String();
+          
           // Insert order item
           await txn.insert(tableOrderItems, item);
           
@@ -2965,6 +3013,12 @@ class DatabaseService {
         // Insert new order items
         for (final item in orderItems) {
           item['order_id'] = orderIdValue;
+          
+          // Add created_at timestamp if missing
+          if (!item.containsKey('created_at') || item['created_at'] == null) {
+            item['created_at'] = DateTime.now().toIso8601String();
+          }
+          
           await txn.insert(tableOrderItems, item);
         }
         
@@ -3258,16 +3312,11 @@ class DatabaseService {
   /// Hash a password
   String _hashPassword(String password) {
     try {
-      // In a real app, use a proper crypto library
-      // This is a very basic hash for demonstration purposes only
-      var bytes = utf8.encode(password + 'malbrose_salt');
-      var digest = sha256.convert(bytes);
-      return digest.toString();
+      final salt = BCrypt.gensalt(logRounds: 12);
+      return BCrypt.hashpw(password, salt);
     } catch (e) {
       print('Error hashing password: $e');
-      // If hashing fails for some reason, return a placeholder
-      // In production, this should throw an exception instead
-      return 'hash_error_' + DateTime.now().millisecondsSinceEpoch.toString();
+      throw Exception('Password hashing failed');
     }
   }
 
@@ -3509,6 +3558,274 @@ class DatabaseService {
     } catch (e) {
       print('Error getting current user with transaction: $e');
       return null;
+    }
+  }
+
+  /// Reads the headers from an Excel file without importing
+  Future<Map<String, dynamic>> readExcelHeaders(String filePath) async {
+    try {
+      final bytes = await File(filePath).readAsBytes();
+      final excel = Excel.decodeBytes(bytes);
+      
+      if (excel.tables.isEmpty) {
+        return {
+          'success': false,
+          'message': 'No data found in Excel file',
+          'headers': <String>[],
+        };
+      }
+      
+      final sheet = excel.tables.entries.first.value;
+      
+      // Get headers from first row
+      final headers = <String>[];
+      for (var cell in sheet.rows.first) {
+        if (cell?.value != null) {
+          headers.add(cell!.value.toString().trim());
+        }
+      }
+      
+      // Generate initial mapping using our existing header mappings
+      final headerMappings = Product.getHeaderMappings();
+      final alternateHeaderMappings = Product.getAlternateHeaderMappings();
+      final initialMapping = <String, String>{};
+      
+      for (var header in headers) {
+        String? mappedField = headerMappings[header];
+        if (mappedField == null) {
+          mappedField = alternateHeaderMappings[header.toLowerCase()];
+        }
+        if (mappedField != null) {
+          initialMapping[header] = mappedField;
+        }
+      }
+      
+      return {
+        'success': true,
+        'message': 'Found ${headers.length} columns',
+        'headers': headers,
+        'initialMapping': initialMapping,
+      };
+    } catch (e) {
+      print('Error reading Excel headers: $e');
+      return {
+        'success': false,
+        'message': 'Error reading Excel file: $e',
+        'headers': <String>[],
+      };
+    }
+  }
+  
+  /// Imports products from an Excel file with custom column mapping
+  Future<Map<String, dynamic>> importProductsFromExcelWithMapping(
+    String filePath, 
+    Map<String, String?> columnMapping
+  ) async {
+    final errors = <String>[];
+    int imported = 0;
+    int failed = 0;
+    
+    try {
+      print('Starting Excel import from file: $filePath with custom mapping');
+      final bytes = await File(filePath).readAsBytes();
+      final excel = Excel.decodeBytes(bytes);
+      
+      if (excel.tables.isEmpty) {
+        return {
+          'success': false,
+          'message': 'No data found in Excel file',
+          'imported': 0,
+          'failed': 0,
+          'errors': errors,
+        };
+      }
+      
+      final sheet = excel.tables.entries.first.value;
+      
+      // Get headers from first row
+      final headers = <String>[];
+      for (var cell in sheet.rows.first) {
+        if (cell?.value != null) {
+          headers.add(cell!.value.toString().trim());
+        }
+      }
+      
+      // Create a mapping from column index to database field
+      final headerMap = <int, String>{};
+      for (int i = 0; i < headers.length; i++) {
+        final header = headers[i];
+        final dbField = columnMapping[header];
+        if (dbField != null) {
+          headerMap[i] = dbField;
+        }
+      }
+      
+      // Process each row from the Excel file
+      for (var i = 1; i < sheet.rows.length; i++) {
+        try {
+          final row = sheet.rows[i];
+          
+          // Skip empty rows
+          if (row.isEmpty || row.every((cell) => cell?.value == null)) {
+            continue;
+          }
+          
+          final productData = <String, dynamic>{};
+          
+          // Map cell values to product fields using our custom mapping
+          for (var j = 0; j < row.length; j++) {
+            final cell = row[j];
+            if (cell?.value != null && headerMap.containsKey(j)) {
+              final fieldName = headerMap[j]!;
+              
+              // Process based on field type
+              if (['buying_price', 'selling_price', 'sub_unit_price', 'price_per_sub_unit', 'sub_unit_buying_price'].contains(fieldName)) {
+                // Convert to double
+                final numValue = _parseDouble(cell!.value);
+                if (numValue != null) {
+                  productData[fieldName] = numValue;
+                } else {
+                  print('Warning: Could not parse "${cell.value}" as double for field $fieldName');
+                  // Set a default value to prevent errors
+                  productData[fieldName] = 0.0;
+                }
+              } else if (['quantity', 'sub_unit_quantity', 'number_of_sub_units'].contains(fieldName)) {
+                // Convert to int
+                final numValue = _parseInt(cell!.value);
+                if (numValue != null) {
+                  productData[fieldName] = numValue;
+                } else {
+                  print('Warning: Could not parse "${cell.value}" as int for field $fieldName. Using default 0.');
+                  // Set a safe default for quantity
+                  productData[fieldName] = 0;
+                }
+              } else if (fieldName == 'has_sub_units') {
+                // Convert Yes/No to 1/0
+                final strValue = cell!.value.toString().trim().toLowerCase();
+                productData[fieldName] = (strValue == 'yes' || strValue == 'true' || strValue == '1') ? 1 : 0;
+              } else if (fieldName == 'received_date') {
+                // Parse date
+                try {
+                  final dateStr = cell!.value.toString().trim();
+                  DateTime dateValue;
+                  
+                  if (dateStr.contains('T')) {
+                    // ISO format
+                    dateValue = DateTime.parse(dateStr);
+                  } else {
+                    // Attempt to parse MM/DD/YYYY or similar formats
+                    final parts = dateStr.split(RegExp(r'[/\-]'));
+                    if (parts.length == 3) {
+                      // Assume month/day/year format
+                      dateValue = DateTime(int.parse(parts[2]), int.parse(parts[0]), int.parse(parts[1]));
+                    } else {
+                      // Default to current date if format is unrecognized
+                      dateValue = DateTime.now();
+                    }
+                  }
+                  
+                  productData[fieldName] = dateValue.toIso8601String();
+                } catch (e) {
+                  // Default to current date if parsing fails
+                  productData[fieldName] = DateTime.now().toIso8601String();
+                }
+              } else if (fieldName == 'department') {
+                // Use the department value from the Excel or default if empty
+                String departmentValue = cell!.value.toString().trim();
+                if (departmentValue.isEmpty) {
+                  productData[fieldName] = Product.deptLubricants;
+                } else {
+                  productData[fieldName] = Product.normalizeDepartment(departmentValue);
+                }
+              } else if (fieldName == 'supplier' && (cell!.value == null || cell.value.toString().trim().isEmpty)) {
+                // Ensure supplier is not empty
+                productData[fieldName] = 'Unknown Supplier';
+              } else {
+                // For all other fields, just convert to string
+                final stringValue = cell!.value.toString().trim();
+                productData[fieldName] = stringValue.isEmpty ? null : stringValue;
+              }
+            }
+          }
+          
+          // Set default values for required fields
+          if (!productData.containsKey('received_date') || productData['received_date'] == null) {
+            productData['received_date'] = DateTime.now().toIso8601String();
+          }
+          
+          if (!productData.containsKey('department') || productData['department'] == null) {
+            productData['department'] = Product.deptLubricants;
+          }
+          
+          // Set has_sub_units based on whether sub_unit fields are provided
+          if (productData.containsKey('sub_unit_name') && productData['sub_unit_name'] != null && productData['sub_unit_name'].toString().isNotEmpty) {
+            productData['has_sub_units'] = 1;
+          } else {
+            productData['has_sub_units'] = 0;
+          }
+          
+          // Fill in default values for required numeric fields
+          if (!productData.containsKey('buying_price') || productData['buying_price'] == null) 
+            productData['buying_price'] = 0.0;
+          if (!productData.containsKey('selling_price') || productData['selling_price'] == null) 
+            productData['selling_price'] = 0.0;
+          if (!productData.containsKey('quantity') || productData['quantity'] == null) 
+            productData['quantity'] = 0;
+          
+          // Make sure product_name is not empty
+          if (!productData.containsKey('product_name') || productData['product_name'] == null || 
+              productData['product_name'].toString().trim().isEmpty) {
+            // For product name, we need some value - use a generated name
+            productData['product_name'] = 'Product_${DateTime.now().millisecondsSinceEpoch}';
+            print('Warning: Generated placeholder name for product at row ${i+1}');
+          }
+          
+          // Ensure supplier has a value
+          if (!productData.containsKey('supplier') || productData['supplier'] == null || 
+              productData['supplier'].toString().trim().isEmpty) {
+            productData['supplier'] = 'Unknown Supplier';
+          }
+          
+          // Print product data for debugging
+          print('Row ${i+1} data: ${productData.toString()}');
+          
+          // Check if product with same name exists
+          try {
+            final result = await createProduct(productData);
+            if (result > 0) {
+              imported++;
+            } else {
+              failed++;
+              errors.add('Row ${i+1}: Failed to import product "${productData['product_name']}"');
+            }
+          } catch (e) {
+            failed++;
+            errors.add('Row ${i+1}: Error creating product: $e');
+            print('Error creating product at row ${i+1}: $e');
+          }
+        } catch (e) {
+          errors.add('Row ${i+1}: Error processing row: $e');
+          failed++;
+        }
+      }
+      
+      // Return results
+      return {
+        'success': true,
+        'message': 'Imported $imported products successfully. Failed: $failed',
+        'imported': imported,
+        'failed': failed,
+        'errors': errors,
+      };
+    } catch (e) {
+      print('❌ Error importing products from Excel: $e');
+      return {
+        'success': false,
+        'message': 'Error importing products: $e',
+        'imported': imported,
+        'failed': failed,
+        'errors': errors,
+      };
     }
   }
 }

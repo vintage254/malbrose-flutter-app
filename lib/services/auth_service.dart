@@ -1,8 +1,7 @@
 import 'package:my_flutter_app/models/user_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:crypto/crypto.dart';
-import 'dart:convert';
+import 'package:bcrypt/bcrypt.dart';
 
 class AuthService {
   static final AuthService instance = AuthService._internal();
@@ -15,9 +14,22 @@ class AuthService {
   bool get isLoggedIn => _currentUser != null;
 
   String hashPassword(String password) {
-    final bytes = utf8.encode(password);
-    final hash = sha256.convert(bytes);
-    return hash.toString();
+    try {
+      final salt = BCrypt.gensalt(logRounds: 12);
+      return BCrypt.hashpw(password, salt);
+    } catch (e) {
+      print('Error hashing password: $e');
+      throw Exception('Password hashing failed');
+    }
+  }
+
+  bool verifyPassword(String password, String hashedPassword) {
+    try {
+      return BCrypt.checkpw(password, hashedPassword);
+    } catch (e) {
+      print('Error verifying password: $e');
+      return false;
+    }
   }
 
   Future<User?> login(String username, String password) async {
@@ -26,25 +38,19 @@ class AuthService {
       print('User Map: $userMap');
       
       if (userMap != null) {
-        final hashedPassword = hashPassword(password);
-        print('Input password hash: $hashedPassword');
-        print('Stored password hash: ${userMap['password']}');
+        final storedHash = userMap['password'] as String;
+        print('Stored password hash: $storedHash');
         
-        // Convert Map to User object
         final user = User.fromMap(userMap);
         
-        if (user.password == hashedPassword) {
+        if (verifyPassword(password, storedHash)) {
           _currentUser = user;
           print('Password matched. Login successful.');
           
-          // Update last login time
           final updatedUser = user.copyWith(lastLogin: DateTime.now());
           await DatabaseService.instance.updateUser(updatedUser);
-          
-          // Save session
           await _saveSession(user.id!);
           
-          // Add activity log for login
           await DatabaseService.instance.logActivity(
             user.id!,
             user.username,
@@ -52,23 +58,9 @@ class AuthService {
             'Login',
             'User logged in successfully'
           );
-          
           return _currentUser;
         } else {
           print('Password mismatch. Login failed.');
-          // Compare character by character to identify the issue
-          final storedHash = user.password;
-          final inputHash = hashedPassword;
-          if (storedHash.length != inputHash.length) {
-            print('Hash length mismatch: stored=${storedHash.length}, input=${inputHash.length}');
-          } else {
-            for (int i = 0; i < storedHash.length; i++) {
-              if (storedHash[i] != inputHash[i]) {
-                print('First mismatch at position $i: ${storedHash[i]} vs ${inputHash[i]}');
-                break;
-              }
-            }
-          }
         }
       } else {
         print('User not found: $username');

@@ -274,6 +274,9 @@ class OrderItem {
       if (subUnitName != null) 'sub_unit_name': subUnitName,
       if (subUnitQuantity != null) 'sub_unit_quantity': subUnitQuantity,
       if (adjustedPrice != null) 'adjusted_price': adjustedPrice,
+      if (orderNumber != null) 'order_number': orderNumber,
+      if (orderDate != null) 'order_date': orderDate!.toIso8601String(),
+      'created_at': DateTime.now().toIso8601String(),
     };
   }
 

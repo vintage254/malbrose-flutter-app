@@ -8,6 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:my_flutter_app/widgets/column_mapping_dialog.dart';
 
 class ProductManagementScreen extends StatefulWidget {
   const ProductManagementScreen({super.key});
@@ -45,11 +46,27 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
       
       if (mounted) {
         setState(() {
-          _products = productsData.map((map) => Product.fromMap(map)).toList();
-          _isLoading = false;
+          try {
+            _products = [];
+            for (var map in productsData) {
+              try {
+                final product = Product.fromMap(map);
+                _products.add(product);
+              } catch (e) {
+                print('Error mapping product: $map\nError: $e');
+                // Continue with other products instead of failing completely
+              }
+            }
+            _isLoading = false;
+          } catch (e) {
+            print('Error in product list mapping: $e');
+            _isLoading = false;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Error processing products: $e')),
+            );
+          }
         });
         
-        // For debugging
         print('Loaded ${_products.length} products');
       }
     } catch (e) {
@@ -233,7 +250,80 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
         _isImporting = true;
       });
       
-      // Show progress dialog
+      // Show loading dialog
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const AlertDialog(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Reading file headers...'),
+              ],
+            ),
+          ),
+        );
+      }
+      
+      // First, read the headers to show in the mapping dialog
+      final headersResult = await DatabaseService.instance.readExcelHeaders(filePath);
+      
+      // Close the loading dialog
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+      
+      if (!headersResult['success']) {
+        setState(() {
+          _isImporting = false;
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(headersResult['message'])),
+          );
+        }
+        return;
+      }
+      
+      final List<String> headers = List<String>.from(headersResult['headers']);
+      final Map<String, String> initialMapping = Map<String, String>.from(headersResult['initialMapping'] ?? {});
+      
+      if (headers.isEmpty) {
+        setState(() {
+          _isImporting = false;
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No headers found in the Excel file')),
+          );
+        }
+        return;
+      }
+      
+      // Show the column mapping dialog
+      final Map<String, String?>? columnMapping = await showDialog<Map<String, String?>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => ColumnMappingDialog(
+          excelHeaders: headers,
+          initialMapping: initialMapping,
+        ),
+      );
+      
+      if (columnMapping == null) {
+        // User canceled the mapping dialog
+        setState(() {
+          _isImporting = false;
+        });
+        return;
+      }
+      
+      // Show progress dialog for import
       if (mounted) {
         showDialog(
           context: context,
@@ -251,8 +341,8 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
         );
       }
       
-      // Import the file
-      final result2 = await DatabaseService.instance.importProductsFromExcel(filePath);
+      // Import the file with custom mapping
+      final result2 = await DatabaseService.instance.importProductsFromExcelWithMapping(filePath, columnMapping);
       
       // Close progress dialog
       if (mounted) {
