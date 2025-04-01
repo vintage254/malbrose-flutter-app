@@ -269,7 +269,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         final orderItems = widget.initialItems.map((item) => {
           'product_id': item.product.id ?? 0,
           'quantity': item.quantity,
-          'unit_price': item.unitPrice,
+          'unit_price': item.product.buyingPrice,
           'selling_price': item.sellingPrice,
           'total_amount': item.total,
           'product_name': item.product.productName,

@@ -48,15 +48,15 @@ class OrderService extends ChangeNotifier {
           SELECT 
             (SELECT COUNT(*) FROM $tableOrders 
              WHERE DATE(created_at) = DATE(?) 
-             AND status = 'COMPLETED') as completed_today,
+             AND order_status = 'COMPLETED') as completed_today,
             (SELECT SUM(total_amount) FROM $tableOrders 
              WHERE DATE(created_at) = DATE(?) 
-             AND status = 'COMPLETED') as today_sales,
+             AND order_status = 'COMPLETED') as today_sales,
             (SELECT COUNT(*) FROM $tableOrders 
-             WHERE status = 'PENDING') as pending_count,
+             WHERE order_status = 'PENDING') as pending_count,
             (SELECT COUNT(*) FROM $tableOrders) as total_orders,
             (SELECT SUM(total_amount) FROM $tableOrders 
-             WHERE status = 'COMPLETED') as total_sales
+             WHERE order_status = 'COMPLETED') as total_sales
         ''', [
           todayStart.toIso8601String(),
           todayStart.toIso8601String(),
@@ -106,7 +106,7 @@ class OrderService extends ChangeNotifier {
     final db = await DatabaseService.instance.database;
     final List<Map<String, dynamic>> maps = await db.query(
       'orders',
-      where: 'status = ?',
+      where: 'order_status = ?',
       whereArgs: [status],
       orderBy: 'created_at DESC',
     );
@@ -120,7 +120,7 @@ class OrderService extends ChangeNotifier {
     final db = await DatabaseService.instance.database;
     final List<Map<String, dynamic>> maps = await db.query(
       'orders',
-      where: 'status != ?',
+      where: 'order_status != ?',
       whereArgs: ['REPORTED'],
       orderBy: 'created_at DESC',
     );

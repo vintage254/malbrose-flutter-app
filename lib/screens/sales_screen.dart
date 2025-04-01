@@ -116,7 +116,7 @@ class _SalesScreenState extends State<SalesScreen> {
             totalAmount: totalAmount > 0 ? totalAmount : (firstOrder['total_amount'] as num?)?.toDouble() ?? 0.0,
             customerName: firstOrder['customer_name'] as String? ?? 'Unknown Customer',
             customerId: firstOrder['customer_id'] as int?,
-            orderStatus: firstOrder['status'] as String? ?? 'PENDING',
+            orderStatus: firstOrder['order_status'] as String? ?? 'PENDING',
             paymentStatus: firstOrder['payment_status'] as String? ?? 'PENDING',
             createdBy: firstOrder['created_by'] as int? ?? 1,
             createdAt: DateTime.parse(firstOrder['created_at'] as String),
@@ -213,7 +213,7 @@ class _SalesScreenState extends State<SalesScreen> {
         await txn.update(
           DatabaseService.tableOrders,
           {
-            'status': 'COMPLETED',
+            'order_status': 'COMPLETED',
             'payment_status': 'PAID',
             'updated_at': DateTime.now().toIso8601String(),
           },
