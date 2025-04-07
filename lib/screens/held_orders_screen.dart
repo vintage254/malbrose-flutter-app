@@ -3,6 +3,7 @@ import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/models/cart_item_model.dart';
 import 'package:my_flutter_app/services/database.dart';
+import 'package:my_flutter_app/services/order_service.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
@@ -22,6 +23,7 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
   bool _isLoading = true;
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
+  final OrderService _orderService = OrderService.instance;
 
   @override
   void initState() {
@@ -95,7 +97,6 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
 
   Future<void> _restoreHeldOrder(Order order) async {
     try {
-      // Show loading dialog
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -111,88 +112,68 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
         ),
       );
       
-      // Get order items
-      final orderItemsData = await DatabaseService.instance.getOrderItems(order.id!);
+      // Use OrderService to update the status to PENDING
+      final success = await _orderService.updateOrderStatus(order.id!, 'PENDING');
       
-      // Convert the map data to OrderItem objects
-      final orderItems = orderItemsData.map((map) => OrderItem.fromMap(map)).toList();
-      
-      print('Restoring held order: ${order.orderNumber} with ${orderItems.length} items');
-      
-      // Fix order items with invalid product IDs (productId = 0)
-      final fixedOrderItems = await Future.wait(orderItems.map((item) async {
-        // Skip items that already have valid product IDs
-        if (item.productId > 0) return item;
-        
-        print('Fixing invalid product ID for item: ${item.productName} (ID: ${item.productId})');
-        
-        // Try multiple approaches to find the correct product
-        // 1. First try by exact name
-        final products = await DatabaseService.instance.getProductByName(item.productName);
-        if (products.isNotEmpty) {
-          final productId = products.first['id'] as int;
-          print('  Found product by name: ${products.first['product_name']} (ID: $productId)');
-          return item.copyWith(productId: productId);
-        }
-        
-        // 2. Try querying all products and doing a manual comparison
-        final allProducts = await DatabaseService.instance.getAllProducts();
-        
-        // Try to find a product with similar name (case insensitive)
-        final productName = item.productName.toLowerCase();
-        for (final product in allProducts) {
-          final dbProductName = (product['product_name'] as String? ?? '').toLowerCase();
-          if (dbProductName.contains(productName) || productName.contains(dbProductName)) {
-            final productId = product['id'] as int;
-            print('  Found product by fuzzy match: ${product['product_name']} (ID: $productId)');
-            return item.copyWith(productId: productId);
-          }
-        }
-        
-        print('  Could not find a matching product for: ${item.productName}');
-        return item;
-      }));
-
-      // Filter out items with invalid product IDs for the final list
-      final validItems = fixedOrderItems.where((item) => item.productId > 0).toList();
-      
-      print('Valid items after fixing: ${validItems.length} of ${orderItems.length}');
-      
-      if (validItems.isEmpty) {
-        throw Exception('No valid items found to restore. Please create a new order.');
+      if (!success) {
+        // Close loading dialog before throwing exception
+        Navigator.of(context, rootNavigator: true).pop();
+        throw Exception('Failed to restore order');
       }
       
-      // Update the order with the fixed items
-      final updatedOrder = order.copyWith(
-        items: validItems,
-        orderStatus: 'PENDING'
-      );
-
+      // Load the order items from the database
+      final orderItems = await DatabaseService.instance.getOrderItems(order.id!);
+      print('Loaded ${orderItems.length} items for order #${order.orderNumber}');
+      
+      // Convert database orderItems to OrderItem models
+      final items = orderItems.map((item) => OrderItem(
+        id: item['id'] as int?,
+        orderId: order.id!,
+        productId: item['product_id'] as int,
+        quantity: item['quantity'] as int,
+        unitPrice: (item['unit_price'] as num).toDouble(),
+        sellingPrice: (item['selling_price'] as num).toDouble(),
+        totalAmount: (item['total_amount'] as num).toDouble(),
+        productName: item['product_name'] as String,
+        isSubUnit: item['is_sub_unit'] == 1,
+        subUnitName: item['sub_unit_name'] as String?,
+        subUnitQuantity: (item['sub_unit_quantity'] as num?)?.toDouble(),
+        adjustedPrice: (item['adjusted_price'] as num?)?.toDouble(),
+      )).toList();
+      
       // Close loading dialog
       Navigator.of(context, rootNavigator: true).pop();
       
-      // Navigate to order screen with the restored order
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => OrderScreen(
-              editingOrder: updatedOrder,
-              isEditing: true,
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      // Close loading dialog if open
-      Navigator.of(context, rootNavigator: true).pop();
+      // Create an updated order with the items and PENDING status
+      final updatedOrder = order.copyWith(
+        orderStatus: 'PENDING',
+        items: items,
+      );
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error restoring order: $e'),
-          backgroundColor: Colors.red,
+      // Navigate to OrderScreen with the fully loaded order
+      Navigator.pushReplacement(
+        context, 
+        MaterialPageRoute(
+          builder: (context) => OrderScreen(
+            editingOrder: updatedOrder,
+            isEditing: true,
+          ),
         ),
       );
+      
+      // Refresh the held orders list
+      _loadHeldOrders();
+    } catch (e) {
+      // Make sure dialog is closed in case of error
+      if (Navigator.of(context, rootNavigator: true).canPop()) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error restoring order: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
 

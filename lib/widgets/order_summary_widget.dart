@@ -31,27 +31,55 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
   }
 
   Future<void> _handleOrderTap(BuildContext context, Map<String, dynamic> order) async {
-    if (order['status'] == 'PENDING') {
+    final status = order['status'] as String? ?? 'UNKNOWN';
+    
+    // Handle both PENDING and ON_HOLD orders similarly
+    if (status == 'PENDING' || status == 'ON_HOLD') {
       try {
+        // Safely extract the order ID
+        final orderId = order['id'];
+        if (orderId == null) {
+          print('Error: Order ID is null');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Invalid order data: missing ID'), backgroundColor: Colors.red),
+          );
+          return;
+        }
+        
         // Load order items
-        final orderItems = await DatabaseService.instance.getOrderItems(order['id'] as int);
+        final orderItems = await DatabaseService.instance.getOrderItems(orderId as int);
         
         // Convert order items to CartItems
         final cartItems = await Future.wait(orderItems.map((item) async {
-          // Get the product details
-          final productData = await DatabaseService.instance.getProductById(item['product_id'] as int);
-          if (productData == null) return null;
+          // Safely get the product ID
+          final productId = item['product_id'];
+          if (productId == null) return null;
           
-          final product = Product.fromMap(productData);
-          
-          return CartItem(
-            product: product,
-            quantity: item['quantity'] as int,
-            total: item['total_amount'] as double,
-            isSubUnit: item['is_sub_unit'] == 1,
-            subUnitName: item['sub_unit_name'] as String?,
-            subUnitQuantity: product.subUnitQuantity,
-          );
+          try {
+            // Get the product details
+            final productData = await DatabaseService.instance.getProductById(productId as int);
+            if (productData == null) return null;
+            
+            final product = Product.fromMap(productData);
+            
+            // Safely extract other fields with defaults
+            final quantity = (item['quantity'] as int?) ?? 1;
+            final totalAmount = (item['total_amount'] as double?) ?? 0.0;
+            final isSubUnit = item['is_sub_unit'] == 1;
+            final subUnitName = item['sub_unit_name'] as String?;
+            
+            return CartItem(
+              product: product,
+              quantity: quantity,
+              total: totalAmount,
+              isSubUnit: isSubUnit,
+              subUnitName: subUnitName,
+              subUnitQuantity: product.subUnitQuantity,
+            );
+          } catch (productError) {
+            print('Error processing product: $productError');
+            return null;
+          }
         }));
 
         // Filter out any null items
@@ -64,7 +92,7 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
               builder: (context) => StatefulBuilder(
                 builder: (context, setState) => Scaffold(
                   appBar: AppBar(
-                    title: Text('Edit Order #${order['order_number']}'),
+                    title: Text('Edit Order #${order['order_number'] ?? 'Unknown'}'),
                     backgroundColor: Colors.amber,
                     actions: [
                       IconButton(
@@ -89,14 +117,16 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
                     ],
                   ),
                   body: OrderCartPanel(
-                    orderId: order['id'] as int,
+                    orderId: orderId as int,
                     isEditing: true,
                     initialItems: editableCartItems,
                     customerName: order['customer_name'] as String?,
                     onRemoveItem: (index) {
-                      setState(() {
-                        editableCartItems.removeAt(index);
-                      });
+                      if (index >= 0 && index < editableCartItems.length) {
+                        setState(() {
+                          editableCartItems.removeAt(index);
+                        });
+                      }
                     },
                   ),
                 ),
@@ -105,6 +135,7 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
           );
         }
       } catch (e) {
+        print('Error loading order: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

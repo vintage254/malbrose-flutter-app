@@ -40,6 +40,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
   bool _showSplitPayment = false;
   // Add sales receipt number variable
   String? _salesReceiptNumber;
+  double _totalPaid = 0.0;
 
   @override
   void initState() {
@@ -227,10 +228,115 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   onChanged: (value) {
                     setState(() {
                       _selectedPaymentMethod = value!;
+                      _showSplitPayment = true;
                     });
                   },
                 ),
                 const SizedBox(height: 16),
+                if (_showSplitPayment) ...[
+                  const Text(
+                    'Split Payment Details:',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _cashAmountController,
+                          decoration: const InputDecoration(
+                            labelText: 'Cash Amount',
+                            border: OutlineInputBorder(),
+                            prefixText: 'KSH ',
+                            filled: true,
+                            fillColor: Colors.white,
+                          ),
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) {
+                            setState(() {
+                              _updateTotalPaid();
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextFormField(
+                          controller: _mobileAmountController,
+                          decoration: const InputDecoration(
+                            labelText: 'Mobile Payment',
+                            border: OutlineInputBorder(),
+                            prefixText: 'KSH ',
+                            filled: true,
+                            fillColor: Colors.white,
+                          ),
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) {
+                            setState(() {
+                              _updateTotalPaid();
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _bankAmountController,
+                          decoration: const InputDecoration(
+                            labelText: 'Bank Transfer',
+                            border: OutlineInputBorder(),
+                            prefixText: 'KSH ',
+                            filled: true,
+                            fillColor: Colors.white,
+                          ),
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) {
+                            setState(() {
+                              _updateTotalPaid();
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.white),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Total Paid:',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'KSH ${_totalPaid.toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           Row(
@@ -297,6 +403,36 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
     );
   }
 
+  void _updateTotalPaid() {
+    double cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
+    double mobileAmount = double.tryParse(_mobileAmountController.text) ?? 0;
+    double bankAmount = double.tryParse(_bankAmountController.text) ?? 0;
+    
+    double totalPaid = cashAmount + mobileAmount + bankAmount;
+    
+    // Validate that total paid doesn't exceed total amount
+    if (totalPaid > widget.order.totalAmount) {
+      UIHelpers.showSnackBarWithContext(
+        context,
+        'Total paid amount cannot exceed total order amount',
+        isError: true,
+      );
+      // Reset the last changed amount
+      if (_cashAmountController.text.isNotEmpty) {
+        _cashAmountController.text = (widget.order.totalAmount - (mobileAmount + bankAmount)).toStringAsFixed(2);
+      } else if (_mobileAmountController.text.isNotEmpty) {
+        _mobileAmountController.text = (widget.order.totalAmount - (cashAmount + bankAmount)).toStringAsFixed(2);
+      } else if (_bankAmountController.text.isNotEmpty) {
+        _bankAmountController.text = (widget.order.totalAmount - (cashAmount + mobileAmount)).toStringAsFixed(2);
+      }
+      totalPaid = widget.order.totalAmount;
+    }
+    
+    setState(() {
+      _totalPaid = totalPaid;
+    });
+  }
+
   void _completeSale() {
     // Check for invalid product IDs first
     final validItems = widget.order.items.where((item) => item.productId > 0).toList();
@@ -325,6 +461,24 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
     
     print('ReceiptPanel - Generated sales receipt number: $_salesReceiptNumber');
     
+    // Calculate total paid from split payments
+    double cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
+    double mobileAmount = double.tryParse(_mobileAmountController.text) ?? 0;
+    double bankAmount = double.tryParse(_bankAmountController.text) ?? 0;
+    double totalPaid = cashAmount + mobileAmount + bankAmount;
+    
+    // Determine effective payment method based on split payments
+    String effectivePaymentMethod = _selectedPaymentMethod;
+    if (totalPaid > 0 && totalPaid < widget.order.totalAmount) {
+      List<String> paymentMethods = [];
+      if (cashAmount > 0) paymentMethods.add('Cash');
+      if (mobileAmount > 0) paymentMethods.add('Mobile');
+      if (bankAmount > 0) paymentMethods.add('Bank');
+      if (totalPaid < widget.order.totalAmount) paymentMethods.add(_selectedPaymentMethod);
+      
+      effectivePaymentMethod = paymentMethods.join(' + ');
+    }
+    
     // Create a copy of the order with the selected payment method and only valid items
     final updatedOrder = Order(
       id: widget.order.id,
@@ -335,15 +489,15 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       customerName: widget.order.customerName,
       totalAmount: validItems.fold<double>(0, (sum, item) => sum + item.totalAmount),
       orderStatus: widget.order.orderStatus,
-      paymentStatus: widget.order.paymentStatus,
-      paymentMethod: _selectedPaymentMethod,
+      paymentStatus: totalPaid >= widget.order.totalAmount ? 'PAID' : 'PENDING',
+      paymentMethod: effectivePaymentMethod,
       createdBy: widget.order.createdBy,
       createdAt: widget.order.createdAt,
       orderDate: widget.order.orderDate,
       items: validItems,
     );
     
-    print('ReceiptPanel - Completing sale with payment method: $_selectedPaymentMethod');
+    print('ReceiptPanel - Completing sale with payment method: $effectivePaymentMethod');
     print('ReceiptPanel - Order items count: ${validItems.length}');
     
     // Call the onProcessSale callback with the updated order
@@ -826,7 +980,6 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
     _mobileAmountController.clear();
     _bankAmountController.clear();
     _selectedCustomer = null;
-    _showSplitPayment = false;
     
     // Calculate remaining credit amount (initially the full amount)
     double totalAmount = widget.order.totalAmount;
@@ -861,10 +1014,32 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
             double bankAmount = double.tryParse(_bankAmountController.text) ?? 0;
             
             double totalPaid = cashAmount + mobileAmount + bankAmount;
+            
+            // Validate that total paid doesn't exceed total amount
+            if (totalPaid > totalAmount) {
+              UIHelpers.showSnackBarWithContext(
+                context,
+                'Total paid amount cannot exceed total order amount',
+                isError: true,
+              );
+              // Reset the last changed amount
+              if (_cashAmountController.text.isNotEmpty) {
+                _cashAmountController.text = (totalAmount - (mobileAmount + bankAmount)).toStringAsFixed(2);
+              } else if (_mobileAmountController.text.isNotEmpty) {
+                _mobileAmountController.text = (totalAmount - (cashAmount + bankAmount)).toStringAsFixed(2);
+              } else if (_bankAmountController.text.isNotEmpty) {
+                _bankAmountController.text = (totalAmount - (cashAmount + mobileAmount)).toStringAsFixed(2);
+              }
+              totalPaid = totalAmount;
+            }
+            
             remainingCredit = totalAmount - totalPaid;
             
             // Ensure we don't have negative credit
             if (remainingCredit < 0) remainingCredit = 0;
+            
+            // Update total paid for the main UI as well
+            _totalPaid = totalPaid;
           }
           
           // Update initial remaining credit
@@ -888,115 +1063,127 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                     readOnly: _selectedCustomer != null, // Read-only if customer is selected
                   ),
                   const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.blue),
+                      borderRadius: BorderRadius.circular(4),
+                      color: Colors.blue.shade50,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Total Order Amount:',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              'KSH ${totalAmount.toStringAsFixed(2)}',
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Total Paid:',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              'KSH ${(totalAmount - remainingCredit).toStringAsFixed(2)}',
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Remaining Credit:',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              'KSH ${remainingCredit.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Split Payment Details:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          'Total Order Amount: KSH ${totalAmount.toStringAsFixed(2)}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        child: TextFormField(
+                          controller: _cashAmountController,
+                          decoration: const InputDecoration(
+                            labelText: 'Cash Amount',
+                            border: OutlineInputBorder(),
+                            prefixText: 'KSH ',
+                          ),
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) {
+                            setState(() {
+                              updateRemainingCredit();
+                            });
+                          },
                         ),
                       ),
-                      TextButton.icon(
-                        icon: Icon(_showSplitPayment ? Icons.remove : Icons.add),
-                        label: Text(_showSplitPayment ? 'Hide Split Payment' : 'Split Payment'),
-                        onPressed: () {
-                          setState(() {
-                            _showSplitPayment = !_showSplitPayment;
-                          });
-                        },
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextFormField(
+                          controller: _mobileAmountController,
+                          decoration: const InputDecoration(
+                            labelText: 'Mobile Payment',
+                            border: OutlineInputBorder(),
+                            prefixText: 'KSH ',
+                          ),
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) {
+                            setState(() {
+                              updateRemainingCredit();
+                            });
+                          },
+                        ),
                       ),
                     ],
                   ),
-                  if (_showSplitPayment) ...[
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Split Payment Options:',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _cashAmountController,
-                            decoration: const InputDecoration(
-                              labelText: 'Cash Amount',
-                              border: OutlineInputBorder(),
-                              prefixText: 'KSH ',
-                            ),
-                            keyboardType: TextInputType.number,
-                            onChanged: (value) {
-                              setState(() {
-                                updateRemainingCredit();
-                              });
-                            },
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _bankAmountController,
+                          decoration: const InputDecoration(
+                            labelText: 'Bank Transfer',
+                            border: OutlineInputBorder(),
+                            prefixText: 'KSH ',
                           ),
+                          keyboardType: TextInputType.number,
+                          onChanged: (value) {
+                            setState(() {
+                              updateRemainingCredit();
+                            });
+                          },
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _mobileAmountController,
-                            decoration: const InputDecoration(
-                              labelText: 'Mobile Payment',
-                              border: OutlineInputBorder(),
-                              prefixText: 'KSH ',
-                            ),
-                            keyboardType: TextInputType.number,
-                            onChanged: (value) {
-                              setState(() {
-                                updateRemainingCredit();
-                              });
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _bankAmountController,
-                            decoration: const InputDecoration(
-                              labelText: 'Bank Transfer',
-                              border: OutlineInputBorder(),
-                              prefixText: 'KSH ',
-                            ),
-                            keyboardType: TextInputType.number,
-                            onChanged: (value) {
-                              setState(() {
-                                updateRemainingCredit();
-                              });
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey),
-                              borderRadius: BorderRadius.circular(4),
-                              color: Colors.grey.shade100,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('Remaining Credit:'),
-                                Text(
-                                  'KSH ${remainingCredit.toStringAsFixed(2)}',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: remainingCredit > 0 ? Colors.red : Colors.green,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: _creditDetailsController,
@@ -1027,12 +1214,22 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                     return;
                   }
                   
-                  Navigator.of(context).pop();
-                  
-                  // Get the payment amounts
+                  // Validate total paid amount
                   double cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
                   double mobileAmount = double.tryParse(_mobileAmountController.text) ?? 0;
                   double bankAmount = double.tryParse(_bankAmountController.text) ?? 0;
+                  double totalPaid = cashAmount + mobileAmount + bankAmount;
+                  
+                  if (totalPaid > totalAmount) {
+                    UIHelpers.showSnackBarWithContext(
+                      context,
+                      'Total paid amount cannot exceed total order amount',
+                      isError: true,
+                    );
+                    return;
+                  }
+                  
+                  Navigator.of(context).pop();
                   
                   // Create payment details string
                   List<String> paymentDetails = [];
@@ -1049,6 +1246,56 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   // Then add the credit record if there's a remaining balance
                   if (remainingCredit > 0) {
                     try {
+                      // Make sure customer ID is set
+                      int? customerId = widget.order.customerId;
+                      
+                      // If no customer ID and we have a customer name, try to find or create the customer
+                      if (customerId == null && _creditCustomerNameController.text.trim().isNotEmpty) {
+                        try {
+                          // Use a single transaction for customer operations
+                          await DatabaseService.instance.withTransaction((txn) async {
+                            // Try to find existing customer by name
+                            final customer = await txn.query(
+                              DatabaseService.tableCustomers,
+                              where: 'name = ?',
+                              whereArgs: [_creditCustomerNameController.text.trim()],
+                              limit: 1,
+                            );
+                            
+                            if (customer.isNotEmpty) {
+                              customerId = customer.first['id'] as int;
+                              print('Found existing customer: ${customer.first['name']} (ID: $customerId)');
+                            } else {
+                              // Create new customer if not found
+                              final newCustomer = {
+                                'name': _creditCustomerNameController.text.trim(),
+                                'created_at': DateTime.now().toIso8601String(),
+                              };
+                              
+                              final id = await txn.insert(
+                                DatabaseService.tableCustomers,
+                                newCustomer,
+                              );
+                              
+                              if (id != null) {
+                                customerId = id as int;
+                                print('Created new customer: ${newCustomer['name']} (ID: $customerId)');
+                              }
+                            }
+                          });
+                        } catch (e) {
+                          print('Error finding/creating customer: $e');
+                          if (!mounted) return;
+                          UIHelpers.showSnackBarWithContext(
+                            context,
+                            'Error processing customer: $e',
+                            isError: true,
+                          );
+                          return;
+                        }
+                      }
+                      
+                      // Create the creditor record with all required fields
                       final creditor = {
                         'name': _creditCustomerNameController.text.trim(),
                         'balance': remainingCredit,
@@ -1061,17 +1308,57 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                         'receipt_number': creditReceiptNumber,
                         'order_details': widget.order.items.map((i) => i.productName).join(', '),
                         'original_amount': widget.order.totalAmount,
+                        'customer_id': customerId,
                       };
                       
-                      await DatabaseService.instance.addCreditor(creditor);
+                      print('Adding creditor record: ${creditor.toString()}');
                       
-                      if (!mounted) return;
-                      UIHelpers.showSnackBarWithContext(
-                        context, 
-                        'Credit record added successfully',
-                        isError: false,
-                      );
+                      // Use a single transaction for creditor record creation
+                      await DatabaseService.instance.withTransaction((txn) async {
+                        // Check for existing creditor with same order number
+                        final existingCreditors = await txn.query(
+                          DatabaseService.tableCreditors,
+                          where: 'order_number = ?',
+                          whereArgs: [widget.order.orderNumber],
+                          limit: 1,
+                        );
+                        
+                        if (existingCreditors.isEmpty) {
+                          await txn.insert(
+                            DatabaseService.tableCreditors,
+                            creditor,
+                          );
+                          
+                          // Log the activity within the same transaction
+                          final currentUser = AuthService.instance.currentUser;
+                          if (currentUser != null) {
+                            await txn.insert(
+                              DatabaseService.tableActivityLogs,
+                              {
+                                'user_id': currentUser.id,
+                                'username': currentUser.username,
+                                'action': 'create_credit',
+                                'action_type': 'Create credit',
+                                'details': 'Created credit record for Order #${widget.order.orderNumber}',
+                                'timestamp': DateTime.now().toIso8601String(),
+                              },
+                            );
+                          }
+                        } else {
+                          print('Warning: Creditor record already exists for order #${widget.order.orderNumber}');
+                        }
+                      });
                     } catch (e) {
+                      print('Error adding credit record: $e');
+                      
+                      // Try to get more detailed error information
+                      if (e.toString().contains('no such column')) {
+                        print('Missing column error. This typically happens when the database schema is out of date.');
+                        print('Attempted to create credit record for customer: ${_creditCustomerNameController.text.trim()}');
+                      } else if (e.toString().contains('database is locked') || e.toString().contains('busy')) {
+                        print('Database lock detected. The database is busy with another transaction.');
+                      }
+                      
                       if (!mounted) return;
                       UIHelpers.showSnackBarWithContext(
                         context, 
@@ -1081,8 +1368,8 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                     }
                   }
                   
-                  // Log the split payment if used
-                  if (_showSplitPayment && (cashAmount > 0 || mobileAmount > 0 || bankAmount > 0)) {
+                  // Log the split payment if applicable
+                  if (cashAmount > 0 || mobileAmount > 0 || bankAmount > 0) {
                     try {
                       final currentUser = AuthService.instance.currentUser;
                       if (currentUser != null) {

@@ -4,10 +4,10 @@ import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/models/product_model.dart';
 import 'package:my_flutter_app/models/cart_item_model.dart';
 import 'package:my_flutter_app/services/database.dart';
-import 'package:my_flutter_app/widgets/side_menu_widget.dart';
-import 'package:my_flutter_app/widgets/receipt_panel.dart';
 import 'package:my_flutter_app/services/order_service.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/widgets/side_menu_widget.dart';
+import 'package:my_flutter_app/widgets/receipt_panel.dart';
 import 'package:my_flutter_app/widgets/order_cart_panel.dart';
 import 'dart:convert';
 
@@ -24,6 +24,8 @@ class _SalesScreenState extends State<SalesScreen> {
   bool _isLoading = true;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  String _selectedPaymentMethod = 'Cash';
+  final OrderService _orderService = OrderService.instance;
 
   @override
   void initState() {
@@ -32,9 +34,20 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   Future<void> _loadPendingOrders() async {
+    if (!mounted) return;
+    
+    setState(() {
+      _isLoading = true;
+    });
+    
     try {
-      setState(() => _isLoading = true);
-      final orders = await DatabaseService.instance.getOrdersByStatus('PENDING');
+      // Use OrderService to get pending orders
+      final orderServiceResults = await _orderService.getOrdersByStatus('PENDING');
+      
+      // Load both PENDING and restored ON_HOLD orders
+      final pendingOrders = orderServiceResults['pendingOrders'] ?? [];
+      final heldOrders = orderServiceResults['heldOrders'] ?? [];
+      final orders = [...pendingOrders, ...heldOrders];
       
       if (mounted) {
         // Group orders by order number
@@ -208,13 +221,15 @@ class _SalesScreenState extends State<SalesScreen> {
         }
       }
 
+      // Use a transaction to ensure all operations succeed or fail together
       await DatabaseService.instance.withTransaction((txn) async {
         // Update order status using simple map
         await txn.update(
           DatabaseService.tableOrders,
           {
             'order_status': 'COMPLETED',
-            'payment_status': 'PAID',
+            'payment_status': order.paymentMethod == 'Credit' ? 'PENDING' : 'PAID',
+            'payment_method': order.paymentMethod,
             'updated_at': DateTime.now().toIso8601String(),
           },
           where: 'order_number = ?',
@@ -231,45 +246,20 @@ class _SalesScreenState extends State<SalesScreen> {
           );
 
           if (product.isNotEmpty) {
-            final currentQuantity = (product.first['quantity'] as num).toDouble();
+            final currentQuantity = (product[0]['quantity'] as num).toDouble();
+            final subUnitQuantity = (product[0]['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
             final quantityToDeduct = item.isSubUnit
-                ? item.quantity / (product.first['sub_unit_quantity'] as num).toDouble()
-                : item.quantity;
+                ? item.quantity / subUnitQuantity
+                : item.quantity.toDouble();
 
             await txn.update(
               DatabaseService.tableProducts,
-              {'quantity': currentQuantity - quantityToDeduct},
-              where: 'id = ?',
-              whereArgs: [item.productId],
-            );
-          }
-        }
-
-        // Update customer statistics if customer_id exists
-        if (order.customerId != null) {
-          // Get current customer stats
-          final customerStats = await txn.query(
-            DatabaseService.tableCustomers,
-            columns: ['total_orders', 'total_amount'],
-            where: 'id = ?',
-            whereArgs: [order.customerId],
-            limit: 1,
-          );
-
-          if (customerStats.isNotEmpty) {
-            final currentTotalOrders = (customerStats.first['total_orders'] as int?) ?? 0;
-            final currentTotalAmount = (customerStats.first['total_amount'] as num?)?.toDouble() ?? 0.0;
-
-            await txn.update(
-              DatabaseService.tableCustomers,
               {
-                'total_orders': currentTotalOrders + 1,
-                'total_amount': currentTotalAmount + order.totalAmount,
-                'last_order_date': DateTime.now().toIso8601String(),
-                'updated_at': DateTime.now().toIso8601String(),
+                'quantity': currentQuantity - quantityToDeduct,
+                'last_updated': DateTime.now().toIso8601String(),
               },
               where: 'id = ?',
-              whereArgs: [order.customerId],
+              whereArgs: [item.productId],
             );
           }
         }
@@ -283,7 +273,7 @@ class _SalesScreenState extends State<SalesScreen> {
               'user_id': currentUser.id,
               'username': currentUser.username,
               'action': DatabaseService.actionCompleteSale,
-              'details': 'Completed sale #${order.orderNumber}, amount: ${order.totalAmount}',
+              'details': 'Completed sale #${order.orderNumber}, amount: ${order.totalAmount}, method: ${order.paymentMethod}',
               'timestamp': DateTime.now().toIso8601String(),
             },
           );
@@ -319,16 +309,56 @@ class _SalesScreenState extends State<SalesScreen> {
   Future<void> _completeSale(Order order) async {
     try {
       // Use the payment method from the order or default to Cash
-      final paymentMethod = order.paymentMethod ?? 'Cash';
+      final paymentMethod = order.paymentMethod ?? _selectedPaymentMethod;
       
-      // Complete the sale using the DatabaseService
-      await DatabaseService.instance.completeSale(order, paymentMethod: paymentMethod);
+      // Show loading dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Completing sale...'),
+            ],
+          ),
+        ),
+      );
+      
+      // Complete the sale using OrderService instead of DatabaseService
+      final success = await _orderService.completeSale(order, paymentMethod: paymentMethod);
+      
+      // Close loading dialog
+      Navigator.of(context, rootNavigator: true).pop();
+      
+      if (!success) {
+        throw Exception('Failed to complete sale');
+      }
+      
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Sale #${order.orderNumber} completed successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
       
       // Refresh orders list
       await _loadPendingOrders();
       
     } catch (e) {
+      // Close loading dialog if it's open
+      Navigator.of(context, rootNavigator: true).pop();
+      
       print('Error completing sale: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error completing sale: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -565,6 +595,11 @@ class _SalesScreenState extends State<SalesScreen> {
                 decoration: InputDecoration(
                   labelText: 'Quantity',
                   suffix: Text(isSubUnit ? product.subUnitName ?? 'pieces' : 'units'),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  filled: true,
+                  fillColor: Colors.white,
                 ),
                 keyboardType: TextInputType.number,
               ),
@@ -756,4 +791,4 @@ class _SalesScreenState extends State<SalesScreen> {
     _searchController.dispose();
     super.dispose();
   }
-} 
+}

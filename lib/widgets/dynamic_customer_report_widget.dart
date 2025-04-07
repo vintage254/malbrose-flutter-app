@@ -33,10 +33,12 @@ class DynamicCustomerReportWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Group order items by order ID
+    // Group order items by order ID with null safety
     final Map<int, List<Map<String, dynamic>>> itemsByOrder = {};
     for (final item in orderItems) {
-      final orderId = item['order_id'] as int;
+      final orderId = item['order_id'] as int?;
+      if (orderId == null) continue; // Skip items with null order ID
+      
       if (!itemsByOrder.containsKey(orderId)) {
         itemsByOrder[orderId] = [];
       }
@@ -143,12 +145,33 @@ class DynamicCustomerReportWidget extends StatelessWidget {
                             DataColumn(label: Text('Status')),
                           ],
                           rows: orders.map((order) {
-                            final orderId = order['id'] as int;
+                            // Extract values with null safety
+                            final orderId = order['id'] as int?;
+                            if (orderId == null) {
+                              // Skip orders with null ID
+                              return DataRow(cells: [
+                                DataCell(Text('ERROR')),
+                                DataCell(Text('')),
+                                DataCell(Text('')),
+                                DataCell(Text('')),
+                                DataCell(Text('INVALID DATA')),
+                              ]);
+                            }
+                            
                             final orderItems = itemsByOrder[orderId] ?? [];
-                            final orderNumber = order['order_number'] as String;
-                            final orderDate = DateTime.parse(order['created_at'] as String);
-                            final totalAmount = (order['total_amount'] as num).toDouble();
-                            final status = order['status'] as String;
+                            final orderNumber = order['order_number'] as String? ?? 'Unknown';
+                            
+                            DateTime orderDate;
+                            try {
+                              orderDate = DateTime.parse(order['created_at'] as String? ?? '');
+                            } catch (e) {
+                              // Use current date as fallback for invalid dates
+                              orderDate = DateTime.now();
+                              print('Error parsing order date: $e');
+                            }
+                            
+                            final totalAmount = (order['total_amount'] as num?)?.toDouble() ?? 0.0;
+                            final status = order['status'] as String? ?? 'UNKNOWN';
                             
                             return DataRow(
                               color: WidgetStateProperty.resolveWith<Color?>((Set<WidgetState> states) {

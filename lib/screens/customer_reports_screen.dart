@@ -75,7 +75,12 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
   }
 
   Future<void> _loadCustomerOrders() async {
-    if (_selectedCustomer == null) return;
+    if (_selectedCustomer == null || _selectedCustomer?.id == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a valid customer first')),
+      );
+      return;
+    }
     
     setState(() {
       _isLoading = true;
@@ -92,15 +97,23 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
       final filteredOrders = orders.where((order) {
         if (_startDate == null && _endDate == null) return true;
         
-        final orderDate = DateTime.parse(order['created_at'] as String);
+        final orderDateStr = order['created_at'] as String?;
+        if (orderDateStr == null) return false; // Skip records with null dates
         
-        if (_startDate != null && _endDate != null) {
-          return orderDate.isAfter(_startDate!) && 
-                 orderDate.isBefore(_endDate!.add(const Duration(days: 1)));
-        } else if (_startDate != null) {
-          return orderDate.isAfter(_startDate!);
-        } else if (_endDate != null) {
-          return orderDate.isBefore(_endDate!.add(const Duration(days: 1)));
+        try {
+          final orderDate = DateTime.parse(orderDateStr);
+          
+          if (_startDate != null && _endDate != null) {
+            return orderDate.isAfter(_startDate!) && 
+                  orderDate.isBefore(_endDate!.add(const Duration(days: 1)));
+          } else if (_startDate != null) {
+            return orderDate.isAfter(_startDate!);
+          } else if (_endDate != null) {
+            return orderDate.isBefore(_endDate!.add(const Duration(days: 1)));
+          }
+        } catch (e) {
+          print('Error parsing date: $orderDateStr - $e');
+          return false; // Skip records with invalid dates
         }
         
         return true;
@@ -112,15 +125,22 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
       double pendingAmount = 0.0;
       
       for (final order in filteredOrders) {
-        final items = await DatabaseService.instance.getOrderItems(order['id'] as int);
-        allOrderItems.addAll(items);
+        final orderId = order['id'];
+        if (orderId == null) continue; // Skip orders with null ID
         
-        // Calculate totals based on order status
-        final orderTotal = (order['total_amount'] as num).toDouble();
-        if (order['status'] == 'COMPLETED') {
-          completedAmount += orderTotal;
-        } else {
-          pendingAmount += orderTotal;
+        try {
+          final items = await DatabaseService.instance.getOrderItems(orderId as int);
+          allOrderItems.addAll(items);
+          
+          // Calculate totals based on order status
+          final orderTotal = ((order['total_amount'] as num?) ?? 0).toDouble();
+          if (order['status'] == 'COMPLETED') {
+            completedAmount += orderTotal;
+          } else {
+            pendingAmount += orderTotal;
+          }
+        } catch (e) {
+          print('Error loading items for order $orderId: $e');
         }
       }
       
@@ -314,16 +334,23 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
                                             style: TextStyle(fontSize: 16),
                                           ),
                                         )
-                                      : DynamicCustomerReportWidget(
-                                          customer: _selectedCustomer!,
-                                          orders: _orders,
-                                          orderItems: _orderItems,
-                                          startDate: _startDate,
-                                          endDate: _endDate,
-                                          completedAmount: _completedAmount,
-                                          pendingAmount: _pendingAmount,
-                                          totalAmount: _totalAmount,
-                                        ),
+                                      : _selectedCustomer == null
+                                          ? const Center(
+                                              child: Text(
+                                                'Please select a customer first',
+                                                style: TextStyle(fontSize: 16),
+                                              ),
+                                            )
+                                          : DynamicCustomerReportWidget(
+                                              customer: _selectedCustomer!,
+                                              orders: _orders,
+                                              orderItems: _orderItems,
+                                              startDate: _startDate,
+                                              endDate: _endDate,
+                                              completedAmount: _completedAmount,
+                                              pendingAmount: _pendingAmount,
+                                              totalAmount: _totalAmount,
+                                            ),
                         ),
                       ],
                     ),

@@ -50,7 +50,7 @@ void main() async {
   // Set preferred window size for desktop
   if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
     try {
-      // Set preferred window size
+      // Set preferred window orientations
       await SystemChrome.setPreferredOrientations([
         DeviceOrientation.portraitUp,
         DeviceOrientation.landscapeLeft,
@@ -58,7 +58,6 @@ void main() async {
       ]);
       
       // Ensure window is positioned correctly and of a reasonable size
-      // This requires a package like 'window_manager', but we'll use debug prints for now
       print('Window orientation set');
       print('Make sure your app window is not off-screen or minimized');
       print('Check the taskbar or system tray for the app icon');
@@ -67,9 +66,9 @@ void main() async {
     }
   }
 
-  // Try clean start approach
-  print('Trying clean start approach');
-  await cleanStartApp();
+  // REMOVED: Don't reset database on startup
+  // This was only needed for initial setup/testing
+  // await cleanStartApp();
 
   // Check if setup is completed
   print('Checking if setup is completed...');

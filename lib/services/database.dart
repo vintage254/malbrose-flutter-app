@@ -42,6 +42,7 @@ class DatabaseService {
   static const String tableCustomers = 'customers';
   static const String tableCustomerReports = 'customer_reports';
   static const String tableReportItems = 'report_items';
+  static const String tableCreditTransactions = 'credit_transactions';
 
   // Action constants
   static const String actionCreateOrder = 'create_order';
@@ -81,6 +82,9 @@ class DatabaseService {
         // Initialize the database with retry 
         _database = await _initDB();
         _initialized = true;
+        
+        // Add admin user if not exists
+        await _ensureAdminUserExists();
         
         return _database!;
       });
@@ -261,6 +265,7 @@ class DatabaseService {
   Future<void> _ensureTablesExist(Database db) async {
     try {
       await _createTables(db, dbVersion);
+      await _ensureCreditorsTableColumns(db); // Add this line
     } catch (e) {
       print('Error ensuring tables exist: $e');
     }
@@ -400,7 +405,8 @@ class DatabaseService {
             last_updated TEXT,
             order_number TEXT,
             order_details TEXT,
-            original_amount REAL
+            original_amount REAL,
+            customer_id INTEGER
           )
         ''');
         print('Creditors table created or already exists');
@@ -611,6 +617,17 @@ class DatabaseService {
       if (!columnNames.contains('original_amount')) {
         await db.execute('ALTER TABLE $tableCreditors ADD COLUMN original_amount REAL');
       }
+      if (!columnNames.contains('customer_id')) {
+        await db.execute('ALTER TABLE $tableCreditors ADD COLUMN customer_id INTEGER');
+        print('Added customer_id column to creditors table');
+      }
+      if (!columnNames.contains('receipt_number')) {
+        await db.execute('ALTER TABLE $tableCreditors ADD COLUMN receipt_number TEXT');
+        print('Added receipt_number column to creditors table');
+      }
+      
+      // Also call the dedicated method to ensure all creditor columns
+      await _ensureCreditorsTableColumns(db);
       
       // Check if order_items table has all required columns
       tableInfo = await db.rawQuery('PRAGMA table_info($tableOrderItems)');
@@ -877,7 +894,7 @@ class DatabaseService {
           final currentUser = AuthService.instance.currentUser;
           if (currentUser != null) {
             await txn.insert(tableActivityLogs, {
-              'user_id': currentUser.id,
+              'user_id': currentUser.id!,
               'username': currentUser.username,
               'action': actionRevertReceipt,
               'action_type': 'Revert Receipt',
@@ -1736,7 +1753,8 @@ class DatabaseService {
             last_updated TEXT,
             order_number TEXT,
             order_details TEXT,
-            original_amount REAL
+            original_amount REAL,
+            customer_id INTEGER
           )
         ''');
         print('Recreated creditors table without UNIQUE constraint');
@@ -1767,7 +1785,8 @@ class DatabaseService {
             last_updated TEXT,
             order_number TEXT,
             order_details TEXT,
-            original_amount REAL
+            original_amount REAL,
+            customer_id INTEGER
           )
         ''');
         print('Created new creditors table without UNIQUE constraint');
@@ -1821,83 +1840,103 @@ class DatabaseService {
     String paymentMethod,
     String paymentDetails
   ) async {
-    try {
-      final db = await database;
-      
-      await db.transaction((txn) async {
-        // Get all pending credit orders for this customer
-        final creditOrders = await txn.query(
-          tableCreditors,
-          where: 'name = ? AND status = ? AND balance > 0',
-          whereArgs: [customerName, 'PENDING'],
-          orderBy: 'created_at ASC', // Order by oldest first (FIFO)
-        );
-        
-        if (creditOrders.isEmpty) {
-          return; // No credit orders found
-        }
-        
-        double remainingPayment = paymentAmount;
-        final currentUser = AuthService.instance.currentUser;
-        final timestamp = DateTime.now().toIso8601String();
-        final List<Map<String, dynamic>> updatedCreditors = [];
-        
-        // Apply payment to each credit order in FIFO order
-        for (final order in creditOrders) {
-          if (remainingPayment <= 0) break;
-          
-          final int id = order['id'] as int;
-          final double balance = order['balance'] as double;
-          final String orderNumber = order['order_number'] as String? ?? 'Unknown';
-          
-          // Calculate how much to apply to this credit order
-          final double amountToApply = remainingPayment >= balance ? balance : remainingPayment;
-          final double newBalance = balance - amountToApply;
-          final String status = newBalance <= 0 ? 'PAID' : 'PENDING';
-          
-          // Update the creditor record
-          await txn.update(
+    int retryCount = 0;
+    const maxRetries = 3;
+    const baseDelay = 200; // milliseconds
+    
+    while (true) {
+      try {
+        await withTransaction((txn) async {
+          // Get all pending credit orders for this customer
+          final creditOrders = await txn.query(
             tableCreditors,
-            {
-              'balance': newBalance,
-              'status': status,
-              'last_updated': timestamp,
-              'details': 'Payment of $amountToApply applied via $paymentMethod. $paymentDetails',
-            },
-            where: 'id = ?',
-            whereArgs: [id],
+            where: 'name = ? AND status = ? AND balance > 0',
+            whereArgs: [customerName, 'PENDING'],
+            orderBy: 'created_at ASC', // Order by oldest first (FIFO)
           );
           
-          updatedCreditors.add({
-            'id': id,
-            'order_number': orderNumber,
-            'amount_applied': amountToApply,
-            'new_balance': newBalance,
-            'status': status,
-          });
+          if (creditOrders.isEmpty) {
+            return; // No credit orders found
+          }
           
-          // Reduce the remaining payment
-          remainingPayment -= amountToApply;
+          double remainingPayment = paymentAmount;
+          final currentUser = AuthService.instance.currentUser;
+          final timestamp = DateTime.now().toIso8601String();
+          final List<Map<String, dynamic>> updatedCreditors = [];
+          
+          // Apply payment to each credit order in FIFO order
+          for (final order in creditOrders) {
+            if (remainingPayment <= 0) break;
+            
+            final int id = order['id'] as int;
+            final double balance = order['balance'] as double;
+            final String orderNumber = order['order_number'] as String? ?? 'Unknown';
+            
+            // Calculate how much to apply to this credit order
+            final double amountToApply = remainingPayment >= balance ? balance : remainingPayment;
+            final double newBalance = balance - amountToApply;
+            final String status = newBalance <= 0 ? 'PAID' : 'PENDING';
+            
+            // Update the creditor record
+            await txn.update(
+              tableCreditors,
+              {
+                'balance': newBalance,
+                'status': status,
+                'last_updated': timestamp,
+                'details': 'Payment of $amountToApply applied via $paymentMethod. $paymentDetails',
+              },
+              where: 'id = ?',
+              whereArgs: [id],
+            );
+            
+            updatedCreditors.add({
+              'id': id,
+              'order_number': orderNumber,
+              'amount_applied': amountToApply,
+              'new_balance': newBalance,
+              'status': status,
+            });
+            
+            // Reduce the remaining payment
+            remainingPayment -= amountToApply;
+          }
+          
+          // Log the activity within the same transaction
+          if (currentUser != null) {
+            final updatedOrders = updatedCreditors.map((c) => 
+              '${c['order_number']}: ${c['amount_applied'].toStringAsFixed(2)} applied (Balance: ${c['new_balance'].toStringAsFixed(2)})'
+            ).join(', ');
+            
+            await txn.insert(
+              tableActivityLogs,
+              {
+                'user_id': currentUser.id,
+                'username': currentUser.username,
+                'action': 'credit_payment',
+                'action_type': 'Credit payment',
+                'details': 'Applied payment of $paymentAmount to customer $customerName via $paymentMethod. Orders updated: $updatedOrders',
+                'timestamp': timestamp,
+              },
+            );
+          }
+        });
+        
+        // If we get here, the transaction was successful
+        break;
+        
+      } catch (e) {
+        retryCount++;
+        if (retryCount >= maxRetries) {
+          print('Error applying payment after $maxRetries attempts: $e');
+          rethrow;
         }
         
-        // Log the activity
-        if (currentUser != null) {
-          final updatedOrders = updatedCreditors.map((c) => 
-            '${c['order_number']}: ${c['amount_applied'].toStringAsFixed(2)} applied (Balance: ${c['new_balance'].toStringAsFixed(2)})'
-          ).join(', ');
-          
-          await logActivity(
-            currentUser.id!,
-            currentUser.username,
-            'credit_payment',
-            'Credit payment',
-            'Applied payment of $paymentAmount to customer $customerName via $paymentMethod. Orders updated: $updatedOrders'
-          );
-        }
-      });
-    } catch (e) {
-      print('Error applying payment to credits: $e');
-      rethrow;
+        // Exponential backoff for retries
+        final delay = baseDelay * (1 << retryCount);
+        print('Retrying payment application in $delay ms...');
+        await Future.delayed(Duration(milliseconds: delay));
+      }
     }
   }
 
@@ -1935,38 +1974,18 @@ class DatabaseService {
 
   Future<Database> initDatabase() async {
     try {
-      print('Initializing database...');
+      print('Initializing database service...');
+      final db = await database;
       
-      // Ensure directory exists
-      final databasesPath = await getDatabasesPath();
-      final dbPath = p.join(databasesPath, 'malbrose_pos.db');
-
-      // Open the database
-      final database = await openDatabase(
-        dbPath,
-        version: databaseVersion,
-        onConfigure: (db) async {
-          // Configure database settings
-          await db.execute('PRAGMA foreign_keys = ON');
-        },
-        onCreate: (db, version) async {
-          print('Creating database tables for version $version');
-          await _createTables(db, version);
-        },
-        onUpgrade: _onUpgrade,
-        onOpen: (db) async {
-          print('Database opened successfully, running post-open tasks');
-          await _migrateUnhashedPasswords();
-          await _migrateActivityLogs();
-          await fixDatabaseSchema();
-        },
-      );
+      // Check if database upgrade is required
+      await _checkAndUpgradeDatabase(db);
       
-      // Fix any issues with database schema
-      await fixUniqueConstraint();
+      // Migrate any unhashed passwords or activity logs if necessary
+      await _migrateUnhashedPasswords();
+      await _migrateActivityLogs();
       
-      print('Database initialization completed');
-      return database; // This return value now matches the Future<Database> type
+      print('Database initialization complete');
+      return db; // This return value now matches the Future<Database> type
     } catch (e) {
       print('Error initializing database: $e');
       rethrow;
@@ -2106,6 +2125,30 @@ class DatabaseService {
       try {
         final db = await database;
         await db.transaction((txn) async {
+          // First verify the order exists and is in a valid state
+          final orderData = await txn.query(
+            tableOrders,
+            where: 'order_number = ? AND order_status != ?',
+            whereArgs: [order.orderNumber, 'COMPLETED'],
+            limit: 1,
+          );
+          
+          if (orderData.isEmpty) {
+            throw Exception('Order not found or already completed');
+          }
+          
+          // Get order items with complete information
+          final orderItems = await txn.rawQuery('''
+            SELECT oi.*, p.sub_unit_quantity, p.quantity as current_quantity
+            FROM $tableOrderItems oi
+            JOIN $tableProducts p ON oi.product_id = p.id
+            WHERE oi.order_id = ?
+          ''', [order.id]);
+          
+          if (orderItems.isEmpty) {
+            throw Exception('No items found for order');
+          }
+          
           // Update order status using order_status field
           await txn.update(
             tableOrders,
@@ -2118,98 +2161,63 @@ class DatabaseService {
             where: 'order_number = ?',
             whereArgs: [order.orderNumber],
           );
-
-          // Get order items with complete information
-          final orderItems = await txn.rawQuery('''
-            SELECT oi.*, p.sub_unit_quantity, p.quantity as current_quantity
-            FROM $tableOrderItems oi
-            JOIN $tableProducts p ON oi.product_id = p.id
-            WHERE oi.order_id = ?
-          ''', [order.id]);
-
+          
           // Update product quantities
           for (var item in orderItems) {
             final productId = item['product_id'] as int;
-            final quantity = (item['quantity'] as num).toInt();
-            final isSubUnit = (item['is_sub_unit'] as num?) == 1;
-            final subUnitQuantity = (item['sub_unit_quantity'] as num?)?.toDouble();
-            final currentQuantity = (item['current_quantity'] as num).toDouble();
+            final quantity = item['quantity'] as int;
+            final isSubUnit = item['is_sub_unit'] == 1;
+            final subUnitQuantity = item['sub_unit_quantity'] as double?;
             
-            // Calculate quantity to deduct
-            double quantityToDeduct;
-            if (isSubUnit && subUnitQuantity != null && subUnitQuantity > 0) {
-              quantityToDeduct = quantity / subUnitQuantity;
-            } else {
-              quantityToDeduct = quantity.toDouble();
+            if (productId <= 0) {
+              print('Warning: Invalid product ID found: $productId');
+              continue;
             }
             
-            final newQuantity = currentQuantity - quantityToDeduct;
+            // Calculate the actual quantity to deduct
+            final actualQuantity = isSubUnit && subUnitQuantity != null
+                ? quantity / subUnitQuantity
+                : quantity.toDouble();
             
-            await txn.update(
-              tableProducts,
-              {'quantity': newQuantity},
-              where: 'id = ?',
-              whereArgs: [productId],
-            );
+            // Update product quantity
+            await txn.rawUpdate('''
+              UPDATE $tableProducts 
+              SET quantity = quantity - ?,
+                  last_updated = CURRENT_TIMESTAMP
+              WHERE id = ?
+            ''', [actualQuantity, productId]);
           }
           
-          // If payment method is Credit, add to creditors table
-          if (paymentMethod == 'Credit') {
-            final customerName = order.customerName ?? 'Unknown Customer';
-            
-            // Create a list of ordered products for details
-            final itemNames = orderItems.map((item) => 
-              '${item['product_name']} (${item['quantity']})'
-            ).join(', ');
-            
-            // Create new creditor entry
-            await txn.insert(
-              tableCreditors,
-              {
-                'name': customerName,
-                'balance': order.totalAmount,
-                'details': 'Credit for Order #${order.orderNumber}. $itemNames',
-                'status': 'PENDING',
-                'created_at': DateTime.now().toIso8601String(),
-                'order_number': order.orderNumber,
-                'order_details': itemNames,
-                'original_amount': order.totalAmount,
-              },
-            );
-            
-            print('Added new credit entry for: $customerName, order: ${order.orderNumber}, amount: ${order.totalAmount}');
-          }
-          
-          // Log the completed sale
+          // Log the activity
           final currentUser = AuthService.instance.currentUser;
           if (currentUser != null) {
-            await txn.insert(tableActivityLogs, {
-              'user_id': currentUser.id,
-              'username': currentUser.username,
-              'action': actionCompleteSale,
-              'action_type': 'Complete sale',
-              'details': 'Completed sale for order #${order.orderNumber}, customer: ${order.customerName}, amount: ${order.totalAmount}, payment: $paymentMethod',
-              'timestamp': DateTime.now().toIso8601String(),
-            });
+            await txn.insert(
+              tableActivityLogs,
+              {
+                'user_id': currentUser.id,
+                'username': currentUser.username,
+                'action': actionCompleteSale,
+                'details': 'Completed sale #${order.orderNumber}, amount: ${order.totalAmount}, method: $paymentMethod',
+                'timestamp': DateTime.now().toIso8601String(),
+              },
+            );
           }
         });
         
-        return;
-      } catch (e) {
-        print('Error completing sale (attempt ${retryCount + 1}): $e');
+        // If we get here, the transaction was successful
+        break;
         
-        if (e is DatabaseException && 
-            (e.toString().contains('database is locked') || 
-             e.toString().contains('database locked')) && 
-            retryCount < maxRetries) {
-          retryCount++;
-          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
-          print('Database locked. Retrying in $delay ms...');
-          await Future.delayed(Duration(milliseconds: delay));
-          continue;
+      } catch (e) {
+        retryCount++;
+        if (retryCount >= maxRetries) {
+          print('Error completing sale after $maxRetries attempts: $e');
+          rethrow;
         }
         
-        rethrow;
+        // Exponential backoff
+        final delay = baseDelay * (1 << (retryCount - 1));
+        print('Retrying sale completion after $delay ms (attempt $retryCount)');
+        await Future.delayed(Duration(milliseconds: delay));
       }
     }
   }
@@ -2305,24 +2313,6 @@ class DatabaseService {
     }
   }
 
-  // Get user by username - used for authentication
-  Future<Map<String, dynamic>?> getUserByUsername(String username) async {
-    try {
-      final db = await database;
-      final result = await db.query(
-        tableUsers,
-        where: 'username = ?',
-        whereArgs: [username],
-        limit: 1,
-      );
-      
-      return result.isNotEmpty ? result.first : null;
-    } catch (e) {
-      print('Error getting user by username: $e');
-      return null;
-    }
-  }
-  
   // Get user by ID - used for session restoration
   Future<Map<String, dynamic>?> getUserById(int id) async {
     try {
@@ -2340,7 +2330,7 @@ class DatabaseService {
       return null;
     }
   }
-  
+
   // Update user information
   Future<int> updateUser(User user) async {
     try {
@@ -2356,7 +2346,7 @@ class DatabaseService {
       rethrow;
     }
   }
-  
+
   // Get all creditors
   Future<List<Map<String, dynamic>>> getCreditors() async {
     try {
@@ -2376,9 +2366,52 @@ class DatabaseService {
   Future<int> addCreditor(Map<String, dynamic> creditor) async {
     try {
       final db = await database;
+      
+      // Check for existing creditor with same order number if order_number is provided
+      if (creditor.containsKey('order_number') && creditor['order_number'] != null) {
+        final existingCreditors = await db.query(
+          tableCreditors,
+          where: 'order_number = ?',
+          whereArgs: [creditor['order_number']],
+          limit: 1
+        );
+        
+        if (existingCreditors.isNotEmpty) {
+          print('Warning: Creditor with order_number ${creditor["order_number"]} already exists. Skipping creation.');
+          return existingCreditors.first['id'] as int;
+        }
+      }
+      
+      // Try to get customer_id if name is provided but customer_id is not
+      if (!creditor.containsKey('customer_id') || creditor['customer_id'] == null) {
+        if (creditor.containsKey('name') && creditor['name'] != null) {
+          final customerData = await getCustomerByName(creditor['name']);
+          if (customerData != null && customerData.containsKey('id')) {
+            creditor['customer_id'] = customerData['id'];
+          }
+        }
+      }
+      
+      // Ensure required fields exist with defaults if missing
+      final Map<String, dynamic> safeCreditor = {
+        'name': creditor['name'] ?? 'Unknown Customer',
+        'balance': creditor['balance'] ?? 0.0,
+        'status': creditor['status'] ?? 'PENDING',
+        'created_at': creditor['created_at'] ?? DateTime.now().toIso8601String(),
+        'details': creditor['details'] ?? 'Credit payment',
+      };
+      
+      // Copy all other fields
+      creditor.forEach((key, value) {
+        if (!safeCreditor.containsKey(key) && value != null) {
+          safeCreditor[key] = value;
+        }
+      });
+      
+      // Insert with safe data
       final id = await db.insert(
         tableCreditors,
-        creditor,
+        safeCreditor,
       );
       
       // Log the activity
@@ -2389,13 +2422,25 @@ class DatabaseService {
           currentUser.username,
           actionCreateCreditor,
           'Create creditor',
-          'Added credit record for: ${creditor['name']}'
+          'Added credit record for: ${safeCreditor['name']}, amount: ${safeCreditor['balance']}'
         );
       }
       
       return id;
     } catch (e) {
       print('Error adding creditor: $e');
+      // Add detailed diagnostic info for troubleshooting
+      if (e.toString().contains('no such column')) {
+        // Get table info to see which columns exist
+        try {
+          final db = await database;
+          final tableInfo = await db.rawQuery('PRAGMA table_info($tableCreditors)');
+          print('Available columns in creditors table: ${tableInfo.map((c) => c['name']).join(', ')}');
+          print('Attempted to insert: ${creditor.keys.join(', ')}');
+        } catch (innerError) {
+          print('Failed to get table info: $innerError');
+        }
+      }
       rethrow;
     }
   }
@@ -2405,50 +2450,62 @@ class DatabaseService {
     try {
       final db = await database;
       
-      // Get current creditor details for logging
-      final currentCreditor = await db.query(
-        tableCreditors,
-        columns: ['name', 'balance'],
-        where: 'id = ?',
-        whereArgs: [id],
-        limit: 1,
-      );
-      
-      if (currentCreditor.isEmpty) {
-        throw Exception('Creditor not found');
-      }
-      
-      final updateData = {
-        'balance': balance,
-        'details': details,
-        'status': status,
-        'last_updated': DateTime.now().toIso8601String(),
-      };
-      
-      // Add order number if provided
-      if (orderNumber != null && orderNumber.isNotEmpty) {
-        updateData['order_number'] = orderNumber;
-      }
-      
-      await db.update(
-        tableCreditors,
-        updateData,
-        where: 'id = ?',
-        whereArgs: [id],
-      );
-      
-      // Log the activity
-      final currentUser = AuthService.instance.currentUser;
-      if (currentUser != null) {
-        final oldBalance = currentCreditor.first['balance'] as double;
-        await logActivity(
-          currentUser.id!,
-          currentUser.username,
-          actionUpdateCreditor,
-          'Update creditor',
-          'Updated balance for ${currentCreditor.first['name']} from $oldBalance to $balance, status: $status'
+      await withTransaction((txn) async {
+        // Get current creditor details for logging
+        final currentCreditor = await txn.query(
+          tableCreditors,
+          columns: ['name', 'balance', 'customer_id'],
+          where: 'id = ?',
+          whereArgs: [id],
+          limit: 1,
         );
-      }
+        
+        if (currentCreditor.isEmpty) {
+          throw Exception('Creditor not found');
+        }
+        
+        final updateData = {
+          'balance': balance,
+          'details': details,
+          'status': status,
+          'last_updated': DateTime.now().toIso8601String(),
+        };
+        
+        // Add order number if provided
+        if (orderNumber != null && orderNumber.isNotEmpty) {
+          updateData['order_number'] = orderNumber;
+        }
+        
+        await txn.update(
+          tableCreditors,
+          updateData,
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+        
+        // If balance is 0 or less, mark status as PAID
+        if (balance <= 0 && status != 'PAID') {
+          await txn.update(
+            tableCreditors,
+            {'status': 'PAID', 'last_updated': DateTime.now().toIso8601String()},
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        }
+        
+        // Log the activity
+        final currentUser = AuthService.instance.currentUser;
+        if (currentUser != null) {
+          final oldBalance = currentCreditor.first['balance'] as double;
+          await logActivity(
+            currentUser.id!,
+            currentUser.username,
+            actionUpdateCreditor,
+            'Update creditor',
+            'Updated balance for ${currentCreditor.first['name']} from $oldBalance to $balance, status: $status'
+          );
+        }
+      });
     } catch (e) {
       print('Error updating creditor: $e');
       rethrow;
@@ -3050,16 +3107,103 @@ class DatabaseService {
   Future<List<Map<String, dynamic>>> getOrdersByStatus(String status) async {
     try {
       final db = await database;
-      final results = await db.query(
-        tableOrders,
-        where: 'order_status = ?',
-        whereArgs: [status],
-        orderBy: 'created_at DESC',
-      );
-      return results;
+      return await db.rawQuery('''
+        WITH order_items_json AS (
+          SELECT 
+            o.id as order_id,
+            CASE 
+              WHEN COUNT(oi.id) > 0 THEN
+                json_group_array(
+                  json_object(
+                    'product_id', oi.product_id,
+                    'quantity', oi.quantity,
+                    'unit_price', oi.unit_price,
+                    'selling_price', oi.selling_price,
+                    'total_amount', oi.total_amount,
+                    'product_name', p.product_name,
+                    'is_sub_unit', oi.is_sub_unit,
+                    'sub_unit_name', oi.sub_unit_name,
+                    'sub_unit_quantity', oi.sub_unit_quantity,
+                    'adjusted_price', oi.adjusted_price
+                  )
+                )
+              ELSE '[]'
+            END as items_json
+          FROM $tableOrders o
+          LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
+          LEFT JOIN $tableProducts p ON oi.product_id = p.id
+          WHERE o.order_status = ?
+          GROUP BY o.id
+        )
+        SELECT 
+          o.*,
+          COALESCE(oij.items_json, '[]') as items_json
+        FROM $tableOrders o
+        LEFT JOIN order_items_json oij ON o.id = oij.order_id
+        WHERE o.order_status = ?
+        ORDER BY o.created_at DESC
+      ''', [status, status]);
     } catch (e) {
       print('Error getting orders by status: $e');
       return [];
+    }
+  }
+  
+  /// Update order status
+  Future<bool> updateOrderStatus(int orderId, String status) async {
+    try {
+      final db = await database;
+      
+      return await withTransaction((txn) async {
+        // Get the order first to log details
+        final orderQuery = await txn.query(
+          tableOrders,
+          columns: ['order_number', 'order_status'],
+          where: 'id = ?',
+          whereArgs: [orderId],
+          limit: 1,
+        );
+        
+        if (orderQuery.isEmpty) {
+          throw Exception('Order not found');
+        }
+        
+        final oldOrder = orderQuery.first;
+        final oldStatus = oldOrder['order_status'] as String;
+        final orderNumber = oldOrder['order_number'] as String;
+        
+        // Update the order status
+        await txn.update(
+          tableOrders,
+          {
+            'order_status': status,
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: [orderId],
+        );
+        
+        // Log the status change
+        final currentUser = AuthService.instance.currentUser;
+        if (currentUser != null) {
+          await txn.insert(
+            tableActivityLogs,
+            {
+              'user_id': currentUser.id,
+              'username': currentUser.username,
+              'action': 'change_order_status',
+              'action_type': 'Change order status',
+              'details': 'Changed order #$orderNumber status from $oldStatus to $status',
+              'timestamp': DateTime.now().toIso8601String(),
+            },
+          );
+        }
+        
+        return true;
+      });
+    } catch (e) {
+      print('Error updating order status: $e');
+      return false;
     }
   }
 
@@ -3105,20 +3249,55 @@ class DatabaseService {
       // Create admin user if it doesn't exist
       if (!adminExists) {
         print('Admin user not found. Creating default admin user...');
-        await createAdminUser(
-          'admin',
-          'admin123',
-          'System Administrator',
-          'admin@example.com'
-        );
-        print('Default admin user created successfully');
+        
+        // Create default admin user with a plain, simple password that BCrypt can reliably verify
+        // Use a fixed plaintext password that will be consistently hashed and verified
+        final plainPassword = 'admin123';
+        
+        // Important: Use the exact same hashing method that will be used for verification
+        final hashedPassword = AuthService.instance.hashPassword(plainPassword);
+        
+        // Debug password hashing
+        print('Creating admin with plain password: $plainPassword');
+        print('Hashed admin password: $hashedPassword');
+        
+        final adminUserData = {
+          'username': 'admin',
+          'password': hashedPassword,
+          'full_name': 'System Administrator',
+          'email': 'admin@example.com',
+          'role': ROLE_ADMIN,
+          'permissions': PERMISSION_FULL_ACCESS,
+          'created_at': DateTime.now().toIso8601String(),
+        };
+        
+        final id = await createUser(adminUserData);
+        if (id != null) {
+          print('Default admin user created successfully with ID: $id');
+          
+          // Verify the password would work immediately after creation as a sanity check
+          final verifyResult = AuthService.instance.verifyPassword(plainPassword, hashedPassword);
+          print('Admin password verification test: ${verifyResult ? 'PASSED' : 'FAILED'}');
+        } else {
+          print('Failed to create default admin user.');
+        }
+      } else {
+        print('Admin user already exists.');
       }
       
       for (final user in users) {
         final password = user['password'] as String?;
-        if (password != null && !password.startsWith('sha256:')) {
+        final username = user['username'] as String?;
+        
+        // Skip the admin user to prevent double-hashing
+        if (username == 'admin') {
+          print('Skipping admin user in password migration to prevent double-hashing');
+          continue;
+        }
+        
+        if (password != null && !password.startsWith('\$2a\$')) {
           // Hash the password
-          final hashedPassword = _hashPassword(password);
+          final hashedPassword = AuthService.instance.hashPassword(password);
           
           // Update the user record
           await db.update(
@@ -3826,6 +4005,246 @@ class DatabaseService {
         'failed': failed,
         'errors': errors,
       };
+    }
+  }
+
+  // Ensure the creditors table has all required columns
+  Future<void> _ensureCreditorsTableColumns(Database db) async {
+    try {
+      print('Checking creditors table columns...');
+      
+      // Get table info
+      final tableInfo = await db.rawQuery('PRAGMA table_info($tableCreditors)');
+      final List<String> columnNames = tableInfo.map((col) => col['name'].toString()).toList();
+      
+      print('Existing columns in creditors table: ${columnNames.join(', ')}');
+      
+      // List of required columns and their definitions
+      final requiredColumns = {
+        'order_number': 'TEXT',
+        'order_details': 'TEXT',
+        'original_amount': 'REAL',
+        'customer_id': 'INTEGER',
+        'receipt_number': 'TEXT',
+        'last_updated': 'TEXT',
+      };
+      
+      // Add any missing columns
+      for (var column in requiredColumns.entries) {
+        if (!columnNames.contains(column.key)) {
+          print('Adding missing column to creditors table: ${column.key}');
+          await db.execute('ALTER TABLE $tableCreditors ADD COLUMN ${column.key} ${column.value}');
+        }
+      }
+      
+      print('Creditors table structure verification complete.');
+    } catch (e) {
+      print('Error checking creditors table structure: $e');
+    }
+  }
+
+  // Creates a credit record for a customer
+  Future<void> createCredit(
+    int customerId, 
+    String customerName, 
+    int orderId,
+    String orderNumber,
+    double amount
+  ) async {
+    final db = await database;
+    
+    // First check if customer exists in creditors table
+    final List<Map<String, dynamic>> existingCreditors = await db.query(
+      tableCreditors,
+      where: 'customer_id = ?',
+      whereArgs: [customerId],
+    );
+    
+    await db.transaction((txn) async {
+      if (existingCreditors.isEmpty) {
+        // Create new creditor record
+        await txn.insert(tableCreditors, {
+          'customer_id': customerId,
+          'customer_name': customerName,
+          'order_id': orderId,
+          'order_number': orderNumber,
+          'amount': amount,
+          'status': 'OPEN',
+          'payment_date': null,
+          'payment_amount': 0.0,
+          'payment_method': null,
+          'payment_details': null,
+          'balance': amount,
+          'created_at': DateTime.now().toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
+        });
+      } else {
+        // Update existing creditor balance
+        final currentBalance = existingCreditors.first['balance'] as double? ?? 0.0;
+        await txn.update(
+          tableCreditors,
+          {
+            'balance': currentBalance + amount,
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+          where: 'customer_id = ?',
+          whereArgs: [customerId],
+        );
+      }
+      
+      // Add credit transaction record
+      await txn.insert(tableCreditTransactions, {
+        'customer_id': customerId,
+        'customer_name': customerName,
+        'order_id': orderId,
+        'order_number': orderNumber,
+        'amount': amount,
+        'transaction_type': 'CREDIT',
+        'payment_method': 'Credit',
+        'date': DateTime.now().toIso8601String(),
+        'description': 'Credit purchase for order #$orderNumber',
+      });
+      
+      // Log the activity
+      final currentUser = await getCurrentUserWithTxn(txn);
+      if (currentUser != null) {
+        await txn.insert(tableActivityLogs, {
+          'user_id': currentUser['id'],
+          'username': currentUser['username'],
+          'action': 'Created credit',
+          'action_type': 'CREDIT',
+          'details': 'Created credit of ${amount.toStringAsFixed(2)} for $customerName (Order #$orderNumber)',
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+      }
+    });
+  }
+  
+  // Log activity with transaction
+  Future<void> logActivityWithTxn(
+    DatabaseExecutor txn,
+    int userId,
+    String username,
+    String action,
+    String actionType,
+    String details,
+  ) async {
+    await txn.insert(tableActivityLogs, {
+      'user_id': userId,
+      'username': username,
+      'action': action,
+      'action_type': actionType,
+      'details': details,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  /// Get user by username
+  Future<Map<String, dynamic>?> getUserByUsername(String username) async {
+    try {
+      final db = await database;
+      final users = await db.query(
+        tableUsers,
+        where: 'username = ?',
+        whereArgs: [username],
+        limit: 1,
+      );
+      
+      if (users.isNotEmpty) {
+        return users.first;
+      }
+      return null;
+    } catch (e) {
+      print('Error getting user by username: $e');
+      return null;
+    }
+  }
+
+  /// Check if admin user exists and create one if it doesn't
+  Future<void> _ensureAdminUserExists() async {
+    try {
+      // Check if admin user exists
+      final adminUser = await getUserByUsername('admin');
+      final db = await database;
+      
+      if (adminUser == null) {
+        print('No admin user found. Creating default admin user...');
+        
+        // Create default admin user with a plain, simple password that BCrypt can reliably verify
+        // Use a fixed plaintext password that will be consistently hashed and verified
+        final plainPassword = 'admin123';
+        
+        // Important: Use the exact same hashing method that will be used for verification
+        // Avoid using _hashPassword() and use AuthService directly to ensure consistency
+        final hashedPassword = AuthService.instance.hashPassword(plainPassword);
+        
+        // Debug password hashing
+        print('Creating admin with plain password: $plainPassword');
+        print('Hashed admin password: $hashedPassword');
+        
+        final adminUserData = {
+          'username': 'admin',
+          'password': hashedPassword,
+          'full_name': 'System Administrator',
+          'email': 'admin@example.com',
+          'role': ROLE_ADMIN,
+          'permissions': PERMISSION_FULL_ACCESS,
+          'created_at': DateTime.now().toIso8601String(),
+        };
+        
+        final id = await db.insert(tableUsers, adminUserData);
+        
+        if (id > 0) {
+          print('Default admin user created successfully with ID: $id');
+          
+          // Verify the password would work immediately after creation as a sanity check
+          final verifyResult = AuthService.instance.verifyPassword(plainPassword, hashedPassword);
+          print('Admin password verification test: ${verifyResult ? 'PASSED' : 'FAILED'}');
+          
+          // Double-check if the hash is stored correctly
+          final justCreatedUser = await getUserByUsername('admin');
+          if (justCreatedUser != null) {
+            final storedHash = justCreatedUser['password'] as String;
+            print('Stored admin password hash after creation: $storedHash');
+            print('Hash matches what we created: ${storedHash == hashedPassword ? 'YES' : 'NO'}');
+          }
+        } else {
+          print('Failed to create default admin user.');
+        }
+      } else {
+        print('Admin user already exists.');
+        
+        // Check if the admin password needs fixing (might have been double-hashed)
+        if (adminUser['password'] != null && adminUser['password'].toString().startsWith('\$2a\$')) {
+          final currentUser = await getUserByUsername('admin');
+          if (currentUser != null) {
+            try {
+              // Test if current admin password works with the expected password
+              final canVerify = AuthService.instance.verifyPassword('admin123', currentUser['password'].toString());
+              if (!canVerify) {
+                print('Admin password verification failed. Fixing admin password...');
+                
+                // Fix the admin password by resetting it to the known default
+                final newHashedPassword = AuthService.instance.hashPassword('admin123');
+                await db.update(
+                  tableUsers,
+                  {'password': newHashedPassword},
+                  where: 'id = ?',
+                  whereArgs: [currentUser['id']],
+                );
+                
+                print('Admin password has been reset to default.');
+              } else {
+                print('Admin password is correctly set and verifiable.');
+              }
+            } catch (e) {
+              print('Error checking admin password: $e');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('Error ensuring admin user exists: $e');
     }
   }
 }

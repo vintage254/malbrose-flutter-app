@@ -9,6 +9,9 @@ import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/utils/receipt_number_generator.dart';
 import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
 import 'package:my_flutter_app/widgets/credit_orders_dialog.dart';
+import 'package:my_flutter_app/screens/sales_screen.dart';
+import 'package:my_flutter_app/screens/held_orders_screen.dart';
+import 'package:my_flutter_app/services/order_service.dart';
 
 class OrderCartPanel extends StatefulWidget {
   final List<CartItem> initialItems;
@@ -21,6 +24,7 @@ class OrderCartPanel extends StatefulWidget {
   final Function(String)? onCustomerNameChanged;
   final String orderButtonText;
   final Function()? onHoldOrderPressed;
+  final Order? order;
 
   const OrderCartPanel({
     super.key,
@@ -34,6 +38,7 @@ class OrderCartPanel extends StatefulWidget {
     this.onCustomerNameChanged,
     this.orderButtonText = 'Place Order',
     this.onHoldOrderPressed,
+    this.order,
   });
 
   @override
@@ -47,6 +52,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
   bool _isLoadingCustomers = false;
   Timer? _debounceTimer;
   int customerId = 0; // Default to 0
+  final OrderService _orderService = OrderService.instance;
 
   @override
   void initState() {
@@ -182,20 +188,56 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
     }
   }
 
-  Future<void> _placeOrder() async {
-    int retryCount = 0;
-    const maxRetries = 3;
-    
-    while (retryCount <= maxRetries) {
+  Future<void> _placeOrder(BuildContext context) async {
+    if (widget.initialItems.isEmpty || _customerNameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please add items and enter a customer name before placing an order'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    try {
+      final customerName = _customerNameController.text.trim();
+      final now = DateTime.now();
+      final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
+      
+      // Use a safe approach to get order number, handling both editing and new orders
+      final String orderNumber = widget.isEditing && widget.order != null
+          ? widget.order!.orderNumber
+          : 'ORD-$datePrefix-$timeComponent';
+      
+      // Get current user with null safety
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser == null) throw Exception('User not logged in');
+      
+      // Extract user ID with proper null safety
+      final int createdBy = currentUser.id != null 
+          ? (currentUser.id is String 
+              ? int.tryParse(currentUser.id as String) ?? 0 
+              : (currentUser.id as int? ?? 0))
+          : 0;
+      
+      // Create order map with customer information
+      final orderMap = {
+        'order_number': orderNumber,
+        'customer_id': customerId > 0 ? customerId : null,
+        'customer_name': customerName,
+        'total_amount': widget.initialItems.fold<double>(0, (sum, item) => sum + item.total),
+        'order_status': 'PENDING',
+        'payment_status': 'PENDING',
+        'created_by': createdBy,
+        'created_at': now.toIso8601String(),
+        'order_date': now.toIso8601String(),
+      };
+      
+      // Generate orderItems list from cartItems
+      final orderItems = widget.initialItems.map(_createOrderItem).toList();
+      
       try {
-        // Get the customer name from the controller
-        final customerName = _customerNameController.text.trim();
-        print('Customer name from controller: "$customerName"');
-        
-        if (customerName.isEmpty) {
-          throw Exception('Customer name is required');
-        }
-        
         // Show loading dialog
         showDialog(
           context: context,
@@ -206,155 +248,70 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
               children: [
                 CircularProgressIndicator(),
                 SizedBox(height: 16),
-                Text('Processing order...'),
+                Text('Creating order...'),
               ],
             ),
           ),
         );
-        
-        // If onPlaceOrder callback is provided, let the parent handle order creation
-        if (widget.onPlaceOrder != null) {
-          // Close loading dialog
-          if (mounted) {
-            Navigator.of(context, rootNavigator: true).pop();
-          }
-          
-          // Show receipt dialog before calling onPlaceOrder
-          if (mounted) {
-            await showDialog(
-              context: context,
-              builder: (context) => OrderReceiptDialog(
-                items: widget.initialItems,
-                customerName: customerName,
-                paymentMethod: 'Cash',
-              ),
-            );
-          }
-          
-          // Call the onPlaceOrder callback
-          widget.onPlaceOrder!();
-          
-          // Success - break out of retry loop
-          break;
-        }
-        
-        // Otherwise, create the order here
-        // Generate a more consistent order number with date prefix for better tracking
-        // Using the new ReceiptNumberGenerator utility
-        final orderNumber = ReceiptNumberGenerator.generateOrderNumber();
-        
-        // Generate a held receipt number for pending orders
-        final heldReceiptNumber = ReceiptNumberGenerator.generateHeldReceiptNumber();
-        
-        final currentUser = AuthService.instance.currentUser;
-        if (currentUser == null) throw Exception('User not logged in');
-        
-        // Create order map with customer information
-        final orderMap = {
-          'order_number': orderNumber,
-          'held_receipt_number': heldReceiptNumber,
-          'customer_id': customerId > 0 ? customerId : null,
-          'customer_name': customerName,
-          'total_amount': _total,
-          'order_status': 'PENDING',
-          'payment_status': 'PENDING',
-          'created_by': currentUser.id is String 
-              ? int.tryParse(currentUser.id as String) ?? 0 
-              : (currentUser.id as int? ?? 0),
-          'created_at': DateTime.now().toIso8601String(), // Use the same timestamp throughout
-          'order_date': DateTime.now().toIso8601String(),
-        };
 
-        // Convert cart items to order items
-        final orderItems = widget.initialItems.map((item) => {
-          'product_id': item.product.id ?? 0,
-          'quantity': item.quantity,
-          'unit_price': item.product.buyingPrice,
-          'selling_price': item.sellingPrice,
-          'total_amount': item.total,
-          'product_name': item.product.productName,
-          'is_sub_unit': item.isSubUnit ? 1 : 0,
-          'sub_unit_name': item.subUnitName,
-          'sub_unit_quantity': item.subUnitQuantity != null ? item.subUnitQuantity!.toDouble() : null,
-        }).toList();
-
-        // Let DatabaseService handle the transaction
-        await DatabaseService.instance.createOrder(orderMap, orderItems);
+        // Create order using OrderService
+        final success = await _orderService.createOrder(orderMap, orderItems);
         
         // Close loading dialog
-        if (mounted) {
-          Navigator.of(context, rootNavigator: true).pop();
-        }
+        Navigator.of(context, rootNavigator: true).pop();
         
-        // Show receipt dialog
-        if (mounted) {
-          await showDialog(
-            context: context,
-            builder: (context) => OrderReceiptDialog(
-              items: widget.initialItems,
-              customerName: customerName,
-              paymentMethod: 'Cash',
+        if (success) {
+          // Clear the cart after placing the order
+          if (widget.onClearCart != null) {
+            widget.onClearCart!();
+          }
+          
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Order placed successfully with order number $orderNumber'),
+              backgroundColor: Colors.green,
             ),
           );
-        }
-        
-        // Success - break out of retry loop
-        break;
-      } catch (e) {
-        print('Error placing order (attempt ${retryCount + 1}): $e');
-        
-        // If we've reached max retries, show error and break
-        if (retryCount >= maxRetries) {
-          // Close loading dialog
-          if (mounted) {
-            Navigator.of(context, rootNavigator: true).pop();
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Error placing order: ${e.toString()}'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-          break;
-        }
-        
-        // If it's a database lock error, retry with exponential backoff
-        if (e.toString().contains('locked') || e.toString().contains('busy')) {
-          // Exponential backoff for retries
-          final delay = 500 * (1 << retryCount);
-          print('Retrying order placement in $delay ms...');
-          await Future.delayed(Duration(milliseconds: delay));
-          retryCount++;
         } else {
-          // For other errors, show message and break
-          if (mounted) {
-            Navigator.of(context, rootNavigator: true).pop();
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Error placing order: ${e.toString()}'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-          break;
+          throw Exception('Failed to create order');
         }
+      } catch (e) {
+        // Close loading dialog if it's open
+        Navigator.of(context, rootNavigator: true).pop();
+        
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error creating order: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
+    } catch (e) {
+      print('Error generating order number: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error generating order number: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
-
-  OrderItem _createOrderItem(CartItem item) {
-    return OrderItem(
-      orderId: 0,  // Will be set when order is created
-      productId: item.product.id is int ? (item.product.id as int) : (item.product.id ?? 0),
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      sellingPrice: item.sellingPrice,
-      totalAmount: item.total,
-      productName: item.product.productName,
-      isSubUnit: item.isSubUnit,
-      subUnitName: item.subUnitName,
-      subUnitQuantity: item.subUnitQuantity != null ? item.subUnitQuantity!.toDouble() : null,
-    );
+  
+  Map<String, dynamic> _createOrderItem(CartItem item) {
+    return {
+      'product_id': item.product.id ?? 0,
+      'product_name': item.product.productName,
+      'quantity': item.quantity,
+      'unit_price': item.product.buyingPrice,
+      'selling_price': item.product.sellingPrice,
+      'total_amount': item.total,
+      'is_sub_unit': item.isSubUnit ? 1 : 0,
+      'sub_unit_name': item.subUnitName,
+      'sub_unit_quantity': item.subUnitQuantity != null ? item.subUnitQuantity!.toDouble() : null,
+      'adjusted_price': item.adjustedPrice,
+    };
   }
 
   double get _total => widget.initialItems.fold(
@@ -479,9 +436,9 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                           );
                         },
                         icon: const Icon(Icons.credit_card),
-                        label: const Text("View Credit Orders"),
+                        label: const Text("View & Pay Credits"),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
+                          backgroundColor: Colors.green.shade700,
                           foregroundColor: Colors.white,
                         ),
                       ),
@@ -592,7 +549,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                           // When editing an existing order, show Save Changes button
                           Expanded(
                             child: ElevatedButton.icon(
-                              onPressed: _placeOrder,
+                              onPressed: () => _placeOrder(context),
                               icon: const Icon(Icons.save),
                               label: const Text('Save Changes'),
                               style: ElevatedButton.styleFrom(
@@ -606,7 +563,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                             const SizedBox(width: defaultPadding),
                             Expanded(
                               child: ElevatedButton.icon(
-                                onPressed: _placeOrder,
+                                onPressed: () => _placeOrder(context),
                                 icon: const Icon(Icons.receipt_long),
                                 label: const Text('Place Order'),
                                 style: ElevatedButton.styleFrom(
@@ -619,7 +576,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                           // Normal mode - show Place Order button
                           Expanded(
                             child: ElevatedButton.icon(
-                              onPressed: widget.initialItems.isEmpty ? null : _placeOrder,
+                              onPressed: widget.initialItems.isEmpty ? null : () => _placeOrder(context),
                               icon: const Icon(Icons.receipt_long),
                               label: Text(widget.orderButtonText),
                               style: ElevatedButton.styleFrom(
@@ -738,12 +695,6 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
       );
       return;
     }
-
-    // If a callback is provided, use it instead of the default implementation
-    if (widget.onHoldOrderPressed != null) {
-      widget.onHoldOrderPressed!();
-      return;
-    }
     
     try {
       // Show loading dialog
@@ -768,8 +719,16 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
       final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
       final orderNumber = 'HLD-$datePrefix-$timeComponent';
       
+      // Get current user with null safety
       final currentUser = AuthService.instance.currentUser;
       if (currentUser == null) throw Exception('User not logged in');
+      
+      // Extract user ID with proper null safety
+      final int createdBy = currentUser.id != null 
+          ? (currentUser.id is String 
+              ? int.tryParse(currentUser.id as String) ?? 0 
+              : (currentUser.id as int? ?? 0))
+          : 0;
       
       // Create order map with customer information
       final orderMap = {
@@ -779,9 +738,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         'total_amount': widget.initialItems.fold<double>(0, (sum, item) => sum + item.total),
         'order_status': 'ON_HOLD',
         'payment_status': 'PENDING',
-        'created_by': currentUser.id is String 
-            ? int.tryParse(currentUser.id as String) ?? 0 
-            : (currentUser.id as int? ?? 0),
+        'created_by': createdBy,
         'created_at': now.toIso8601String(),
         'order_date': now.toIso8601String(),
       };
@@ -800,44 +757,48 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         'adjusted_price': item.adjustedPrice,
       }).toList();
 
-      // Create the order
-      await DatabaseService.instance.createOrder(orderMap, orderItems);
+      // Create the order using OrderService
+      final success = await _orderService.createHeldOrder(orderMap, orderItems);
       
       // Close loading dialog
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
+      Navigator.of(context, rootNavigator: true).pop();
+      
+      if (!success) {
+        throw Exception('Failed to place order on hold');
       }
       
       // Show success message
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Order #$orderNumber placed on hold successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Order #$orderNumber placed on hold successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
       
       // Clear the cart
       if (widget.onClearCart != null) {
         widget.onClearCart!();
       }
       
+      // Navigate to held orders screen
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const HeldOrdersScreen(),
+        ),
+      );
+      
     } catch (e) {
       // Close loading dialog
-      if (mounted) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
+      Navigator.of(context, rootNavigator: true).pop();
       
       // Show error message
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error holding order: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error holding order: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 }

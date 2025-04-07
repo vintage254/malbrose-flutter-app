@@ -100,6 +100,15 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
   }
 
   Future<void> _updateCreditorBalance(Creditor creditor) async {
+    if (creditor.id == null) {
+      UIHelpers.showSnackBarWithContext(
+        context,
+        'Cannot update creditor: ID is missing',
+        isError: true,
+      );
+      return;
+    }
+  
     final newBalanceController = TextEditingController(
       text: creditor.balance.toString(),
     );
@@ -143,8 +152,15 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
           ElevatedButton(
             onPressed: () async {
               try {
-                final newBalance = double.parse(newBalanceController.text);
+                final newBalanceText = newBalanceController.text.trim();
+                if (newBalanceText.isEmpty) {
+                  throw Exception('Please enter a valid balance');
+                }
+                
+                final newBalance = double.parse(newBalanceText);
                 final status = newBalance <= 0 ? 'COMPLETED' : 'PENDING';
+                
+                await Future.delayed(const Duration(milliseconds: 100));
                 
                 await DatabaseService.instance.updateCreditorBalanceAndStatus(
                   creditor.id!,
@@ -179,6 +195,15 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
   }
 
   Future<void> _deleteCreditor(Creditor creditor) async {
+    if (creditor.id == null) {
+      UIHelpers.showSnackBarWithContext(
+        context,
+        'Cannot delete creditor: ID is missing',
+        isError: true,
+      );
+      return;
+    }
+    
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -200,6 +225,7 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
 
     if (confirmed == true) {
       try {
+        await Future.delayed(const Duration(milliseconds: 100));
         await DatabaseService.instance.deleteCreditor(creditor.id!);
         await _loadCreditors();
         if (mounted) {

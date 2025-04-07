@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:my_flutter_app/models/creditor_model.dart';
 import 'package:my_flutter_app/services/database.dart';
+import 'package:my_flutter_app/services/order_service.dart';
 
 class CreditOrdersDialog extends StatefulWidget {
   final String customerName;
@@ -22,6 +23,7 @@ class _CreditOrdersDialogState extends State<CreditOrdersDialog> {
   bool _isLoading = true;
   double _totalCreditBalance = 0;
   String _selectedPaymentMethod = 'Cash';
+  final OrderService _orderService = OrderService.instance;
   
   final List<String> _paymentMethods = ['Cash', 'Bank Transfer', 'Mobile Money'];
 
@@ -115,8 +117,8 @@ class _CreditOrdersDialogState extends State<CreditOrdersDialog> {
     );
 
     try {
-      // Apply payment to credits
-      await DatabaseService.instance.applyPaymentToCredits(
+      // Apply payment to credits using OrderService instead of directly calling DatabaseService
+      final success = await _orderService.applyPaymentToCredits(
         widget.customerName,
         paymentAmount,
         _selectedPaymentMethod,
@@ -126,6 +128,10 @@ class _CreditOrdersDialogState extends State<CreditOrdersDialog> {
       // Close loading dialog
       if (mounted) {
         Navigator.of(context, rootNavigator: true).pop();
+      }
+      
+      if (!success) {
+        throw Exception('Failed to apply payment');
       }
       
       // Reload credit orders to show updated balances
