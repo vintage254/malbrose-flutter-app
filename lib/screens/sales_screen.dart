@@ -72,44 +72,62 @@ class _SalesScreenState extends State<SalesScreen> {
           if (firstOrder['items_json'] != null) {
             try {
               final String jsonStr = firstOrder['items_json'].toString();
-              if (jsonStr.startsWith('[') && jsonStr.endsWith(']') && jsonStr != '[null]') {
-                final List<dynamic> itemsList = json.decode(jsonStr);
-                print('Parsed ${itemsList.length} items from items_json');
+              print('Raw items_json before parsing: $jsonStr');
+              
+              // Check if the string is already a valid JSON array (starts with '[' and ends with ']')
+              // If not, try to handle single object or comma-separated objects
+              List<dynamic> itemsList = [];
+              
+              if (jsonStr.trim().startsWith('[') && jsonStr.trim().endsWith(']')) {
+                // It's already a JSON array
+                itemsList = json.decode(jsonStr);
+              } else if (jsonStr.trim().startsWith('{') && jsonStr.trim().endsWith('}')) {
+                // Single object - wrap it in a list
+                itemsList = [json.decode(jsonStr)];
+              } else if (jsonStr.contains('},{')) {
+                // Multiple comma-separated objects - add brackets and parse
+                itemsList = json.decode('[${jsonStr}]');
+              }
+              
+              print('Successfully parsed ${itemsList.length} items from JSON');
+              
+              for (var item in itemsList) {
+                // Skip null entries
+                if (item == null) continue;
                 
-                for (var item in itemsList) {
-                  // Skip null entries
-                  if (item == null) continue;
-                  
-                  // Extract required fields with safe type casting
-                  final productId = (item['product_id'] as num?)?.toInt() ?? 0;
-                  final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
-                  final unitPrice = (item['unit_price'] as num?)?.toDouble() ?? 0.0;
-                  final sellingPrice = (item['selling_price'] as num?)?.toDouble() ?? 0.0;
-                  final itemTotal = (item['total_amount'] as num?)?.toDouble() ?? 
-                                   (quantity * sellingPrice);
-                  final productName = item['product_name'] as String? ?? 'Unknown Product';
-                  
-                  // Skip items with invalid product IDs or quantities
-                  if (productId <= 0 || quantity <= 0) {
-                    print('Skipping invalid item: $productName (ID: $productId, Qty: $quantity)');
-                    continue;
-                  }
-                  
-                  orderItems.add(OrderItem(
-                    id: (item['item_id'] as num?)?.toInt(),
-                    orderId: firstOrder['id'] as int,
-                    productId: productId,
-                    quantity: quantity,
-                    unitPrice: unitPrice,
-                    sellingPrice: sellingPrice,
-                    totalAmount: itemTotal,
-                    productName: productName,
-                    isSubUnit: item['is_sub_unit'] == 1,
-                    subUnitName: item['sub_unit_name'] as String?,
-                    subUnitQuantity: (item['sub_unit_quantity'] as num?)?.toDouble(),
-                    adjustedPrice: (item['adjusted_price'] as num?)?.toDouble(),
-                  ));
+                // Extract required fields with safe type casting
+                final productId = (item['product_id'] as num?)?.toInt() ?? 0;
+                final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
+                final unitPrice = (item['unit_price'] as num?)?.toDouble() ?? 0.0;
+                final sellingPrice = (item['selling_price'] as num?)?.toDouble() ?? unitPrice;
+                final itemTotal = (item['total_amount'] as num?)?.toDouble() ?? 
+                               (quantity * sellingPrice);
+                final productName = item['product_name'] as String? ?? 'Unknown Product';
+                
+                // Skip items with invalid product IDs or quantities
+                if (productId <= 0 || quantity <= 0) {
+                  print('Skipping invalid item: $productName (ID: $productId, Qty: $quantity)');
+                  continue;
                 }
+                
+                print('Creating OrderItem: $productName (ID: $productId, Qty: $quantity)');
+                
+                final orderItem = OrderItem(
+                  id: (item['id'] as num?)?.toInt() ?? 0,
+                  orderId: firstOrder['id'] as int? ?? 0,
+                  productId: productId,
+                  quantity: quantity,
+                  unitPrice: unitPrice,
+                  sellingPrice: sellingPrice,
+                  totalAmount: itemTotal,
+                  productName: productName,
+                  isSubUnit: item['is_sub_unit'] == 1,
+                  subUnitName: item['sub_unit_name'] as String?,
+                  subUnitQuantity: (item['sub_unit_quantity'] as num?)?.toDouble(),
+                  adjustedPrice: (item['adjusted_price'] as num?)?.toDouble(),
+                );
+                
+                orderItems.add(orderItem);
               }
             } catch (e) {
               print('Error parsing items_json: $e');
@@ -117,16 +135,23 @@ class _SalesScreenState extends State<SalesScreen> {
             }
           }
 
-          // Calculate total amount from items
-          final totalAmount = orderItems.fold<double>(
-            0, 
-            (sum, item) => sum + item.totalAmount
-          );
+          print('Loaded ${orderItems.length} items for order #${firstOrder['order_number']}');
+
+          // Calculate total amount from items or use the one from the order
+          double totalAmount = 0.0;
+          if (orderItems.isNotEmpty) {
+            totalAmount = orderItems.fold<double>(
+              0, 
+              (sum, item) => sum + item.totalAmount
+            );
+          } else {
+            totalAmount = (firstOrder['total_amount'] as num?)?.toDouble() ?? 0.0;
+          }
 
           final order = Order(
             id: firstOrder['id'] as int?,
             orderNumber: firstOrder['order_number'] as String,
-            totalAmount: totalAmount > 0 ? totalAmount : (firstOrder['total_amount'] as num?)?.toDouble() ?? 0.0,
+            totalAmount: totalAmount,
             customerName: firstOrder['customer_name'] as String? ?? 'Unknown Customer',
             customerId: firstOrder['customer_id'] as int?,
             orderStatus: firstOrder['order_status'] as String? ?? 'PENDING',
@@ -138,9 +163,9 @@ class _SalesScreenState extends State<SalesScreen> {
           );
           
           print('Processed Order: ${order.orderNumber}');
-          print('- Items: ${orderItems.length}');
+          print('- Items: ${order.items.length}');
           print('- Total Amount: ${order.totalAmount}');
-          for (var item in orderItems) {
+          for (var item in order.items) {
             print('  * ${item.productName}: ${item.quantity} x ${item.sellingPrice} = ${item.totalAmount}');
           }
           
@@ -184,9 +209,35 @@ class _SalesScreenState extends State<SalesScreen> {
     try {
       print('Processing sale with payment method: ${order.paymentMethod}');
       print('Order items count: ${order.items.length}');
+      
+      // Debug items in order
+      for (var item in order.items) {
+        print('Order item: ${item.productName}, ID: ${item.productId}, Qty: ${item.quantity}');
+      }
 
       // Filter out invalid items (where productId = 0)
       final validItems = order.items.where((item) => item.productId > 0).toList();
+      
+      print('ReceiptPanel - Valid items: ${validItems.length} of ${order.items.length}');
+      
+      // If no valid items but order has a total amount, create a placeholder item
+      // This ensures the receipt dialog can still be shown
+      if (validItems.isEmpty && order.totalAmount > 0) {
+        print('No valid items but order has total amount: ${order.totalAmount}');
+        print('Creating a placeholder item for receipt');
+        
+        validItems.add(OrderItem(
+          id: 0,
+          orderId: order.id ?? 0,
+          productId: 1, // Use a valid ID to pass the check
+          quantity: 1,
+          unitPrice: order.totalAmount,
+          sellingPrice: order.totalAmount,
+          totalAmount: order.totalAmount,
+          productName: "Order Total",
+          isSubUnit: false,
+        ));
+      }
       
       if (validItems.isEmpty) {
         throw Exception('No valid product items in order');

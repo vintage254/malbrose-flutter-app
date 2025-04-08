@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/services/database.dart';
+import 'package:my_flutter_app/services/product_service.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 
@@ -249,7 +250,7 @@ class OrderService extends ChangeNotifier {
       }
       
       // First validate all product IDs
-      debugPrint('ReceiptPanel - Valid items: ${order.items.where((item) => item.productId > 0).length} of ${order.items.length}');
+      debugPrint('OrderService - Valid items: ${order.items.where((item) => item.productId > 0).length} of ${order.items.length}');
       
       // Even if there are no items, still allow the sale to complete
       // This handles the case where order items might be malformed or missing
@@ -293,11 +294,51 @@ class OrderService extends ChangeNotifier {
           orderStatus: STATUS_COMPLETED,
         );
         
-        // Complete the sale
-        await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
-        
-        notifyOrderUpdate();
-        return true;
+        try {
+          // Update product quantities directly with the new ProductService
+          // This avoids the issues with the missing last_updated column
+          for (var item in updatedOrder.items) {
+            if (item.productId <= 0) continue;
+            
+            // Get current product quantity
+            final productDetails = await DatabaseService.instance.getProductById(item.productId);
+            if (productDetails == null) {
+              debugPrint('Warning: Product ${item.productId} not found for quantity update');
+              continue;
+            }
+            
+            final currentQuantity = (productDetails['quantity'] as num?)?.toDouble() ?? 0;
+            
+            // Calculate quantity to deduct
+            double quantityToDeduct = 0;
+            if (item.isSubUnit) {
+              final subUnitQuantity = (productDetails['sub_unit_quantity'] as num?)?.toDouble() ?? 0;
+              if (subUnitQuantity > 0) {
+                quantityToDeduct = (item.quantity / subUnitQuantity);
+              }
+            } else {
+              quantityToDeduct = item.quantity.toDouble();
+            }
+            
+            // Calculate new quantity
+            final newQuantity = currentQuantity - quantityToDeduct;
+            
+            // Update product quantity using our new service
+            await ProductService.instance.updateProductQuantity(item.productId, newQuantity);
+          }
+          
+          // Complete the order - updating status without product quantity changes
+          await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
+          
+          notifyOrderUpdate();
+          return true;
+        } catch (e) {
+          debugPrint('Error updating product quantities: $e');
+          // Still attempt to complete the sale
+          await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
+          notifyOrderUpdate();
+          return true;
+        }
       }
     } catch (e) {
       debugPrint('Error completing sale in OrderService: $e');

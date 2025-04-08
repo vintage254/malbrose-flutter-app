@@ -584,8 +584,21 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: defaultPadding),
-                          // Show Hold Order button if callback provided
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: widget.initialItems.isNotEmpty 
+                                ? () => _printCurrentOrder(context)
+                                : null,
+                              icon: const Icon(Icons.print),
+                              label: const Text('Print Receipt'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.orange,
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
                           if (widget.onHoldOrderPressed != null)
                             Expanded(
                               child: ElevatedButton.icon(
@@ -800,5 +813,32 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         ),
       );
     }
+  }
+
+  void _printCurrentOrder(BuildContext context) {
+    if (widget.initialItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot print receipt for an empty order'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
+    print('OrderCartPanel - Printing receipt for ${widget.initialItems.length} items');
+    for (var item in widget.initialItems) {
+      print('  * ${item.product.productName}: ${item.quantity} x ${item.effectivePrice} = ${item.total}');
+    }
+    
+    // Show receipt dialog
+    showDialog(
+      context: context,
+      builder: (context) => OrderReceiptDialog(
+        items: widget.initialItems,
+        customerName: _customerNameController.text.trim(),
+        paymentMethod: 'Preview', // This is just a preview
+      ),
+    );
   }
 }

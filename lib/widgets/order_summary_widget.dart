@@ -289,7 +289,7 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
                   itemCount: recentOrders.length,
                   itemBuilder: (context, index) {
                     final order = recentOrders[index];
-                    final status = order['status'] as String;
+                    final status = order['status'] as String? ?? 'PENDING';
                     final createdAt = DateTime.parse(order['created_at'] as String);
                     
                     return Card(

@@ -112,8 +112,24 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
         ),
       );
       
+      // First check if order still exists and has ON_HOLD status
+      final orderCheck = await DatabaseService.instance.getOrderById(order.id!);
+      if (orderCheck == null || orderCheck['order_status'] != 'ON_HOLD') {
+        // Order has already been processed or doesn't exist
+        Navigator.of(context, rootNavigator: true).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Order has already been processed or deleted'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        // Refresh the list to show current state
+        _loadHeldOrders();
+        return;
+      }
+      
       // Use OrderService to update the status to PENDING
-      final success = await _orderService.updateOrderStatus(order.id!, 'PENDING');
+      final success = await _orderService.restoreHeldOrder(order);
       
       if (!success) {
         // Close loading dialog before throwing exception
@@ -161,7 +177,7 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
         ),
       );
       
-      // Refresh the held orders list
+      // Refresh the held orders list - must be done here because we're using pushReplacement
       _loadHeldOrders();
     } catch (e) {
       // Make sure dialog is closed in case of error

@@ -604,6 +604,24 @@ class DatabaseService {
   // Add missing columns to tables
   Future<void> _addMissingColumnsToTables(Database db) async {
     try {
+      // First, let's add the last_updated alias to products table as a safety measure
+      // This will make both 'updated_at' and 'last_updated' work in queries
+      try {
+        var tableInfo = await db.rawQuery('PRAGMA table_info($tableProducts)');
+        List<String> columnNames = tableInfo.map((col) => col['name'].toString()).toList();
+        
+        // If the table doesn't have last_updated but has updated_at, add last_updated as an alias
+        if (!columnNames.contains('last_updated') && columnNames.contains('updated_at')) {
+          print('Adding last_updated alias to products table for backwards compatibility');
+          await db.execute('ALTER TABLE $tableProducts ADD COLUMN last_updated TEXT');
+          
+          // Copy all values from updated_at to last_updated
+          await db.execute('UPDATE $tableProducts SET last_updated = updated_at');
+        }
+      } catch (e) {
+        print('Warning: Could not add last_updated alias column: $e');
+      }
+      
       // Check if creditors table has all required columns
       var tableInfo = await db.rawQuery('PRAGMA table_info($tableCreditors)');
       List<String> columnNames = tableInfo.map((col) => col['name'].toString()).toList();
@@ -2183,7 +2201,7 @@ class DatabaseService {
             await txn.rawUpdate('''
               UPDATE $tableProducts 
               SET quantity = quantity - ?,
-                  last_updated = CURRENT_TIMESTAMP
+                  updated_at = CURRENT_TIMESTAMP
               WHERE id = ?
             ''', [actualQuantity, productId]);
           }
@@ -4246,5 +4264,17 @@ class DatabaseService {
     } catch (e) {
       print('Error ensuring admin user exists: $e');
     }
+  }
+  /// Get order by ID
+  Future<Map<String, dynamic>?> getOrderById(int orderId) async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      tableOrders,
+      where: 'id = ?',
+      whereArgs: [orderId],
+      limit: 1,
+    );
+    
+    return maps.isNotEmpty ? maps.first : null;
   }
 }

@@ -62,6 +62,37 @@ class _OrderScreenState extends State<OrderScreen> {
     }
   }
 
+  @override
+  void didUpdateWidget(OrderScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    
+    // Check if the editing order has changed
+    if (widget.editingOrder != null && 
+        (oldWidget.editingOrder?.id != widget.editingOrder?.id ||
+         oldWidget.editingOrder?.orderNumber != widget.editingOrder?.orderNumber)) {
+      
+      print('OrderScreen - Order changed, refreshing data');
+      
+      // Update customer name
+      _customerNameController.text = widget.editingOrder!.customerName ?? '';
+      
+      // Clear existing cart items and load new ones
+      setState(() {
+        _cartItems = [];
+      });
+      
+      // Load items for the new order
+      if (widget.editingOrder!.items.isNotEmpty) {
+        setState(() {
+          _cartItems = widget.editingOrder!.items.map((item) => CartItem.fromOrderItem(item)).toList();
+        });
+        print('OrderScreen - Loaded ${_cartItems.length} items from new order');
+      } else if (widget.editingOrder!.id != null) {
+        _loadOrderItems(widget.editingOrder!.id!);
+      }
+    }
+  }
+
   Future<void> _loadProducts() async {
     try {
       final productsData = await DatabaseService.instance.getAllProducts();
