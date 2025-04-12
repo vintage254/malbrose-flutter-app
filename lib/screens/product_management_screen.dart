@@ -328,77 +328,109 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
         showDialog(
           context: context,
           barrierDismissible: false,
-          builder: (context) => const AlertDialog(
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Importing products...'),
-              ],
+          builder: (context) => StreamBuilder<Map<String, dynamic>>(
+            stream: DatabaseService.instance.importProductsFromExcelWithMapping(
+              filePath, 
+              columnMapping,
+              onProgress: true,
             ),
-          ),
-        );
-      }
-      
-      // Import the file with custom mapping
-      final result2 = await DatabaseService.instance.importProductsFromExcelWithMapping(filePath, columnMapping);
-      
-      // Close progress dialog
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
-      
-      setState(() {
-        _isImporting = false;
-      });
-      
-      if (mounted) {
-        if (result2['success'] == true) {
-          // Show success message
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(result2['message'])),
-          );
-          
-          // If there were errors, show a dialog with details
-          if ((result2['errors'] as List<String>?)?.isNotEmpty == true) {
-            showDialog(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('Import Warnings'),
-                content: SingleChildScrollView(
-                  child: Column(
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+                return const AlertDialog(
+                  content: Column(
                     mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Successfully imported ${result2['imported']} products'),
-                      Text('Failed to import ${result2['failed']} products'),
-                      const SizedBox(height: 8),
-                      const Text('Errors:', style: TextStyle(fontWeight: FontWeight.bold)),
-                      ...((result2['errors'] as List<String>?) ?? []).map((error) => Text('• $error')),
+                      CircularProgressIndicator(),
+                      SizedBox(height: 16),
+                      Text('Preparing import...'),
                     ],
                   ),
+                );
+              }
+              
+              final data = snapshot.data ?? {'current': 0, 'total': 0, 'percentage': 0.0};
+              final current = data['current'] as int? ?? 0;
+              final total = data['total'] as int? ?? 0;
+              final percentage = data['percentage'] as double? ?? 0.0;
+              final message = data['message'] as String? ?? 'Importing products...';
+              
+              if (data['completed'] == true) {
+                // Import is complete - close dialog after a short delay
+                Future.delayed(const Duration(milliseconds: 500), () {
+                  if (Navigator.of(context).canPop()) {
+                    Navigator.of(context).pop(data);
+                  }
+                });
+              }
+              
+              return AlertDialog(
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    LinearProgressIndicator(value: percentage / 100),
+                    SizedBox(height: 16),
+                    Text(message),
+                    Text('$current / $total rows (${percentage.toStringAsFixed(1)}%)'),
+                  ],
                 ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('OK'),
-                  ),
-                ],
-              ),
-            );
-          }
+              );
+            },
+          ),
+        ).then((result) {
+          setState(() {
+            _isImporting = false;
+          });
           
-          // Reload products
-          _loadProducts();
-        } else {
-          // Show error message
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Import failed: ${result2['message']}')),
-          );
-        }
+          if (mounted && result != null) {
+            if (result['success'] == true) {
+              // Show success message
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(result['message'])),
+              );
+              
+              // If there were errors, show a dialog with details
+              if ((result['errors'] as List<String>?)?.isNotEmpty == true) {
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Import Warnings'),
+                    content: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Successfully imported ${result['imported']} products'),
+                          Text('Failed to import ${result['failed']} products'),
+                          const SizedBox(height: 8),
+                          const Text('Errors:', style: TextStyle(fontWeight: FontWeight.bold)),
+                          ...((result['errors'] as List<String>?) ?? []).map((error) => Text('• $error')),
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('OK'),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              
+              // Reload products
+              _loadProducts();
+            } else {
+              // Show error message
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Import failed: ${result['message']}')),
+              );
+            }
+          }
+        });
+        
+        // Don't run the code below since our StreamBuilder handles everything
+        return;
       }
-      
     } catch (e) {
       if (mounted) {
         setState(() {

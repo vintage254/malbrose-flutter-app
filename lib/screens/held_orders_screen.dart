@@ -144,39 +144,58 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
         return;
       }
       
-      final success = await _orderService.restoreHeldOrder(order);
-      
-      if (Navigator.of(context, rootNavigator: true).canPop()) {
+      // Instead of directly restoring the order, we'll load it into the cart
+      try {
+        // Get the order items
+        final orderItems = await DatabaseService.instance.getOrderItems(order.id!);
+        if (orderItems == null || orderItems.isEmpty) {
+          throw Exception('Failed to retrieve order items');
+        }
+        
+        // Convert to CartItem objects
+        final cartItems = await _convertOrderItemsToCartItems(orderItems);
+        
+        // Close loading dialog
         Navigator.of(context, rootNavigator: true).pop();
-      }
-      
-      if (!success) {
-        throw Exception('Failed to restore order');
-      }
-      
-      final updatedOrder = await DatabaseService.instance.getOrderById(order.id!);
-      if (updatedOrder == null) {
-        throw Exception('Could not find updated order');
-      }
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Order #${order.orderNumber} successfully restored as #${updatedOrder['order_number']}'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-      
-      await _loadHeldOrders();
-      
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const SalesScreen(),
-          ),
-        );
+        
+        if (mounted) {
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Order #${order.orderNumber} loaded for editing'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+        
+        // Navigate to order screen with cart items
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => OrderScreen(
+                initialItems: cartItems,
+                customerName: order.customerName,
+                orderId: order.id,
+                isEditingHeldOrder: true,
+                originalOrder: order,
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (Navigator.of(context, rootNavigator: true).canPop()) {
+          Navigator.of(context, rootNavigator: true).pop();
+        }
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error preparing order: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (Navigator.of(context, rootNavigator: true).canPop()) {
@@ -195,6 +214,34 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
         });
       }
     }
+  }
+  
+  // Helper method to convert order items to cart items
+  Future<List<CartItem>> _convertOrderItemsToCartItems(List<Map<String, dynamic>> orderItems) async {
+    final List<CartItem> result = [];
+    
+    for (final item in orderItems) {
+      final productId = item['product_id'] as int;
+      final productData = await DatabaseService.instance.getProductById(productId);
+      
+      if (productData != null) {
+        final product = Product.fromMap(productData);
+        final isSubUnit = item['is_sub_unit'] == 1;
+        
+        result.add(
+          CartItem(
+            product: product,
+            quantity: (item['quantity'] as num).toInt(),
+            isSubUnit: isSubUnit,
+            subUnitName: item['sub_unit_name'] as String?,
+            subUnitQuantity: isSubUnit ? (item['sub_unit_quantity'] as num?)?.toDouble() : null,
+            adjustedPrice: (item['adjusted_price'] as num?)?.toDouble(),
+          ),
+        );
+      }
+    }
+    
+    return result;
   }
 
   Widget _buildOrderListItem(Order order) {

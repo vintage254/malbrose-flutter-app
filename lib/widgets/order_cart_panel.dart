@@ -234,6 +234,11 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         'order_date': now.toIso8601String(),
       };
       
+      // Add the order ID if we're editing an existing order
+      if (widget.isEditing && widget.orderId != null) {
+        orderMap['id'] = widget.orderId;
+      }
+      
       // Generate orderItems list from cartItems
       final orderItems = widget.initialItems.map(_createOrderItem).toList();
       
@@ -248,7 +253,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
               children: [
                 CircularProgressIndicator(),
                 SizedBox(height: 16),
-                Text('Creating order...'),
+                Text('Processing order...'),
               ],
             ),
           ),
@@ -269,12 +274,12 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
           // Show success message
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Order placed successfully with order number $orderNumber'),
+              content: Text(widget.isEditing ? 'Order updated successfully' : 'Order placed successfully with order number $orderNumber'),
               backgroundColor: Colors.green,
             ),
           );
         } else {
-          throw Exception('Failed to create order');
+          throw Exception('Failed to ${widget.isEditing ? 'update' : 'create'} order');
         }
       } catch (e) {
         // Close loading dialog if it's open
@@ -283,7 +288,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         // Show error message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error creating order: $e'),
+            content: Text('Error ${widget.isEditing ? 'updating' : 'creating'} order: $e'),
             backgroundColor: Colors.red,
           ),
         );

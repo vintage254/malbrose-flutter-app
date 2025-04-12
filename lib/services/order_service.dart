@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/services/database.dart';
+import 'package:my_flutter_app/services/database_extensions.dart';
 import 'package:my_flutter_app/services/product_service.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:intl/intl.dart';
@@ -176,6 +177,10 @@ class OrderService extends ChangeNotifier {
   // Create a new order with validation of product IDs
   Future<bool> createOrder(Map<String, dynamic> orderMap, List<Map<String, dynamic>> orderItems) async {
     try {
+      // Check if this is an edit of an existing order
+      final isEdit = orderMap.containsKey('id') && orderMap['id'] != null;
+      final int? orderId = isEdit ? orderMap['id'] as int : null;
+      
       // Validate product IDs in all order items
       for (final item in orderItems) {
         final productId = item['product_id'] as int?;
@@ -198,16 +203,44 @@ class OrderService extends ChangeNotifier {
         }
       }
       
-      // Create the order through DatabaseService
-      final result = await DatabaseService.instance.createOrder(orderMap, orderItems);
-      if (result != null) {
-        // Refresh stats after creating an order
-        notifyOrderUpdate();
-        return true;
+      // If we're editing, use updateOrder instead of createOrder
+      if (isEdit) {
+        debugPrint('Updating existing order #${orderMap['order_number']} with ID: $orderId');
+        final result = await DatabaseService.instance.updateOrder(orderId!, orderMap, orderItems);
+        if (result) {
+          notifyOrderUpdate();
+          return true;
+        }
+        return false;
+      } else {
+        // This is a new order, first check if a duplicate exists with the same order number
+        final existingOrder = await DatabaseService.instance.getOrderByNumber(orderMap['order_number'] as String);
+        if (existingOrder != null) {
+          debugPrint('Warning: Order with number ${orderMap['order_number']} already exists!');
+          // Update the existing order instead
+          final result = await DatabaseService.instance.updateOrder(
+            existingOrder['id'] as int, 
+            orderMap, 
+            orderItems
+          );
+          if (result) {
+            notifyOrderUpdate();
+            return true;
+          }
+          return false;
+        }
+        
+        // Create the order through DatabaseService
+        final result = await DatabaseService.instance.createOrder(orderMap, orderItems);
+        if (result != null) {
+          // Refresh stats after creating an order
+          notifyOrderUpdate();
+          return true;
+        }
+        return false;
       }
-      return false;
     } catch (e) {
-      debugPrint('Error creating order in OrderService: $e');
+      debugPrint('Error creating/updating order in OrderService: $e');
       return false;
     }
   }
