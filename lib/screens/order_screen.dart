@@ -17,12 +17,18 @@ class OrderScreen extends StatefulWidget {
   final Order? editingOrder;
   final bool isEditing;
   final VoidCallback? onHoldOrderPressed;
+  final bool preserveOrderNumber;
+  final bool viewOnly;
+  final bool preventDuplicateCreation;
 
   const OrderScreen({
     super.key, 
     this.editingOrder,
     this.isEditing = false,
     this.onHoldOrderPressed,
+    this.preserveOrderNumber = false,
+    this.viewOnly = false,
+    this.preventDuplicateCreation = false,
   });
 
   @override
@@ -45,7 +51,8 @@ class _OrderScreenState extends State<OrderScreen> {
     _loadProducts();
     
     // If editing an existing order, load its items
-    if (widget.isEditing && widget.editingOrder != null) {
+    // Handle editing of existing orders or when using the preventDuplicateCreation flag
+    if ((widget.isEditing || widget.preventDuplicateCreation) && widget.editingOrder != null) {
       _customerNameController.text = widget.editingOrder!.customerName ?? '';
       
       print('OrderScreen - Editing order #${widget.editingOrder!.orderNumber}');
@@ -701,7 +708,8 @@ class _OrderScreenState extends State<OrderScreen> {
       
       final now = DateTime.now();
       
-      if (widget.isEditing && widget.editingOrder != null) {
+      // Handle editing of existing orders or when using the preventDuplicateCreation flag
+      if ((widget.isEditing || widget.preventDuplicateCreation) && widget.editingOrder != null) {
         // Update existing order
         final updatedOrder = Order(
           id: widget.editingOrder!.id,
@@ -756,12 +764,80 @@ class _OrderScreenState extends State<OrderScreen> {
         
         // Navigate back to the previous screen
         Navigator.pop(context);
+      } else if (widget.preventDuplicateCreation && widget.editingOrder != null) {
+        // If we're preventing duplicate creation but not in edit mode,
+        // treat this as an update to the existing order anyway
+        print('Using preventDuplicateCreation flag to update existing order instead of creating a new one');
+        
+        // Create an updated order with the same ID but new items
+        final updatedOrder = Order(
+          id: widget.editingOrder!.id,
+          orderNumber: widget.editingOrder!.orderNumber,
+          customerId: null,
+          customerName: customerName,
+          totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
+          orderStatus: 'PENDING',
+          paymentStatus: 'PENDING',
+          paymentMethod: widget.editingOrder!.paymentMethod,
+          createdBy: widget.editingOrder!.createdBy,
+          createdAt: widget.editingOrder!.createdAt,
+          orderDate: widget.editingOrder!.orderDate,
+          items: _cartItems.map((item) => OrderItem(
+            orderId: widget.editingOrder!.id ?? 0,
+            productId: item.product.id ?? 0,
+            quantity: item.quantity,
+            unitPrice: item.product.buyingPrice,
+            sellingPrice: item.product.sellingPrice,
+            totalAmount: item.total,
+            productName: item.product.productName,
+            isSubUnit: item.isSubUnit,
+            subUnitName: item.subUnitName,
+            subUnitQuantity: item.subUnitQuantity?.toDouble(),
+            adjustedPrice: item.adjustedPrice,
+          )).toList(),
+        );
+        
+        // Convert to map for database update
+        final orderMap = updatedOrder.toMap();
+        final orderItems = updatedOrder.items?.map((item) => item.toMap()).toList() ?? [];
+        
+        // Update the order in the database
+        await DatabaseService.instance.updateOrder(updatedOrder.id!, orderMap, orderItems);
+        
+        // Log the update
+        await DatabaseService.instance.logActivity(
+          1, // Default admin user ID
+          'admin',
+          DatabaseService.actionUpdateOrder,
+          'Order Updated from Held Order',
+          'Order #${updatedOrder.orderNumber} was updated from held order',
+        );
+        
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Order updated successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        
+        // Navigate back to the previous screen
+        Navigator.pop(context);
       } else {
-        // Create new order
+        // Create completely new order
         // Generate a more consistent order number with date prefix for better tracking
-        final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
-        final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
-        final orderNumber = 'ORD-$datePrefix-$timeComponent';
+        String orderNumber;
+        
+        // If this is a held order being restored and we want to preserve the order number
+        if (widget.preserveOrderNumber && widget.editingOrder != null) {
+          orderNumber = widget.editingOrder!.orderNumber;
+          print('Using existing order number for restored held order: $orderNumber');
+        } else {
+          // Generate a new order number
+          final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+          final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
+          orderNumber = 'ORD-$datePrefix-$timeComponent';
+        }
         
         // Create order with proper customer information
         final orderMap = {

@@ -38,10 +38,21 @@ class CartItem {
   // Create CartItem from OrderItem
   static CartItem fromOrderItem(OrderItem item) {
     final product = item.toProductModel();
+    
+    // Calculate total based on selling price, not unit price
+    double effectivePrice = item.adjustedPrice ?? item.sellingPrice;
+    double calculatedTotal = item.quantity * effectivePrice;
+    
+    print('CartItem.fromOrderItem - Recalculating total for ${item.productName}:');
+    print('  * Original totalAmount: ${item.totalAmount}');
+    print('  * Unit Price: ${item.unitPrice}, Selling Price: ${item.sellingPrice}');
+    print('  * Using price: $effectivePrice, Quantity: ${item.quantity}');
+    print('  * Recalculated total: $calculatedTotal');
+    
     return CartItem(
       product: product,
       quantity: item.quantity,
-      total: item.totalAmount,
+      total: calculatedTotal, // Use recalculated total based on selling price
       isSubUnit: item.isSubUnit,
       subUnitName: item.subUnitName,
       subUnitQuantity: item.subUnitQuantity?.toInt(),

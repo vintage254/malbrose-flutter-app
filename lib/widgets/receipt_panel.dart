@@ -478,15 +478,34 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
         orderId: widget.order.id ?? 0,
         productId: 1, // Use a valid ID to pass the check
         quantity: 1,
-        unitPrice: widget.order.totalAmount,
-        sellingPrice: widget.order.totalAmount,
+        unitPrice: widget.order.totalAmount / 3, // Use a reasonable unit price
+        sellingPrice: widget.order.totalAmount, // Make sure selling price matches total
         totalAmount: widget.order.totalAmount,
         productName: "Order Total",
         isSubUnit: false,
       ));
     }
     
-    if (validItems.isEmpty) {
+    // Make sure all items have the correct relationship between selling price and total amount
+    final correctedItems = validItems.map((item) {
+      // Calculate effective price (adjusted or selling price)
+      final effectivePrice = item.adjustedPrice ?? item.sellingPrice;
+      
+      // Check if totalAmount doesn't match quantity * effectivePrice
+      if ((item.quantity * effectivePrice - item.totalAmount).abs() > 0.01) {
+        print('ReceiptPanel - Correcting item pricing for ${item.productName}: ' +
+              'Qty: ${item.quantity}, Original Total: ${item.totalAmount}, ' +
+              'Calculated Total: ${item.quantity * effectivePrice}');
+              
+        // Return a corrected item
+        return item.copyWith(
+          totalAmount: item.quantity * effectivePrice,
+        );
+      }
+      return item;
+    }).toList();
+    
+    if (correctedItems.isEmpty) {
       UIHelpers.showSnackBarWithContext(
         context, 
         'Cannot complete sale - no valid product items in order',
@@ -518,6 +537,9 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       effectivePaymentMethod = paymentMethods.join(' + ');
     }
     
+    // Calculate the correct total based on the selling prices
+    final correctTotal = correctedItems.fold<double>(0, (sum, item) => sum + item.totalAmount);
+    
     // Create a copy of the order with the selected payment method and only valid items
     final updatedOrder = Order(
       id: widget.order.id,
@@ -526,18 +548,19 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       heldReceiptNumber: widget.order.heldReceiptNumber,
       customerId: widget.order.customerId,
       customerName: widget.order.customerName,
-      totalAmount: validItems.fold<double>(0, (sum, item) => sum + item.totalAmount),
+      totalAmount: correctTotal, // Use the corrected total amount
       orderStatus: widget.order.orderStatus,
-      paymentStatus: totalPaid >= widget.order.totalAmount ? 'PAID' : 'PENDING',
+      paymentStatus: totalPaid >= correctTotal ? 'PAID' : 'PENDING',
       paymentMethod: effectivePaymentMethod,
       createdBy: widget.order.createdBy,
       createdAt: widget.order.createdAt,
       orderDate: widget.order.orderDate,
-      items: validItems,
+      items: correctedItems, // Use the corrected items
     );
     
     print('ReceiptPanel - Completing sale with payment method: $effectivePaymentMethod');
-    print('ReceiptPanel - Order items count: ${validItems.length}');
+    print('ReceiptPanel - Order items count: ${correctedItems.length}');
+    print('ReceiptPanel - Corrected total amount: $correctTotal');
     
     // Call the onProcessSale callback with the updated order
     widget.onProcessSale(updatedOrder);
@@ -1366,6 +1389,18 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                           await txn.insert(
                             DatabaseService.tableCreditors,
                             creditor,
+                          );
+                          
+                          // Also update the order to reflect the credit payment
+                          await txn.update(
+                            DatabaseService.tableOrders,
+                            {
+                              'payment_status': totalPaid >= widget.order.totalAmount ? 'PAID' : 'PARTIAL',
+                              'payment_method': totalPaid > 0 && remainingCredit > 0 ? 'Split Payment' : 'Credit',
+                              'updated_at': DateTime.now().toIso8601String()
+                            },
+                            where: 'order_number = ?',
+                            whereArgs: [widget.order.orderNumber],
                           );
                           
                           // Log the activity within the same transaction

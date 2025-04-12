@@ -79,8 +79,37 @@ class _SalesScreenState extends State<SalesScreen> {
               List<dynamic> itemsList = [];
               
               if (jsonStr.trim().startsWith('[') && jsonStr.trim().endsWith(']')) {
-                // It's already a JSON array
-                itemsList = json.decode(jsonStr);
+                // It's already a JSON array, but might be nested
+                var parsed = json.decode(jsonStr);
+                
+                // Check if we have a nested array [[{...}]]
+                if (parsed is List && parsed.isNotEmpty && parsed[0] is List) {
+                  // Handle nested JSON arrays: [[{...}]]
+                  try {
+                    List<dynamic> extractedItems = [];
+                    for (var outerItem in parsed) {
+                      if (outerItem is List) {
+                        // Nested list - add each item from inner list
+                        extractedItems.addAll(outerItem.whereType<Map<String, dynamic>>());
+                      } else if (outerItem is Map<String, dynamic>) {
+                        // Direct map - add it directly
+                        extractedItems.add(outerItem);
+                      }
+                    }
+                    itemsList = extractedItems;
+                  } catch (e) {
+                    // Fallback to first item if available
+                    print('Error handling nested JSON array: $e');
+                    if (parsed.isNotEmpty && parsed[0] is List && (parsed[0] as List).isNotEmpty) {
+                      itemsList = parsed[0] as List<dynamic>;
+                    } else {
+                      itemsList = parsed;
+                    }
+                  }
+                } else {
+                  // Standard list: [{...}, {...}]
+                  itemsList = parsed;
+                }
               } else if (jsonStr.trim().startsWith('{') && jsonStr.trim().endsWith('}')) {
                 // Single object - wrap it in a list
                 itemsList = [json.decode(jsonStr)];
@@ -307,7 +336,7 @@ class _SalesScreenState extends State<SalesScreen> {
               DatabaseService.tableProducts,
               {
                 'quantity': currentQuantity - quantityToDeduct,
-                'last_updated': DateTime.now().toIso8601String(),
+                'updated_at': DateTime.now().toIso8601String(),
               },
               where: 'id = ?',
               whereArgs: [item.productId],

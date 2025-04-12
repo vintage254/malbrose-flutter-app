@@ -257,97 +257,139 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
     return Consumer<OrderService>(
       builder: (context, orderService, child) {
         final recentOrders = orderService.recentOrders;
-
+        
         return Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                Colors.amber.withOpacity(0.7),
-                Colors.orange.shade900,
+                Colors.orange,
+                Colors.deepOrange,
               ],
             ),
+            borderRadius: BorderRadius.circular(10),
           ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: Text(
-                  'Today\'s Orders',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Today\'s Orders',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.refresh, color: Colors.white),
+                      onPressed: () {
+                        orderService.refreshStats();
+                      },
+                      tooltip: 'Refresh Orders',
+                    ),
+                  ],
                 ),
               ),
               Expanded(
-                child: ListView.builder(
-                  controller: _scrollController,
-                  itemCount: recentOrders.length,
-                  itemBuilder: (context, index) {
-                    final order = recentOrders[index];
-                    final status = order['status'] as String? ?? 'PENDING';
-                    final createdAt = DateTime.parse(order['created_at'] as String);
-                    
-                    return Card(
-                      margin: const EdgeInsets.symmetric(
-                        horizontal: 16.0,
-                        vertical: 8.0,
-                      ),
-                      color: _getStatusColor(status),
-                      child: InkWell(
-                        onTap: () => _handleOrderTap(context, order),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: recentOrders.isEmpty 
+                  ? Center(child: Text('No orders found', style: TextStyle(color: Colors.white)))
+                  : ListView.builder(
+                      controller: _scrollController,
+                      itemCount: recentOrders.length,
+                      itemBuilder: (context, index) {
+                        final order = recentOrders[index];
+                        
+                        // Check for both 'status' and 'order_status' fields since both might be used
+                        final status = order['order_status'] as String? ?? 
+                                      order['status'] as String? ?? 
+                                      'PENDING';
+                                      
+                        // Check if this order is a converted held order that should be hidden
+                        if (status == 'CONVERTED') {
+                          return SizedBox.shrink(); // Hide converted orders
+                        }
+                        
+                        final paymentStatus = order['payment_status'] as String? ?? 'PENDING';
+                        final createdAt = DateTime.parse(order['created_at'] as String);
+                        
+                        return Card(
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: 16.0,
+                            vertical: 8.0,
+                          ),
+                          color: _getStatusColor(status),
+                          child: InkWell(
+                            onTap: () => _handleOrderTap(context, order),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Flexible(
-                                    child: Text(
-                                      'Order #${order['order_number']}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          'Order #${order['order_number']}',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        DateFormat('HH:mm').format(createdAt),
+                                        style: const TextStyle(color: Colors.white70),
+                                      ),
+                                    ],
                                   ),
-                                  const SizedBox(width: 8),
+                                  const SizedBox(height: 8),
                                   Text(
-                                    DateFormat('HH:mm').format(createdAt),
-                                    style: const TextStyle(color: Colors.white70),
+                                    'Customer: ${order['customer_name'] ?? 'Walk-in'}',
+                                    style: const TextStyle(color: Colors.white),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Text(
+                                    'Total: KSH ${NumberFormat('#,##0.00').format(order['total_amount'])}',
+                                    style: const TextStyle(color: Colors.white),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        'Status: $status',
+                                        style: const TextStyle(color: Colors.white70),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      if (paymentStatus != 'PENDING')
+                                        Chip(
+                                          label: Text(
+                                            paymentStatus,
+                                            style: TextStyle(fontSize: 10, color: Colors.white),
+                                          ),
+                                          backgroundColor: paymentStatus == 'PAID' 
+                                            ? Colors.green 
+                                            : Colors.orange,
+                                          padding: EdgeInsets.zero,
+                                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                    ],
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Customer: ${order['customer_name'] ?? 'Walk-in'}',
-                                style: const TextStyle(color: Colors.white),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(
-                                'Total: KSH ${NumberFormat('#,##0.00').format(order['total_amount'])}',
-                                style: const TextStyle(color: Colors.white),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(
-                                'Status: $status',
-                                style: const TextStyle(color: Colors.white70),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
+                            ),
                           ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                        );
+                      },
+                    ),
               ),
             ],
           ),

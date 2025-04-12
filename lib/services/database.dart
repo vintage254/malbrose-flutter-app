@@ -1644,6 +1644,65 @@ class DatabaseService {
     }
   }
 
+  // Get customer by name or ID
+  Future<Map<String, dynamic>?> getCustomerByNameOrId(dynamic identifier) async {
+    final db = await database;
+    List<Map<String, dynamic>> results;
+    
+    if (identifier is int) {
+      // Search by ID
+      results = await db.query(
+        tableCustomers,
+        where: 'id = ?',
+        whereArgs: [identifier],
+        limit: 1,
+      );
+    } else if (identifier is String) {
+      // Search by name
+      results = await db.query(
+        tableCustomers,
+        where: 'name = ?',
+        whereArgs: [identifier],
+        limit: 1,
+      );
+    } else {
+      throw ArgumentError('identifier must be int (ID) or String (name)');
+    }
+    
+    return results.isNotEmpty ? results.first : null;
+  }
+  
+  // Check if an order number already exists in the database
+  Future<bool> orderNumberExists(String orderNumber) async {
+    final db = await database;
+    final results = await db.query(
+      tableOrders,
+      where: 'order_number = ?',
+      whereArgs: [orderNumber],
+      limit: 1,
+    );
+    
+    return results.isNotEmpty;
+  }
+  
+  // Generate a unique order number by checking if it exists in the database
+  Future<String> generateUniqueOrderNumber(String prefix) async {
+    final now = DateTime.now();
+    final dateStr = DateFormat('yyyyMMdd').format(now);
+    final timeStr = DateFormat('HHmmss').format(now);
+    
+    // First try with regular format
+    String orderNumber = '$prefix-$dateStr-$timeStr';
+    
+    // If it already exists (rare but possible), append a random number
+    if (await orderNumberExists(orderNumber)) {
+      final random = (1000 + DateTime.now().millisecond).toString();
+      orderNumber = '$prefix-$dateStr-$timeStr$random';
+    }
+    
+    return orderNumber;
+  }
+
   // Add delete methods for creditors and debtors
   Future<void> deleteCreditor(int id) async {
     try {
@@ -1907,6 +1966,19 @@ class DatabaseService {
               where: 'id = ?',
               whereArgs: [id],
             );
+            
+            // Also update the order status if fully paid
+            if (status == 'PAID') {
+              await txn.update(
+                tableOrders,
+                {
+                  'payment_status': 'PAID',
+                  'last_updated': timestamp,
+                },
+                where: 'order_number = ?',
+                whereArgs: [orderNumber],
+              );
+            }
             
             updatedCreditors.add({
               'id': id,
@@ -3150,7 +3222,7 @@ class DatabaseService {
           FROM $tableOrders o
           LEFT JOIN $tableOrderItems oi ON o.id = oi.order_id
           LEFT JOIN $tableProducts p ON oi.product_id = p.id
-          WHERE o.order_status = ?
+          WHERE o.order_status = ? AND (o.status != 'CONVERTED' OR o.status IS NULL)
           GROUP BY o.id
         )
         SELECT 
@@ -3158,7 +3230,7 @@ class DatabaseService {
           COALESCE(oij.items_json, '[]') as items_json
         FROM $tableOrders o
         LEFT JOIN order_items_json oij ON o.id = oij.order_id
-        WHERE o.order_status = ?
+        WHERE o.order_status = ? AND (o.status != 'CONVERTED' OR o.status IS NULL)
         ORDER BY o.created_at DESC
       ''', [status, status]);
     } catch (e) {

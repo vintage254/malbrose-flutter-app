@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/services/product_service.dart';
+import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 
@@ -13,6 +14,7 @@ class OrderService extends ChangeNotifier {
   static const String tableOrders = DatabaseService.tableOrders;
   static const String tableOrderItems = DatabaseService.tableOrderItems;
   static const String tableProducts = DatabaseService.tableProducts;
+  static const String tableActivityLogs = DatabaseService.tableActivityLogs;
 
   // Private fields for tracking statistics
   int _todayOrders = 0;
@@ -108,8 +110,15 @@ class OrderService extends ChangeNotifier {
     
     // Get orders with the given status
     final List<Map<String, dynamic>> orders = await db.rawQuery('''
-      SELECT o.*, GROUP_CONCAT(json_object('id', oi.id, 'product_id', oi.product_id, 'product_name', oi.product_name, 
-      'quantity', oi.quantity, 'unit_price', oi.unit_price, 'is_sub_unit', oi.is_sub_unit)) as items_json
+      SELECT o.*, json_array(json_group_array(json_object(
+        'id', oi.id, 
+        'product_id', oi.product_id, 
+        'product_name', oi.product_name, 
+        'quantity', oi.quantity, 
+        'unit_price', oi.unit_price, 
+        'selling_price', oi.selling_price,
+        'total_amount', oi.total_amount,
+        'is_sub_unit', oi.is_sub_unit))) as items_json
       FROM ${DatabaseService.tableOrders} o
       LEFT JOIN ${DatabaseService.tableOrderItems} oi ON o.id = oi.order_id
       WHERE o.order_status = ?
@@ -120,8 +129,15 @@ class OrderService extends ChangeNotifier {
     // Get any held orders that have been restored
     final List<Map<String, dynamic>> heldOrders = status == 'PENDING' ? 
       await db.rawQuery('''
-        SELECT o.*, GROUP_CONCAT(json_object('id', oi.id, 'product_id', oi.product_id, 'product_name', oi.product_name, 
-        'quantity', oi.quantity, 'unit_price', oi.unit_price, 'is_sub_unit', oi.is_sub_unit)) as items_json
+        SELECT o.*, json_array(json_group_array(json_object(
+          'id', oi.id, 
+          'product_id', oi.product_id, 
+          'product_name', oi.product_name, 
+          'quantity', oi.quantity, 
+          'unit_price', oi.unit_price, 
+          'selling_price', oi.selling_price,
+          'total_amount', oi.total_amount,
+          'is_sub_unit', oi.is_sub_unit))) as items_json
         FROM ${DatabaseService.tableOrders} o
         LEFT JOIN ${DatabaseService.tableOrderItems} oi ON o.id = oi.order_id
         WHERE o.order_status = 'ON_HOLD'
@@ -232,10 +248,193 @@ class OrderService extends ChangeNotifier {
         throw Exception('Order ID is null');
       }
       
-      // Update status to pending
-      final success = await updateOrderStatus(order.id!, STATUS_PENDING);
+      final db = await DatabaseService.instance.database;
       
-      return success;
+      // Start a transaction for consistency
+      return await db.transaction((txn) async {
+        // First check if order exists and get its current status
+        final orderCheck = await txn.rawQuery('''
+          SELECT id, order_status, status, order_number, customer_name, total_amount 
+          FROM ${tableOrders} 
+          WHERE id = ?
+        ''', [order.id]);
+        
+        if (orderCheck.isEmpty) {
+          throw Exception('Order not found');
+        }
+        
+        final currentStatus = orderCheck.first['order_status'] as String? ?? 
+                            orderCheck.first['status'] as String? ?? 
+                            'UNKNOWN';
+        final originalOrderNumber = orderCheck.first['order_number'] as String;
+        
+        // If order is already converted or completed, don't process again
+        if (currentStatus == 'CONVERTED' || currentStatus == 'COMPLETED') {
+          debugPrint('Order #$originalOrderNumber already processed (status: $currentStatus)');
+          
+          // Try to find the converted order
+          final convertedOrderQuery = await txn.rawQuery(
+            '''
+            SELECT * FROM ${tableOrders} 
+            WHERE order_number LIKE ? AND order_status = 'PENDING'
+            ''',
+            ['ORD-${originalOrderNumber.substring(4)}']
+          );
+          
+          if (convertedOrderQuery.isNotEmpty) {
+            debugPrint('Found converted order: ${convertedOrderQuery.first['order_number']}');
+          }
+          
+          return true; // Already processed, no error
+        }
+        
+        // Only proceed if this is actually a held order
+        if (currentStatus != 'ON_HOLD') {
+          debugPrint('Order #$originalOrderNumber is not on hold (status: $currentStatus)');
+          return false;
+        }
+        
+        // First mark the order as being converted to prevent concurrent conversions
+        await txn.update(
+          tableOrders,
+          {
+            'status': 'CONVERTING',
+            'order_status': 'CONVERTING',
+            'updated_at': DateTime.now().toIso8601String()
+          },
+          where: 'id = ?',
+          whereArgs: [order.id],
+        );
+        
+        // Generate the new order number
+        String newOrderNumber = originalOrderNumber.startsWith('HLD-') ? 
+                              'ORD-' + originalOrderNumber.substring(4) : 
+                              originalOrderNumber;
+        
+        // Check if an order with this number already exists
+        final existingOrders = await txn.query(
+          tableOrders,
+          where: 'order_number = ? AND id != ?',
+          whereArgs: [newOrderNumber, order.id],
+          limit: 1
+        );
+        
+        if (existingOrders.isNotEmpty) {
+          debugPrint('Order #$newOrderNumber already exists with a different ID');
+          
+          // Mark the original order as converted but don't create duplicate
+          await txn.update(
+            tableOrders,
+            {
+              'status': 'CONVERTED',
+              'order_status': 'CONVERTED',
+              'updated_at': DateTime.now().toIso8601String()
+            },
+            where: 'id = ?',
+            whereArgs: [order.id]
+          );
+          
+          // Log this conversion link
+          final currentUser = AuthService.instance.currentUser;
+          if (currentUser != null) {
+            await txn.insert(
+              tableActivityLogs,
+              {
+                'user_id': currentUser.id,
+                'username': currentUser.username,
+                'action': 'link_to_existing',
+                'details': 'Linked held order #$originalOrderNumber to existing order #$newOrderNumber',
+                'timestamp': DateTime.now().toIso8601String(),
+              },
+            );
+          }
+          
+          notifyOrderUpdate();
+          return true;
+        }
+        
+        // Check for similar orders with same customer and total to avoid duplicates
+        final similarOrders = await txn.query(
+          tableOrders,
+          where: "customer_name = ? AND total_amount = ? AND order_status = 'PENDING' AND id != ?",
+          whereArgs: [
+            orderCheck.first['customer_name'],
+            orderCheck.first['total_amount'],
+            order.id
+          ],
+          orderBy: 'created_at DESC',
+          limit: 1
+        );
+        
+        if (similarOrders.isNotEmpty) {
+          final similarOrderNumber = similarOrders.first['order_number'] as String;
+          debugPrint('Found similar pending order: $similarOrderNumber');
+          
+          // Mark as converted and link to the similar order
+          await txn.update(
+            tableOrders,
+            {
+              'status': 'CONVERTED',
+              'order_status': 'CONVERTED', 
+              'updated_at': DateTime.now().toIso8601String()
+            },
+            where: 'id = ?',
+            whereArgs: [order.id]
+          );
+          
+          // Log this duplicate detection
+          final currentUser = AuthService.instance.currentUser;
+          if (currentUser != null) {
+            await txn.insert(
+              tableActivityLogs,
+              {
+                'user_id': currentUser.id,
+                'username': currentUser.username,
+                'action': 'mark_duplicate',
+                'details': 'Marked held order #$originalOrderNumber as duplicate of $similarOrderNumber',
+                'timestamp': DateTime.now().toIso8601String(),
+              },
+            );
+          }
+          
+          notifyOrderUpdate();
+          return true;
+        }
+        
+        // Now we can safely convert the order
+        debugPrint('Converting held order #$originalOrderNumber to #$newOrderNumber');
+        
+        // Update the order status and number
+        await txn.update(
+          tableOrders,
+          {
+            'order_number': newOrderNumber,
+            'status': STATUS_PENDING,
+            'order_status': STATUS_PENDING,
+            'updated_at': DateTime.now().toIso8601String()
+          },
+          where: 'id = ?',
+          whereArgs: [order.id],
+        );
+        
+        // Log this action
+        final currentUser = AuthService.instance.currentUser;
+        if (currentUser != null) {
+          await txn.insert(
+            tableActivityLogs,
+            {
+              'user_id': currentUser.id,
+              'username': currentUser.username,
+              'action': 'restore_held_order',
+              'details': 'Converted held order #$originalOrderNumber to active order #$newOrderNumber',
+              'timestamp': DateTime.now().toIso8601String(),
+            },
+          );
+        }
+        
+        notifyOrderUpdate();
+        return true;
+      });
     } catch (e) {
       debugPrint('Error restoring held order in OrderService: $e');
       return false;
@@ -295,8 +494,7 @@ class OrderService extends ChangeNotifier {
         );
         
         try {
-          // Update product quantities directly with the new ProductService
-          // This avoids the issues with the missing last_updated column
+          // Update product quantities safely without using last_updated field
           for (var item in updatedOrder.items) {
             if (item.productId <= 0) continue;
             
@@ -310,10 +508,12 @@ class OrderService extends ChangeNotifier {
             final currentQuantity = (productDetails['quantity'] as num?)?.toDouble() ?? 0;
             
             // Calculate quantity to deduct
-            double quantityToDeduct = 0;
+            double quantityToDeduct;
             if (item.isSubUnit) {
-              final subUnitQuantity = (productDetails['sub_unit_quantity'] as num?)?.toDouble() ?? 0;
-              if (subUnitQuantity > 0) {
+              final subUnitQuantity = (productDetails['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
+              if (subUnitQuantity <= 0) {
+                quantityToDeduct = item.quantity.toDouble();
+              } else {
                 quantityToDeduct = (item.quantity / subUnitQuantity);
               }
             } else {
@@ -323,21 +523,50 @@ class OrderService extends ChangeNotifier {
             // Calculate new quantity
             final newQuantity = currentQuantity - quantityToDeduct;
             
-            // Update product quantity using our new service
-            await ProductService.instance.updateProductQuantity(item.productId, newQuantity);
+            // Update product quantity directly in database without using last_updated field
+            final db = await DatabaseService.instance.database;
+            await db.update(
+              tableProducts,
+              {
+                'quantity': newQuantity,
+                'updated_at': DateTime.now().toIso8601String(),
+              },
+              where: 'id = ?',
+              whereArgs: [item.productId],
+            );
+            
+            debugPrint('Updated product ${item.productId} quantity from $currentQuantity to $newQuantity');
           }
           
-          // Complete the order - updating status without product quantity changes
+          // Complete the order - updating status
           await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
           
           notifyOrderUpdate();
           return true;
         } catch (e) {
           debugPrint('Error updating product quantities: $e');
-          // Still attempt to complete the sale
-          await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
-          notifyOrderUpdate();
-          return true;
+          // Try again with a more basic approach
+          try {
+            final db = await DatabaseService.instance.database;
+            for (var item in updatedOrder.items) {
+              if (item.productId <= 0) continue;
+              
+              await db.rawUpdate(
+                'UPDATE ${tableProducts} SET quantity = quantity - ? WHERE id = ?',
+                [item.quantity, item.productId]
+              );
+            }
+            
+            await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
+            notifyOrderUpdate();
+            return true;
+          } catch (e2) {
+            debugPrint('Error with basic quantity update: $e2');
+            // Still attempt to complete the sale without inventory changes
+            await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
+            notifyOrderUpdate();
+            return true;
+          }
         }
       }
     } catch (e) {

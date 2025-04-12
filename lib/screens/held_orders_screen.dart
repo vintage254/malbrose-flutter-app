@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
 import 'package:my_flutter_app/models/product_model.dart';
 import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
+import 'package:my_flutter_app/screens/sales_screen.dart';
 import 'dart:convert';
 
 class HeldOrdersScreen extends StatefulWidget {
@@ -24,6 +25,7 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
   final OrderService _orderService = OrderService.instance;
+  final Set<String> _processingOrders = {};
 
   @override
   void initState() {
@@ -96,26 +98,41 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
   }
 
   Future<void> _restoreHeldOrder(Order order) async {
+    if (_processingOrders.contains(order.orderNumber)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Order restoration already in progress...'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     try {
+      setState(() {
+        _processingOrders.add(order.orderNumber);
+      });
+
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => const AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Restoring order...'),
-            ],
+        builder: (context) => WillPopScope(
+          onWillPop: () async => false,
+          child: const AlertDialog(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Restoring order...'),
+              ],
+            ),
           ),
         ),
       );
       
-      // First check if order still exists and has ON_HOLD status
       final orderCheck = await DatabaseService.instance.getOrderById(order.id!);
       if (orderCheck == null || orderCheck['order_status'] != 'ON_HOLD') {
-        // Order has already been processed or doesn't exist
         Navigator.of(context, rootNavigator: true).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -123,64 +140,45 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
             backgroundColor: Colors.orange,
           ),
         );
-        // Refresh the list to show current state
-        _loadHeldOrders();
+        await _loadHeldOrders();
         return;
       }
       
-      // Use OrderService to update the status to PENDING
       final success = await _orderService.restoreHeldOrder(order);
       
-      if (!success) {
-        // Close loading dialog before throwing exception
+      if (Navigator.of(context, rootNavigator: true).canPop()) {
         Navigator.of(context, rootNavigator: true).pop();
+      }
+      
+      if (!success) {
         throw Exception('Failed to restore order');
       }
       
-      // Load the order items from the database
-      final orderItems = await DatabaseService.instance.getOrderItems(order.id!);
-      print('Loaded ${orderItems.length} items for order #${order.orderNumber}');
+      final updatedOrder = await DatabaseService.instance.getOrderById(order.id!);
+      if (updatedOrder == null) {
+        throw Exception('Could not find updated order');
+      }
       
-      // Convert database orderItems to OrderItem models
-      final items = orderItems.map((item) => OrderItem(
-        id: item['id'] as int?,
-        orderId: order.id!,
-        productId: item['product_id'] as int,
-        quantity: item['quantity'] as int,
-        unitPrice: (item['unit_price'] as num).toDouble(),
-        sellingPrice: (item['selling_price'] as num).toDouble(),
-        totalAmount: (item['total_amount'] as num).toDouble(),
-        productName: item['product_name'] as String,
-        isSubUnit: item['is_sub_unit'] == 1,
-        subUnitName: item['sub_unit_name'] as String?,
-        subUnitQuantity: (item['sub_unit_quantity'] as num?)?.toDouble(),
-        adjustedPrice: (item['adjusted_price'] as num?)?.toDouble(),
-      )).toList();
-      
-      // Close loading dialog
-      Navigator.of(context, rootNavigator: true).pop();
-      
-      // Create an updated order with the items and PENDING status
-      final updatedOrder = order.copyWith(
-        orderStatus: 'PENDING',
-        items: items,
-      );
-      
-      // Navigate to OrderScreen with the fully loaded order
-      Navigator.pushReplacement(
-        context, 
-        MaterialPageRoute(
-          builder: (context) => OrderScreen(
-            editingOrder: updatedOrder,
-            isEditing: true,
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Order #${order.orderNumber} successfully restored as #${updatedOrder['order_number']}'),
+            backgroundColor: Colors.green,
           ),
-        ),
-      );
+        );
+      }
       
-      // Refresh the held orders list - must be done here because we're using pushReplacement
-      _loadHeldOrders();
+      await _loadHeldOrders();
+      
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const SalesScreen(),
+          ),
+        );
+      }
     } catch (e) {
-      // Make sure dialog is closed in case of error
       if (Navigator.of(context, rootNavigator: true).canPop()) {
         Navigator.of(context, rootNavigator: true).pop();
       }
@@ -190,7 +188,60 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
           SnackBar(content: Text('Error restoring order: $e'), backgroundColor: Colors.red),
         );
       }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _processingOrders.remove(order.orderNumber);
+        });
+      }
     }
+  }
+
+  Widget _buildOrderListItem(Order order) {
+    final isProcessing = _processingOrders.contains(order.orderNumber);
+    
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+      child: ListTile(
+        leading: const Icon(Icons.receipt_long, size: 36, color: Colors.orange),
+        title: Text(
+          'Order #${order.orderNumber}',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Customer: ${order.customerName ?? "Unknown"}'),
+            Text('Total: KSH ${order.totalAmount.toStringAsFixed(2)}'),
+            Text('Date: ${DateFormat('MMM dd, yyyy HH:mm').format(order.createdAt)}'),
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!isProcessing)
+              IconButton(
+                icon: const Icon(Icons.restore, color: Colors.green),
+                tooltip: 'Restore Order',
+                onPressed: () => _restoreHeldOrder(order),
+              )
+            else
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            IconButton(
+              icon: const Icon(Icons.delete, color: Colors.red),
+              tooltip: 'Delete Order',
+              onPressed: isProcessing ? null : () => _deleteHeldOrder(order),
+            ),
+          ],
+        ),
+        isThreeLine: true,
+        onTap: isProcessing ? null : () => _restoreHeldOrder(order),
+      ),
+    );
   }
 
   @override
@@ -238,7 +289,6 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
                       ),
                     ),
                     const SizedBox(height: defaultPadding),
-                    // Search bar
                     TextField(
                       controller: _searchController,
                       decoration: InputDecoration(
@@ -278,38 +328,7 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
                                 separatorBuilder: (context, index) => const Divider(),
                                 itemBuilder: (context, index) {
                                   final order = _filteredOrders[index];
-                                  return ListTile(
-                                    leading: const Icon(Icons.receipt_long, size: 36, color: Colors.orange),
-                                    title: Text(
-                                      'Order #${order.orderNumber}',
-                                      style: const TextStyle(fontWeight: FontWeight.bold),
-                                    ),
-                                    subtitle: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text('Customer: ${order.customerName ?? 'Unknown'}'),
-                                        Text('Total: KSH ${order.totalAmount.toStringAsFixed(2)}'),
-                                        Text('Date: ${DateFormat('MMM dd, yyyy HH:mm').format(order.createdAt)}'),
-                                      ],
-                                    ),
-                                    trailing: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.restore, color: Colors.green),
-                                          tooltip: 'Restore Order',
-                                          onPressed: () => _restoreHeldOrder(order),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.delete, color: Colors.red),
-                                          tooltip: 'Delete Order',
-                                          onPressed: () => _deleteHeldOrder(order),
-                                        ),
-                                      ],
-                                    ),
-                                    isThreeLine: true,
-                                    onTap: () => _restoreHeldOrder(order),
-                                  );
+                                  return _buildOrderListItem(order);
                                 },
                               ),
                             ),
