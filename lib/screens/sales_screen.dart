@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:developer';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/order_model.dart';
 import 'package:my_flutter_app/models/product_model.dart';
@@ -72,7 +73,7 @@ class _SalesScreenState extends State<SalesScreen> {
           if (firstOrder['items_json'] != null) {
             try {
               final String jsonStr = firstOrder['items_json'].toString();
-              print('Raw items_json before parsing: $jsonStr');
+              assert(() { log('Raw items_json before parsing: $jsonStr'); return true; }());
               
               // Check if the string is already a valid JSON array (starts with '[' and ends with ']')
               // If not, try to handle single object or comma-separated objects
@@ -99,7 +100,7 @@ class _SalesScreenState extends State<SalesScreen> {
                     itemsList = extractedItems;
                   } catch (e) {
                     // Fallback to first item if available
-                    print('Error handling nested JSON array: $e');
+                    assert(() { log('Error handling nested JSON array: $e'); return true; }());
                     if (parsed.isNotEmpty && parsed[0] is List && (parsed[0] as List).isNotEmpty) {
                       itemsList = parsed[0] as List<dynamic>;
                     } else {
@@ -118,7 +119,7 @@ class _SalesScreenState extends State<SalesScreen> {
                 itemsList = json.decode('[${jsonStr}]');
               }
               
-              print('Successfully parsed ${itemsList.length} items from JSON');
+              assert(() { log('Successfully parsed ${itemsList.length} items from JSON'); return true; }());
               
               for (var item in itemsList) {
                 // Skip null entries
@@ -135,11 +136,11 @@ class _SalesScreenState extends State<SalesScreen> {
                 
                 // Skip items with invalid product IDs or quantities
                 if (productId <= 0 || quantity <= 0) {
-                  print('Skipping invalid item: $productName (ID: $productId, Qty: $quantity)');
+                  assert(() { log('Skipping invalid item: $productName (ID: $productId, Qty: $quantity)'); return true; }());
                   continue;
                 }
                 
-                print('Creating OrderItem: $productName (ID: $productId, Qty: $quantity)');
+                assert(() { log('Creating OrderItem: $productName (ID: $productId, Qty: $quantity)'); return true; }());
                 
                 final orderItem = OrderItem(
                   id: (item['id'] as num?)?.toInt() ?? 0,
@@ -159,12 +160,12 @@ class _SalesScreenState extends State<SalesScreen> {
                 orderItems.add(orderItem);
               }
             } catch (e) {
-              print('Error parsing items_json: $e');
-              print('Raw items_json: ${firstOrder['items_json']}');
+              assert(() { log('Error parsing items_json: $e'); return true; }());
+              assert(() { log('Raw items_json: ${firstOrder['items_json']}'); return true; }());
             }
           }
 
-          print('Loaded ${orderItems.length} items for order #${firstOrder['order_number']}');
+          assert(() { log('Loaded ${orderItems.length} items for order #${firstOrder['order_number']}'); return true; }());
 
           // Calculate total amount from items or use the one from the order
           double totalAmount = 0.0;
@@ -191,11 +192,11 @@ class _SalesScreenState extends State<SalesScreen> {
             items: orderItems,
           );
           
-          print('Processed Order: ${order.orderNumber}');
-          print('- Items: ${order.items.length}');
-          print('- Total Amount: ${order.totalAmount}');
+          assert(() { log('Processed Order: ${order.orderNumber}'); return true; }());
+          assert(() { log('- Items: ${order.items.length}'); return true; }());
+          assert(() { log('- Total Amount: ${order.totalAmount}'); return true; }());
           for (var item in order.items) {
-            print('  * ${item.productName}: ${item.quantity} x ${item.sellingPrice} = ${item.totalAmount}');
+            assert(() { log('  * ${item.productName}: ${item.quantity} x ${item.sellingPrice} = ${item.totalAmount}'); return true; }());
           }
           
           combinedOrders.add(order);
@@ -539,6 +540,51 @@ class _SalesScreenState extends State<SalesScreen> {
         return;
       }
       
+      // Re-fetch the latest order data from the database to ensure we have the most up-to-date info
+      final updatedOrderData = await DatabaseService.instance.getOrderById(order.id!);
+      
+      debugPrint('============= SALES SCREEN DEBUG =============');
+      debugPrint('Original order: ${order.id} | ${order.orderNumber} | ${order.orderStatus}');
+      debugPrint('Raw database data: $updatedOrderData');
+      
+      if (updatedOrderData == null) {
+        // Handle error - the order should exist
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Error fetching order data. Order may have been deleted.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return; // Stop the navigation
+      }
+
+      // CRITICAL FIX: Make sure our order data map has ALL required fields
+      // This ensures Order.fromMap works properly and has non-null values
+      final Map<String, dynamic> sanitizedOrderData = {
+        ...updatedOrderData,
+        'id': updatedOrderData['id'] ?? order.id,
+        'order_number': updatedOrderData['order_number'] ?? order.orderNumber,
+        'order_status': updatedOrderData['order_status'] ?? updatedOrderData['status'] ?? order.orderStatus,
+        'customer_name': updatedOrderData['customer_name'] ?? order.customerName ?? 'Walk-in Customer',
+        'total_amount': updatedOrderData['total_amount'] ?? order.totalAmount,
+        'created_by': updatedOrderData['created_by'] ?? order.createdBy,
+        'created_at': updatedOrderData['created_at'] ?? order.createdAt.toIso8601String(),
+        'order_date': updatedOrderData['order_date'] ?? order.orderDate.toIso8601String(),
+      };
+      
+      debugPrint('Sanitized order data: $sanitizedOrderData');
+      
+      // Convert the fresh map data to an Order object using the sanitized data
+      final Order freshOrderForEditing = Order.fromMap(sanitizedOrderData);
+      
+      debugPrint('Converted order: ${freshOrderForEditing.id} | ${freshOrderForEditing.orderNumber} | ${freshOrderForEditing.orderStatus}');
+      debugPrint('===================================');
+      
+      debugPrint('Navigating to EditOrder with FRESH order data: ID ${freshOrderForEditing.id}, ' +
+                 'Number ${freshOrderForEditing.orderNumber}, Status ${freshOrderForEditing.orderStatus}');
+      
       if (mounted) {
         await Navigator.push(
           context,
@@ -546,7 +592,7 @@ class _SalesScreenState extends State<SalesScreen> {
             builder: (context) => StatefulBuilder(
               builder: (context, setState) => Scaffold(
                 appBar: AppBar(
-                  title: Text('Edit Order #${order.orderNumber}'),
+                  title: Text('Edit Order #${freshOrderForEditing.orderNumber}'),
                   backgroundColor: Colors.amber,
                   actions: [
                     IconButton(
@@ -571,10 +617,13 @@ class _SalesScreenState extends State<SalesScreen> {
                   ],
                 ),
                 body: OrderCartPanel(
-                  orderId: order.id!,
+                  orderId: freshOrderForEditing.id!,
+                  order: freshOrderForEditing, // Critical: pass FRESH order object
                   isEditing: true,
+                  preventDuplicateCreation: true, // Critical flag to prevent duplicates even if edit mode fails
+                  preserveOrderNumber: true, // Ensure order number is preserved
                   initialItems: editableCartItems,
-                  customerName: order.customerName,
+                  customerName: freshOrderForEditing.customerName,
                   onRemoveItem: (index) {
                     setState(() {
                       editableCartItems.removeAt(index);

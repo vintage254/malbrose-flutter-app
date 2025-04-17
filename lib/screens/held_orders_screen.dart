@@ -108,103 +108,136 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
       return;
     }
 
-    try {
-      setState(() {
-        _processingOrders.add(order.orderNumber);
-      });
+    setState(() {
+      _processingOrders.add(order.orderNumber);
+    });
 
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => WillPopScope(
-          onWillPop: () async => false,
-          child: const AlertDialog(
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Restoring order...'),
-              ],
-            ),
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => WillPopScope(
+        onWillPop: () async => false,
+        child: const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Restoring order...'),
+            ],
           ),
         ),
-      );
-      
-      final orderCheck = await DatabaseService.instance.getOrderById(order.id!);
-      if (orderCheck == null || orderCheck['order_status'] != 'ON_HOLD') {
-        Navigator.of(context, rootNavigator: true).pop();
+      ),
+    );
+
+    try {
+      // Use atomic backend logic
+      final bool restored = await _orderService.restoreHeldOrder(order);
+      Navigator.of(context, rootNavigator: true).pop();
+
+      if (!restored) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Order has already been processed or deleted'),
+            content: Text('Order could not be restored (already processed or duplicate found).'),
             backgroundColor: Colors.orange,
           ),
         );
         await _loadHeldOrders();
         return;
       }
-      
-      // Instead of directly restoring the order, we'll load it into the cart
-      try {
-        // Get the order items
-        final orderItems = await DatabaseService.instance.getOrderItems(order.id!);
-        if (orderItems == null || orderItems.isEmpty) {
-          throw Exception('Failed to retrieve order items');
-        }
-        
-        // Convert to CartItem objects
-        final cartItems = await _convertOrderItemsToCartItems(orderItems);
-        
-        // Close loading dialog
-        Navigator.of(context, rootNavigator: true).pop();
-        
-        if (mounted) {
-          // Show success message
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Order #${order.orderNumber} loaded for editing'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-        
-        // Navigate to order screen with cart items
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => OrderScreen(
-                initialItems: cartItems,
-                customerName: order.customerName,
-                orderId: order.id,
-                isEditingHeldOrder: true,
-                originalOrder: order,
-              ),
-            ),
-          );
-        }
-      } catch (e) {
-        if (Navigator.of(context, rootNavigator: true).canPop()) {
-          Navigator.of(context, rootNavigator: true).pop();
-        }
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error preparing order: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+
+      // Re-check the order's new status
+      final updatedOrder = await DatabaseService.instance.getOrderById(order.id!);
+      if (updatedOrder == null || updatedOrder['order_status'] != 'PENDING') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Order restored, but a duplicate or converted order exists. No edit possible.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        await _loadHeldOrders();
+        return;
       }
+
+      // Re-fetch the updated order data after the successful transaction
+      final updatedOrderData = await DatabaseService.instance.getOrderById(order.id!);
+      
+      debugPrint('============= HELD ORDERS SCREEN DEBUG =============');
+      debugPrint('Original order: ${order.id} | ${order.orderNumber} | ${order.orderStatus}');
+      debugPrint('Raw database data: $updatedOrderData');
+
+      if (updatedOrderData == null) {
+        // Handle error - the order should exist after successful update
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error fetching updated order data after restore.'), 
+              backgroundColor: Colors.red
+            ),
+          );
+        }
+        // Refresh the held orders list
+        _loadHeldOrders();
+        return; // Stop the navigation
+      }
+
+      // CRITICAL FIX: Make sure our order data map has ALL required fields
+      // This ensures Order.fromMap works properly and has non-null values
+      final Map<String, dynamic> sanitizedOrderData = {
+        ...updatedOrderData,
+        'id': updatedOrderData['id'] ?? order.id,
+        'order_number': updatedOrderData['order_number'] ?? order.orderNumber,
+        'order_status': updatedOrderData['order_status'] ?? updatedOrderData['status'] ?? 'PENDING',
+        'customer_name': updatedOrderData['customer_name'] ?? order.customerName ?? 'Walk-in Customer',
+        'total_amount': updatedOrderData['total_amount'] ?? order.totalAmount,
+        'created_by': updatedOrderData['created_by'] ?? order.createdBy,
+        'created_at': updatedOrderData['created_at'] ?? order.createdAt.toIso8601String(),
+        'order_date': updatedOrderData['order_date'] ?? order.orderDate.toIso8601String(),
+      };
+      
+      debugPrint('Sanitized order data: $sanitizedOrderData');
+      
+      // Convert the fresh map data to an Order object using the sanitized data
+      final Order restoredOrderForEditing = Order.fromMap(sanitizedOrderData);
+      
+      debugPrint('Converted order: ${restoredOrderForEditing.id} | ${restoredOrderForEditing.orderNumber} | ${restoredOrderForEditing.orderStatus}');
+      debugPrint('===================================');
+      
+      // Success: navigate to OrderScreen with the FRESH data
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Order #${restoredOrderForEditing.orderNumber} restored successfully. Loading for editing...'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        
+        debugPrint("Navigating to OrderScreen with UPDATED order: ID ${restoredOrderForEditing.id}, "
+                  "Number ${restoredOrderForEditing.orderNumber}, Status ${restoredOrderForEditing.orderStatus}");
+        
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => OrderScreen(
+              editingOrder: restoredOrderForEditing, // Pass the FRESHLY FETCHED order
+              isEditing: true,                       // Tell OrderScreen this is an edit
+              preserveOrderNumber: true,              // Keep the order number
+              preventDuplicateCreation: true,         // Critical flag to prevent duplicates
+            ),
+          ),
+        );
+      }
+      await _loadHeldOrders(); // Still refresh list to ensure UI consistency
     } catch (e) {
       if (Navigator.of(context, rootNavigator: true).canPop()) {
         Navigator.of(context, rootNavigator: true).pop();
       }
-      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error restoring order: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Error restoring order: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -234,8 +267,10 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
             quantity: (item['quantity'] as num).toInt(),
             isSubUnit: isSubUnit,
             subUnitName: item['sub_unit_name'] as String?,
-            subUnitQuantity: isSubUnit ? (item['sub_unit_quantity'] as num?)?.toDouble() : null,
+            subUnitQuantity: isSubUnit ? (item['sub_unit_quantity'] as num?)?.toInt() : null,
             adjustedPrice: (item['adjusted_price'] as num?)?.toDouble(),
+            total: (item['total_amount'] as num?)?.toDouble() ?? 
+                  ((item['adjusted_price'] as num?)?.toDouble() ?? product.sellingPrice) * (item['quantity'] as num).toDouble(),
           ),
         );
       }

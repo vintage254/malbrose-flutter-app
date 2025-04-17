@@ -1,5 +1,7 @@
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:excel/excel.dart';
+import 'dart:io';
 
 /// This extension file adds extra methods to the DatabaseService class
 /// without modifying the main database.dart file directly
@@ -11,7 +13,7 @@ extension DatabaseServiceExtensions on DatabaseService {
     try {
       final db = await database;
       final results = await db.query(
-        tableOrders,
+        DatabaseService.tableOrders,
         where: 'order_number = ?',
         whereArgs: [orderNumber],
         limit: 1,
@@ -35,7 +37,7 @@ extension DatabaseServiceExtensions on DatabaseService {
       try {
         // First, check if the order exists
         final orderCheck = await txn.query(
-          tableOrders,
+          DatabaseService.tableOrders,
           where: 'id = ?',
           whereArgs: [orderId],
           limit: 1,
@@ -56,7 +58,7 @@ extension DatabaseServiceExtensions on DatabaseService {
         
         // Update the order
         await txn.update(
-          tableOrders,
+          DatabaseService.tableOrders,
           orderMap,
           where: 'id = ?',
           whereArgs: [orderId],
@@ -64,7 +66,7 @@ extension DatabaseServiceExtensions on DatabaseService {
         
         // Delete existing order items
         await txn.delete(
-          tableOrderItems,
+          DatabaseService.tableOrderItems,
           where: 'order_id = ?',
           whereArgs: [orderId],
         );
@@ -72,18 +74,18 @@ extension DatabaseServiceExtensions on DatabaseService {
         // Insert new order items
         for (var item in orderItems) {
           item['order_id'] = orderId;
-          await txn.insert(tableOrderItems, item);
+          await txn.insert(DatabaseService.tableOrderItems, item);
         }
         
         // Log the update action
         final currentUser = AuthService.instance.currentUser;
         if (currentUser != null) {
           await txn.insert(
-            tableActivityLogs,
+            DatabaseService.tableActivityLogs,
             {
               'user_id': currentUser.id,
               'username': currentUser.username,
-              'action': actionUpdateOrder,
+              'action': DatabaseService.actionUpdateOrder,
               'details': 'Updated order #${orderMap['order_number']}',
               'timestamp': DateTime.now().toIso8601String(),
             },
@@ -103,7 +105,7 @@ extension DatabaseServiceExtensions on DatabaseService {
     try {
       final db = await database;
       return await db.query(
-        tableOrderItems,
+        DatabaseService.tableOrderItems,
         where: 'order_id = ?',
         whereArgs: [orderId],
       );
@@ -113,86 +115,23 @@ extension DatabaseServiceExtensions on DatabaseService {
     }
   }
 
-  /// Stream progress during import for showing a progress bar
-  Stream<Map<String, dynamic>> importProductsFromExcelWithMapping(
-    String filePath, 
-    Map<String, String?> columnMapping, {
-    bool onProgress = false
-  }) async* {
-    // Initialize progress values
-    int totalRows = 0;
-    int currentRow = 0;
-    double percentage = 0.0;
-    
-    try {
-      // First, get an estimate of the total rows
-      final result = await _countExcelRows(filePath);
-      totalRows = result['totalRows'] as int? ?? 0;
-      
-      // Yield initial progress
-      yield {
-        'current': 0,
-        'total': totalRows,
-        'percentage': 0.0,
-        'message': 'Starting import...',
-      };
-      
-      // Now perform the actual import with progress updates
-      final importResult = await _importWithProgress(
-        filePath, 
-        columnMapping,
-        (progress) {
-          currentRow = progress['current'] as int? ?? 0;
-          percentage = progress['percentage'] as double? ?? 0.0;
-        }
-      );
-      
-      // Yield the final result with complete flag
-      yield {
-        ...importResult,
-        'current': totalRows,
-        'total': totalRows,
-        'percentage': 100.0,
-        'completed': true,
-        'message': 'Import complete!',
-      };
-    } catch (e) {
-      yield {
-        'success': false,
-        'message': 'Error during import: $e',
-        'current': currentRow,
-        'total': totalRows,
-        'percentage': percentage,
-        'completed': true,
-      };
-    }
-  }
-  
   // Helper method to count rows in Excel file
   Future<Map<String, dynamic>> _countExcelRows(String filePath) async {
     try {
-      // Use the existing importProductsFromExcel method but just count rows
-      // This is a placeholder - in a real implementation, you would add the actual counting code
-      return {'totalRows': 100};  // Example hardcoded value
+      // Use the excel library to count rows in the file
+      final bytes = await File(filePath).readAsBytes();
+      final excel = Excel.decodeBytes(bytes);
+      
+      if (excel.tables.isEmpty) {
+        return {'totalRows': 0};
+      }
+      
+      final sheet = excel.tables.entries.first.value;
+      // Subtract 1 for header row
+      return {'totalRows': sheet.rows.length - 1};
     } catch (e) {
       print('Error counting Excel rows: $e');
       return {'totalRows': 0};
     }
-  }
-  
-  // Helper method to perform import with progress updates
-  Future<Map<String, dynamic>> _importWithProgress(
-    String filePath,
-    Map<String, String?> columnMapping,
-    Function(Map<String, dynamic>) progressCallback
-  ) async {
-    // In a real implementation, you would modify your existing import code
-    // to call progressCallback periodically during the import process
-    
-    // For now, we'll simulate progress with a simple delay
-    await Future.delayed(const Duration(seconds: 2));
-    
-    // Call the existing import method
-    return await importProductsFromExcelWithMapping(filePath, columnMapping);
   }
 }

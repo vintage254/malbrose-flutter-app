@@ -22,9 +22,17 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
   bool _isLoading = true;
   bool _isExporting = false;
   bool _isImporting = false;
+
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   String? _selectedDepartment;
+  Map<String, dynamic> _importProgress = {
+    'message': 'Starting import...',
+    'current': 0,
+    'total': 0,
+    'percentage': 0.0,
+    'completed': false,
+  };
 
   @override
   void initState() {
@@ -323,113 +331,9 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
         return;
       }
       
-      // Show progress dialog for import
+      // Show progress dialog and trigger import outside the dialog
       if (mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => StreamBuilder<Map<String, dynamic>>(
-            stream: DatabaseService.instance.importProductsFromExcelWithMapping(
-              filePath, 
-              columnMapping,
-              onProgress: true,
-            ),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
-                return const AlertDialog(
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 16),
-                      Text('Preparing import...'),
-                    ],
-                  ),
-                );
-              }
-              
-              final data = snapshot.data ?? {'current': 0, 'total': 0, 'percentage': 0.0};
-              final current = data['current'] as int? ?? 0;
-              final total = data['total'] as int? ?? 0;
-              final percentage = data['percentage'] as double? ?? 0.0;
-              final message = data['message'] as String? ?? 'Importing products...';
-              
-              if (data['completed'] == true) {
-                // Import is complete - close dialog after a short delay
-                Future.delayed(const Duration(milliseconds: 500), () {
-                  if (Navigator.of(context).canPop()) {
-                    Navigator.of(context).pop(data);
-                  }
-                });
-              }
-              
-              return AlertDialog(
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    LinearProgressIndicator(value: percentage / 100),
-                    SizedBox(height: 16),
-                    Text(message),
-                    Text('$current / $total rows (${percentage.toStringAsFixed(1)}%)'),
-                  ],
-                ),
-              );
-            },
-          ),
-        ).then((result) {
-          setState(() {
-            _isImporting = false;
-          });
-          
-          if (mounted && result != null) {
-            if (result['success'] == true) {
-              // Show success message
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(result['message'])),
-              );
-              
-              // If there were errors, show a dialog with details
-              if ((result['errors'] as List<String>?)?.isNotEmpty == true) {
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Import Warnings'),
-                    content: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Successfully imported ${result['imported']} products'),
-                          Text('Failed to import ${result['failed']} products'),
-                          const SizedBox(height: 8),
-                          const Text('Errors:', style: TextStyle(fontWeight: FontWeight.bold)),
-                          ...((result['errors'] as List<String>?) ?? []).map((error) => Text('• $error')),
-                        ],
-                      ),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('OK'),
-                      ),
-                    ],
-                  ),
-                );
-              }
-              
-              // Reload products
-              _loadProducts();
-            } else {
-              // Show error message
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Import failed: ${result['message']}')),
-              );
-            }
-          }
-        });
-        
-        // Don't run the code below since our StreamBuilder handles everything
-        return;
+        await _startImportAndShowProgress(filePath, columnMapping);
       }
     } catch (e) {
       if (mounted) {
@@ -445,6 +349,110 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
         );
       }
     }
+  }
+
+  Future<void> _startImportAndShowProgress(String filePath, Map<String, String?> columnMapping) async {
+    // Initialize progress tracking
+    setState(() {
+      _importProgress = {
+        'message': 'Starting import...',
+        'current': 0,
+        'total': 100, // Initial estimate
+        'percentage': 0.0,
+        'completed': false,
+      };
+    });
+    
+    try {
+      // Get real-time progress updates by passing a callback
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            // Start the import on first build
+            if (_importProgress['current'] == 0 && !_importProgress['completed']) {
+              DatabaseService.instance.importProductsFromExcelWithMapping(
+                filePath,
+                columnMapping,
+                (progressData) {
+                  if (mounted) {
+                    setDialogState(() {
+                      _importProgress = progressData;
+                    });
+                  }
+                },
+              ).then((finalResult) {
+                if (mounted) {
+                  setDialogState(() {
+                    _importProgress = finalResult;
+                  });
+                }
+              });
+            }
+            return AlertDialog(
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(height: 20),
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 20),
+                  Text(_importProgress['message'] ?? 'Starting import...'),
+                  const SizedBox(height: 10),
+                  LinearProgressIndicator(
+                    value: (_importProgress['percentage'] ?? 0.0) / 100,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Processed: ${_importProgress['current'] ?? 0} / ${_importProgress['total'] ?? 0}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+              actions: _importProgress['completed'] == true
+                  ? [
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _refreshProductList();
+                        },
+                        child: const Text('Close'),
+                      ),
+                    ]
+                  : null,
+            );
+          },
+        ),
+      );
+      // Reset spinner after dialog closes
+      if (mounted) {
+        setState(() {
+          _isImporting = false;
+        });
+      }
+    } catch (e) {
+      // Handle any errors
+      setState(() {
+        _importProgress = {
+          'success': false,
+          'message': 'Error during import: $e',
+          'current': 0,
+          'total': 100,
+          'percentage': 0.0,
+          'completed': true,
+        };
+      });
+      
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Import error: $e')),
+      );
+    }
+
+  }
+
+  void _refreshProductList() {
+    _loadProducts();
   }
 
   // Method to clear all products
@@ -526,6 +534,10 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
     }
   }
 
+  void _showImportDialog() {
+    _importProducts();
+  }
+
   @override
   Widget build(BuildContext context) {
     // Filter products by search query and selected department
@@ -541,6 +553,21 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
     }).toList();
 
     return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        onPressed: _isImporting ? null : _importProducts,
+        backgroundColor: _isImporting ? Colors.grey : Theme.of(context).primaryColor,
+        child: _isImporting
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  strokeWidth: 3,
+                ),
+              )
+            : const Icon(Icons.file_upload),
+        tooltip: 'Import from Excel',
+      ),
       body: Row(
         children: [
           const Expanded(flex: 1, child: SideMenuWidget()),
@@ -610,7 +637,7 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
                               ),
                               const SizedBox(width: 8),
                               FloatingActionButton(
-                                onPressed: _isImporting ? null : _importProducts,
+                                onPressed: _isImporting ? null : _showImportDialog,
                                 heroTag: 'import_products',
                                 tooltip: 'Import from Excel',
                                 backgroundColor: Colors.blue,

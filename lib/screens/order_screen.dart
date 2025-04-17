@@ -383,6 +383,10 @@ class _OrderScreenState extends State<OrderScreen> {
                 });
               },
               isEditing: widget.isEditing,
+              order: widget.editingOrder, // Forward the order object for editing
+              orderId: widget.editingOrder?.id, // Forward the order ID
+              preserveOrderNumber: widget.preserveOrderNumber, // Preserve order number flag
+              preventDuplicateCreation: widget.preventDuplicateCreation, // Prevent duplication flag
               orderButtonText: widget.isEditing ? 'Update Order' : 'Place Order',
               onHoldOrderPressed: widget.isEditing ? null : _holdOrder,
             ),

@@ -25,6 +25,8 @@ class OrderCartPanel extends StatefulWidget {
   final String orderButtonText;
   final Function()? onHoldOrderPressed;
   final Order? order;
+  final bool preserveOrderNumber;
+  final bool preventDuplicateCreation;
 
   const OrderCartPanel({
     super.key,
@@ -39,6 +41,8 @@ class OrderCartPanel extends StatefulWidget {
     this.orderButtonText = 'Place Order',
     this.onHoldOrderPressed,
     this.order,
+    this.preserveOrderNumber = false,
+    this.preventDuplicateCreation = false,
   });
 
   @override
@@ -189,6 +193,16 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
   }
 
   Future<void> _placeOrder(BuildContext context) async {
+    // Detailed diagnostic logging for debugging order flow issues
+    debugPrint('--- _placeOrder START ---');
+    debugPrint('widget.isEditing = ${widget.isEditing}');
+    debugPrint('widget.preventDuplicateCreation = ${widget.preventDuplicateCreation}');
+    debugPrint('widget.preserveOrderNumber = ${widget.preserveOrderNumber}');
+    debugPrint('widget.order ID = ${widget.order?.id}'); // Use safe navigation
+    debugPrint('widget.order Number = ${widget.order?.orderNumber}'); // Use safe navigation
+    debugPrint('widget.order Status = ${widget.order?.orderStatus}'); // Use safe navigation
+    debugPrint('widget.orderId prop = ${widget.orderId}'); // Log the separate prop
+    
     if (widget.initialItems.isEmpty || _customerNameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -205,10 +219,22 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
       final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
       final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}${(now.millisecond ~/ 10).toString().padLeft(2, '0')}';
       
-      // Use a safe approach to get order number, handling both editing and new orders
-      final String orderNumber = widget.isEditing && widget.order != null
-          ? widget.order!.orderNumber
-          : 'ORD-$datePrefix-$timeComponent';
+      // Determine order number with enhanced logic to prevent duplicates
+      String orderNumber;
+      
+      // Case 1: Editing an existing order OR explicitly preserving number
+      if ((widget.isEditing && widget.order != null) || 
+          (widget.preserveOrderNumber && widget.order != null)) {
+        // Always use the existing order number when editing or preserving
+        orderNumber = widget.order!.orderNumber;
+        debugPrint('OrderCartPanel: Using existing order number: $orderNumber');
+      } 
+      // Case 2: Creating a new order
+      else {
+        // Generate a new timestamp-based order number
+        orderNumber = 'ORD-$datePrefix-$timeComponent';
+        debugPrint('OrderCartPanel: Generated new order number: $orderNumber');
+      }
       
       // Get current user with null safety
       final currentUser = AuthService.instance.currentUser;
@@ -234,9 +260,25 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         'order_date': now.toIso8601String(),
       };
       
-      // Add the order ID if we're editing an existing order
-      if (widget.isEditing && widget.orderId != null) {
+      // Enhanced ID handling with multiple safeguards
+      
+      // Case 1: Directly provided ID via orderId property
+      if (widget.orderId != null) {
         orderMap['id'] = widget.orderId;
+        debugPrint('OrderCartPanel: Using orderId: ${widget.orderId}');
+      }
+      // Case 2: ID available from the order object
+      else if (widget.order?.id != null) {
+        orderMap['id'] = widget.order!.id;
+        debugPrint('OrderCartPanel: Using order.id: ${widget.order!.id}');
+      }
+
+      // Critical: Flag the order for update instead of insert if any of our conditions are met
+      final bool shouldForceUpdate = (widget.isEditing || widget.preventDuplicateCreation) && 
+                                    (widget.orderId != null || widget.order?.id != null);
+      
+      if (shouldForceUpdate) {
+        debugPrint('OrderCartPanel: Flagged order for UPDATE instead of INSERT');
       }
       
       // Generate orderItems list from cartItems
@@ -590,20 +632,6 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: widget.initialItems.isNotEmpty 
-                                ? () => _printCurrentOrder(context)
-                                : null,
-                              icon: const Icon(Icons.print),
-                              label: const Text('Print Receipt'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.orange,
-                                padding: const EdgeInsets.symmetric(vertical: 12),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
                           if (widget.onHoldOrderPressed != null)
                             Expanded(
                               child: ElevatedButton.icon(
@@ -616,6 +644,20 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                               ),
                             ),
                         ],
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: widget.initialItems.isNotEmpty 
+                              ? () => _printCurrentOrder(context)
+                              : null,
+                            icon: const Icon(Icons.print),
+                            label: const Text('Print Receipt'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ],

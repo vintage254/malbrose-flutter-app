@@ -912,7 +912,7 @@ class DatabaseService {
           final currentUser = AuthService.instance.currentUser;
           if (currentUser != null) {
             await txn.insert(tableActivityLogs, {
-              'user_id': currentUser.id!,
+              'user_id': currentUser.id ?? 0,
               'username': currentUser.username,
               'action': actionRevertReceipt,
               'action_type': 'Revert Receipt',
@@ -1727,7 +1727,7 @@ class DatabaseService {
       final currentUser = AuthService.instance.currentUser;
       if (currentUser != null && creditor.isNotEmpty) {
         await logActivity(
-          currentUser.id!,
+          currentUser.id ?? 0,
           currentUser.username,
           'delete_creditor',
           'Delete creditor',
@@ -1763,7 +1763,7 @@ class DatabaseService {
       final currentUser = AuthService.instance.currentUser;
       if (currentUser != null && debtor.isNotEmpty) {
         await logActivity(
-          currentUser.id!,
+          currentUser.id ?? 0,
           currentUser.username,
           'delete_debtor',
           'Delete debtor',
@@ -2001,7 +2001,7 @@ class DatabaseService {
             await txn.insert(
               tableActivityLogs,
               {
-                'user_id': currentUser.id,
+                'user_id': currentUser.id ?? 0,
                 'username': currentUser.username,
                 'action': 'credit_payment',
                 'action_type': 'Credit payment',
@@ -2284,7 +2284,7 @@ class DatabaseService {
             await txn.insert(
               tableActivityLogs,
               {
-                'user_id': currentUser.id,
+                'user_id': currentUser.id ?? 0,
                 'username': currentUser.username,
                 'action': actionCompleteSale,
                 'details': 'Completed sale #${order.orderNumber}, amount: ${order.totalAmount}, method: $paymentMethod',
@@ -2340,7 +2340,7 @@ class DatabaseService {
       final currentUser = AuthService.instance.currentUser;
       if (currentUser != null) {
         await logActivity(
-          currentUser.id!,
+          currentUser.id ?? 0,
           currentUser.username,
           actionCreateDebtor,
           'Create debtor',
@@ -2390,7 +2390,7 @@ class DatabaseService {
       if (currentUser != null) {
         final oldBalance = currentDebtor.first['balance'] as double;
         await logActivity(
-          currentUser.id!,
+          currentUser.id ?? 0,
           currentUser.username,
           actionUpdateDebtor,
           'Update debtor',
@@ -2508,7 +2508,7 @@ class DatabaseService {
       final currentUser = AuthService.instance.currentUser;
       if (currentUser != null) {
         await logActivity(
-          currentUser.id!,
+          currentUser.id ?? 0,
           currentUser.username,
           actionCreateCreditor,
           'Create creditor',
@@ -2588,7 +2588,7 @@ class DatabaseService {
         if (currentUser != null) {
           final oldBalance = currentCreditor.first['balance'] as double;
           await logActivity(
-            currentUser.id!,
+            currentUser.id ?? 0,
             currentUser.username,
             actionUpdateCreditor,
             'Update creditor',
@@ -2604,7 +2604,7 @@ class DatabaseService {
 
   /// Log activity in the activity_logs table
   Future<void> logActivity(
-    int userId,
+    int? userId,
     String username,
     String action,
     String actionType,
@@ -2615,7 +2615,7 @@ class DatabaseService {
       await db.insert(
         tableActivityLogs,
         {
-          'user_id': userId,
+          'user_id': userId ?? 0,  // Use 0 as default if userId is null
           'username': username,
           'action': action,
           'action_type': actionType,
@@ -3279,7 +3279,7 @@ class DatabaseService {
           await txn.insert(
             tableActivityLogs,
             {
-              'user_id': currentUser.id,
+              'user_id': currentUser.id ?? 0,
               'username': currentUser.username,
               'action': 'change_order_status',
               'action_type': 'Change order status',
@@ -3888,11 +3888,15 @@ class DatabaseService {
   /// Imports products from an Excel file with custom column mapping
   Future<Map<String, dynamic>> importProductsFromExcelWithMapping(
     String filePath, 
-    Map<String, String?> columnMapping
+    Map<String, String?> columnMapping,
+    // Add a progress callback parameter
+    Function(Map<String, dynamic> progressData)? onProgress
   ) async {
     final errors = <String>[];
     int imported = 0;
     int failed = 0;
+    int current = 0;
+    int total = 0;
     
     try {
       print('Starting Excel import from file: $filePath with custom mapping');
@@ -3900,12 +3904,26 @@ class DatabaseService {
       final excel = Excel.decodeBytes(bytes);
       
       if (excel.tables.isEmpty) {
+        // Call progress callback with the error
+        onProgress?.call({
+          'success': false,
+          'message': 'No data found in Excel file',
+          'current': 0,
+          'total': 0,
+          'percentage': 0.0,
+          'completed': true,
+        });
+        
         return {
           'success': false,
           'message': 'No data found in Excel file',
           'imported': 0,
           'failed': 0,
           'errors': errors,
+          'current': 0,
+          'total': 0,
+          'percentage': 0.0,
+          'completed': true,
         };
       }
       
@@ -3919,6 +3937,18 @@ class DatabaseService {
         }
       }
       
+      // Calculate total rows
+      total = sheet.rows.length - 1; // Subtract header row
+      
+      // Initial progress update
+      onProgress?.call({
+        'current': 0,
+        'total': total,
+        'percentage': 0.0,
+        'message': 'Reading headers...',
+        'completed': false,
+      });
+      
       // Create a mapping from column index to database field
       final headerMap = <int, String>{};
       for (int i = 0; i < headers.length; i++) {
@@ -3931,6 +3961,23 @@ class DatabaseService {
       
       // Process each row from the Excel file
       for (var i = 1; i < sheet.rows.length; i++) {
+        current = i;
+        
+        // Update progress every 5 rows or on the first/last row
+        if (current % 5 == 0 || current == 1 || current == total) {
+          double percentage = total > 0 ? (current / total * 100) : 0.0;
+          onProgress?.call({
+            'current': current,
+            'total': total,
+            'percentage': percentage,
+            'message': 'Processing row $current of $total...',
+            'completed': false,
+          });
+          
+          // Small delay to allow UI to update
+          await Future.delayed(Duration(milliseconds: 5));
+        }
+        
         try {
           final row = sheet.rows[i];
           
@@ -4078,23 +4125,39 @@ class DatabaseService {
         }
       }
       
-      // Return results
-      return {
-        'success': true,
-        'message': 'Imported $imported products successfully. Failed: $failed',
+      // Final progress update
+      final finalResult = {
+        'success': failed == 0,
+        'message': 'Imported $imported products. Failed: $failed',
         'imported': imported,
         'failed': failed,
         'errors': errors,
+        'current': total,
+        'total': total,
+        'percentage': 100.0,
+        'completed': true,
       };
+      
+      onProgress?.call(finalResult);
+      return finalResult;
     } catch (e) {
       print('❌ Error importing products from Excel: $e');
-      return {
+      
+      // Error progress update
+      final errorResult = {
         'success': false,
         'message': 'Error importing products: $e',
         'imported': imported,
-        'failed': failed,
-        'errors': errors,
+        'failed': failed + (total - current),
+        'errors': [...errors, 'Global error: $e'],
+        'current': current,
+        'total': total > 0 ? total : 1,
+        'percentage': total > 0 ? (current / total * 100) : 0.0,
+        'completed': true,
       };
+      
+      onProgress?.call(errorResult);
+      return errorResult;
     }
   }
 
@@ -4199,7 +4262,7 @@ class DatabaseService {
       final currentUser = await getCurrentUserWithTxn(txn);
       if (currentUser != null) {
         await txn.insert(tableActivityLogs, {
-          'user_id': currentUser['id'],
+          'user_id': currentUser['id'] ?? 0,
           'username': currentUser['username'],
           'action': 'Created credit',
           'action_type': 'CREDIT',
@@ -4213,14 +4276,14 @@ class DatabaseService {
   // Log activity with transaction
   Future<void> logActivityWithTxn(
     DatabaseExecutor txn,
-    int userId,
+    int? userId,
     String username,
     String action,
     String actionType,
     String details,
   ) async {
     await txn.insert(tableActivityLogs, {
-      'user_id': userId,
+      'user_id': userId ?? 0,
       'username': username,
       'action': action,
       'action_type': actionType,

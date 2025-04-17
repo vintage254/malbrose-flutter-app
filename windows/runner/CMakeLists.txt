@@ -58,7 +58,7 @@ target_link_libraries(${BINARY_NAME} PRIVATE
 
 # Add linker flags for delay loading
 set_target_properties(${BINARY_NAME} PROPERTIES
-  LINK_FLAGS "/DELAYLOAD:api-ms-win-core-winrt-error-l1-1-0.dll /DELAYLOAD:api-ms-win-core-winrt-l1-1-0.dll /DELAYLOAD:api-ms-win-core-winrt-string-l1-1-0.dll"
+  LINK_FLAGS ""
 )
 
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")

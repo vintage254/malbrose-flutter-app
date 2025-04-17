@@ -109,7 +109,7 @@ class OrderService extends ChangeNotifier {
   Future<Map<String, List<Map<String, dynamic>>>> getOrdersByStatus(String status) async {
     final db = await DatabaseService.instance.database;
     
-    // Get orders with the given status
+    // Get orders with the given status, excluding REVERTED/CONVERTED orders
     final List<Map<String, dynamic>> orders = await db.rawQuery('''
       SELECT o.*, json_array(json_group_array(json_object(
         'id', oi.id, 
@@ -123,12 +123,14 @@ class OrderService extends ChangeNotifier {
       FROM ${DatabaseService.tableOrders} o
       LEFT JOIN ${DatabaseService.tableOrderItems} oi ON o.id = oi.order_id
       WHERE o.order_status = ?
+        AND o.order_status NOT IN ('REVERTED', 'CONVERTED') -- Exclude reverted/converted orders
       GROUP BY o.id
       ORDER BY o.created_at DESC
     ''', [status]);
     
-    // Get any held orders that have been restored
-    final List<Map<String, dynamic>> heldOrders = status == 'PENDING' ? 
+    // If requesting PENDING orders and we want to include held orders (optional)
+    // Modified to only include ON_HOLD orders that don't have PENDING duplicates
+    final List<Map<String, dynamic>> heldOrders = (status == 'PENDING') ? 
       await db.rawQuery('''
         SELECT o.*, json_array(json_group_array(json_object(
           'id', oi.id, 
@@ -142,13 +144,47 @@ class OrderService extends ChangeNotifier {
         FROM ${DatabaseService.tableOrders} o
         LEFT JOIN ${DatabaseService.tableOrderItems} oi ON o.id = oi.order_id
         WHERE o.order_status = 'ON_HOLD'
+          -- Skip held orders that have PENDING/COMPLETED duplicates
+          AND NOT EXISTS (
+            SELECT 1 FROM ${DatabaseService.tableOrders} o2
+            WHERE o2.order_number = REPLACE(o.order_number, 'HLD-', 'ORD-')
+            AND o2.order_status IN ('PENDING', 'COMPLETED', 'CONVERTED')
+          )
         GROUP BY o.id
         ORDER BY o.created_at DESC
       ''') : [];
-    
+
+    // When returning orders, ensure no duplicate order numbers
+    // Create a map to track seen order numbers (without prefix)
+    final Map<String, bool> seenOrderNumbers = {};
+    final List<Map<String, dynamic>> dedupedOrders = [];
+
+    // Process pending orders first (they take priority)
+    for (var order in orders) {
+      final rawNumber = order['order_number'] as String;
+      final baseNumber = rawNumber.replaceFirst(RegExp(r'^(ORD-|HLD-)'), '');
+      
+      if (!seenOrderNumbers.containsKey(baseNumber)) {
+        seenOrderNumbers[baseNumber] = true;
+        dedupedOrders.add(order);
+      }
+    }
+
+    // Then process held orders, skipping any with same base number as pending orders
+    final List<Map<String, dynamic>> dedupedHeldOrders = [];
+    for (var order in heldOrders) {
+      final rawNumber = order['order_number'] as String;
+      final baseNumber = rawNumber.replaceFirst(RegExp(r'^(ORD-|HLD-)'), '');
+      
+      if (!seenOrderNumbers.containsKey(baseNumber)) {
+        seenOrderNumbers[baseNumber] = true;
+        dedupedHeldOrders.add(order);
+      }
+    }
+
     return {
-      'pendingOrders': orders,
-      'heldOrders': heldOrders
+      'pendingOrders': dedupedOrders,
+      'heldOrders': dedupedHeldOrders
     };
   }
 
@@ -170,16 +206,23 @@ class OrderService extends ChangeNotifier {
   
   // Constants for order status
   static const String STATUS_PENDING = 'PENDING';
-  static const String STATUS_ON_HOLD = 'ON_HOLD';
   static const String STATUS_COMPLETED = 'COMPLETED';
+  static const String STATUS_ON_HOLD = 'ON_HOLD';
   static const String STATUS_REPORTED = 'REPORTED';
   
   // Create a new order with validation of product IDs
   Future<bool> createOrder(Map<String, dynamic> orderMap, List<Map<String, dynamic>> orderItems) async {
     try {
-      // Check if this is an edit of an existing order
-      final isEdit = orderMap.containsKey('id') && orderMap['id'] != null;
+      final String orderNumber = orderMap['order_number'] as String;
+      debugPrint('ORDER WORKFLOW: Processing order #$orderNumber');
+
+      // Enhanced detection for edit mode
+      final bool isEdit = orderMap.containsKey('id') && orderMap['id'] != null;
       final int? orderId = isEdit ? orderMap['id'] as int : null;
+
+      if (isEdit) {
+        debugPrint('ORDER WORKFLOW: Edit mode detected with ID: $orderId');
+      }
       
       // Validate product IDs in all order items
       for (final item in orderItems) {
@@ -208,7 +251,7 @@ class OrderService extends ChangeNotifier {
         debugPrint('Updating existing order #${orderMap['order_number']} with ID: $orderId');
         final result = await DatabaseService.instance.updateOrder(orderId!, orderMap, orderItems);
         if (result) {
-          notifyOrderUpdate();
+          notifyListeners();
           return true;
         }
         return false;
@@ -224,7 +267,7 @@ class OrderService extends ChangeNotifier {
             orderItems
           );
           if (result) {
-            notifyOrderUpdate();
+            notifyListeners();
             return true;
           }
           return false;
@@ -234,7 +277,7 @@ class OrderService extends ChangeNotifier {
         final result = await DatabaseService.instance.createOrder(orderMap, orderItems);
         if (result != null) {
           // Refresh stats after creating an order
-          notifyOrderUpdate();
+          notifyListeners();
           return true;
         }
         return false;
@@ -265,7 +308,7 @@ class OrderService extends ChangeNotifier {
       
       final success = await DatabaseService.instance.updateOrderStatus(orderId, status);
       if (success) {
-        notifyOrderUpdate();
+        notifyListeners();
       }
       return success;
     } catch (e) {
@@ -278,84 +321,59 @@ class OrderService extends ChangeNotifier {
   Future<bool> restoreHeldOrder(Order order) async {
     try {
       if (order.id == null) {
-        throw Exception('Order ID is null');
+        throw Exception('Order ID is null for held order restoration');
       }
-      
+
       final db = await DatabaseService.instance.database;
-      
+
       // Start a transaction for consistency
       return await db.transaction((txn) async {
+        // Fetch currentUser ONCE at the start of the transaction
+        final currentUser = AuthService.instance.currentUser;
+
         // First check if order exists and get its current status
-        final orderCheck = await txn.rawQuery('''
-          SELECT id, order_status, status, order_number, customer_name, total_amount 
-          FROM ${tableOrders} 
-          WHERE id = ?
-        ''', [order.id]);
-        
-        if (orderCheck.isEmpty) {
-          throw Exception('Order not found');
-        }
-        
-        final currentStatus = orderCheck.first['order_status'] as String? ?? 
-                            orderCheck.first['status'] as String? ?? 
-                            'UNKNOWN';
-        final originalOrderNumber = orderCheck.first['order_number'] as String;
-        
-        // If order is already converted or completed, don't process again
-        if (currentStatus == 'CONVERTED' || currentStatus == 'COMPLETED') {
-          debugPrint('Order #$originalOrderNumber already processed (status: $currentStatus)');
-          
-          // Try to find the converted order
-          final convertedOrderQuery = await txn.rawQuery(
-            '''
-            SELECT * FROM ${tableOrders} 
-            WHERE order_number LIKE ? AND order_status = 'PENDING'
-            ''',
-            ['ORD-${originalOrderNumber.substring(4)}']
-          );
-          
-          if (convertedOrderQuery.isNotEmpty) {
-            debugPrint('Found converted order: ${convertedOrderQuery.first['order_number']}');
-          }
-          
-          return true; // Already processed, no error
-        }
-        
-        // Only proceed if this is actually a held order
-        if (currentStatus != 'ON_HOLD') {
-          debugPrint('Order #$originalOrderNumber is not on hold (status: $currentStatus)');
-          return false;
-        }
-        
-        // First mark the order as being converted to prevent concurrent conversions
-        await txn.update(
+        final orderCheck = await txn.query(
           tableOrders,
-          {
-            'status': 'CONVERTING',
-            'order_status': 'CONVERTING',
-            'updated_at': DateTime.now().toIso8601String()
-          },
           where: 'id = ?',
           whereArgs: [order.id],
+          limit: 1,
         );
-        
-        // Generate the new order number
-        String newOrderNumber = originalOrderNumber.startsWith('HLD-') ? 
-                              'ORD-' + originalOrderNumber.substring(4) : 
-                              originalOrderNumber;
-        
-        // Check if an order with this number already exists
-        final existingOrders = await txn.query(
+
+        if (orderCheck.isEmpty) {
+          debugPrint('Held order ID ${order.id} not found during restore attempt.');
+          return false; // Indicate failure - order doesn't exist
+        }
+
+        final currentStatus = orderCheck.first['order_status'] as String? ??
+                            orderCheck.first['status'] as String? ??
+                            'UNKNOWN';
+        final originalOrderNumber = orderCheck.first['order_number'] as String;
+
+        // If order is not actually ON_HOLD, stop
+        if (currentStatus != STATUS_ON_HOLD) {
+          debugPrint('Order #$originalOrderNumber (ID: ${order.id}) is not ON_HOLD (Status: $currentStatus). Cannot restore.');
+          // If already processed, consider it a success
+          return currentStatus == STATUS_PENDING || currentStatus == STATUS_COMPLETED || currentStatus == 'CONVERTED';
+        }
+
+        // Generate the target ORD-... number
+        String newOrderNumber = originalOrderNumber.startsWith('HLD-')
+            ? 'ORD-' + originalOrderNumber.substring(4)
+            : originalOrderNumber;
+
+        // Check if the target ORD-... number already exists for a DIFFERENT order
+        final existingOrdOrder = await txn.query(
           tableOrders,
           where: 'order_number = ? AND id != ?',
           whereArgs: [newOrderNumber, order.id],
-          limit: 1
+          limit: 1,
         );
-        
-        if (existingOrders.isNotEmpty) {
-          debugPrint('Order #$newOrderNumber already exists with a different ID');
-          
-          // Mark the original order as converted but don't create duplicate
+
+        // CASE 1: Duplicate ORD-... order FOUND
+        if (existingOrdOrder.isNotEmpty) {
+          debugPrint('Order #$newOrderNumber already exists (ID: ${existingOrdOrder.first['id']}). Marking original HLD order ${order.id} as CONVERTED.');
+
+          // Mark the original HLD order as CONVERTED
           await txn.update(
             tableOrders,
             {
@@ -364,115 +382,71 @@ class OrderService extends ChangeNotifier {
               'updated_at': DateTime.now().toIso8601String()
             },
             where: 'id = ?',
-            whereArgs: [order.id]
+            whereArgs: [order.id],
           );
-          
-          // Log this conversion link
-          final currentUser = AuthService.instance.currentUser;
+
+          // Log that the HLD order was linked/superseded
           if (currentUser != null) {
             await txn.insert(
               tableActivityLogs,
               {
-                'user_id': currentUser.id,
+                'user_id': currentUser.id ?? 0,
                 'username': currentUser.username,
-                'action': 'link_to_existing',
-                'details': 'Linked held order #$originalOrderNumber to existing order #$newOrderNumber',
+                'action': 'link_held_to_existing',
+                'action_type': 'Restore Held Order',
+                'details': 'Held order #$originalOrderNumber (ID: ${order.id}) found existing active order #$newOrderNumber (ID: ${existingOrdOrder.first['id']}). Marked held order as CONVERTED.',
                 'timestamp': DateTime.now().toIso8601String(),
               },
             );
           }
-          
-          notifyOrderUpdate();
-          return true;
-        }
-        
-        // Check for similar orders with same customer and total to avoid duplicates
-        final similarOrders = await txn.query(
-          tableOrders,
-          where: "customer_name = ? AND total_amount = ? AND order_status = 'PENDING' AND id != ?",
-          whereArgs: [
-            orderCheck.first['customer_name'],
-            orderCheck.first['total_amount'],
-            order.id
-          ],
-          orderBy: 'created_at DESC',
-          limit: 1
-        );
-        
-        if (similarOrders.isNotEmpty) {
-          final similarOrderNumber = similarOrders.first['order_number'] as String;
-          debugPrint('Found similar pending order: $similarOrderNumber');
-          
-          // Mark as converted and link to the similar order
+          // No notify for pending orders, as no new pending order was made
+          return true; // Handled successfully (duplicate existed)
+
+        // CASE 2: No Duplicate ORD-... order found
+        } else {
+          debugPrint('Converting held order #$originalOrderNumber (ID: ${order.id}) to active order #$newOrderNumber');
+
+          // Update the original HLD order record to become the new PENDING order
           await txn.update(
             tableOrders,
             {
-              'status': 'CONVERTED',
-              'order_status': 'CONVERTED', 
+              'order_number': newOrderNumber,
+              'status': STATUS_PENDING,
+              'order_status': STATUS_PENDING,
               'updated_at': DateTime.now().toIso8601String()
             },
             where: 'id = ?',
-            whereArgs: [order.id]
+            whereArgs: [order.id],
           );
-          
-          // Log this duplicate detection
-          final currentUser = AuthService.instance.currentUser;
+
+          // Log the successful restoration
           if (currentUser != null) {
             await txn.insert(
               tableActivityLogs,
               {
-                'user_id': currentUser.id,
+                'user_id': currentUser.id ?? 0,
                 'username': currentUser.username,
-                'action': 'mark_duplicate',
-                'details': 'Marked held order #$originalOrderNumber as duplicate of $similarOrderNumber',
+                'action': 'restore_held_order',
+                'action_type': 'Restore Held Order',
+                'details': 'Restored held order #$originalOrderNumber to active order #$newOrderNumber (ID: ${order.id})',
                 'timestamp': DateTime.now().toIso8601String(),
               },
             );
           }
           
-          notifyOrderUpdate();
-          return true;
+          // Notify listeners because a new PENDING order is now available
+          notifyListeners();
+          return true; // Indicate successful restoration
         }
-        
-        // Now we can safely convert the order
-        debugPrint('Converting held order #$originalOrderNumber to #$newOrderNumber');
-        
-        // Update the order status and number
-        await txn.update(
-          tableOrders,
-          {
-            'order_number': newOrderNumber,
-            'status': STATUS_PENDING,
-            'order_status': STATUS_PENDING,
-            'updated_at': DateTime.now().toIso8601String()
-          },
-          where: 'id = ?',
-          whereArgs: [order.id],
-        );
-        
-        // Log this action
-        final currentUser = AuthService.instance.currentUser;
-        if (currentUser != null) {
-          await txn.insert(
-            tableActivityLogs,
-            {
-              'user_id': currentUser.id,
-              'username': currentUser.username,
-              'action': 'restore_held_order',
-              'details': 'Converted held order #$originalOrderNumber to active order #$newOrderNumber',
-              'timestamp': DateTime.now().toIso8601String(),
-            },
-          );
-        }
-        
-        notifyOrderUpdate();
-        return true;
-      });
+      }); // End of transaction
     } catch (e) {
-      debugPrint('Error restoring held order in OrderService: $e');
-      return false;
+      debugPrint('Error restoring held order ID ${order.id} in OrderService: $e');
+      return false; // Indicate failure
     }
   }
+
+
+  
   
   // Complete a sale
   Future<bool> completeSale(Order order, {String paymentMethod = 'Cash'}) async {
@@ -516,7 +490,7 @@ class OrderService extends ChangeNotifier {
           creditOrder.totalAmount ?? 0,
         );
         
-        notifyOrderUpdate();
+        notifyListeners();
         return true;
       } else {
         // For cash or other payment methods
@@ -574,7 +548,7 @@ class OrderService extends ChangeNotifier {
           // Complete the order - updating status
           await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
           
-          notifyOrderUpdate();
+          notifyListeners();
           return true;
         } catch (e) {
           debugPrint('Error updating product quantities: $e');
@@ -591,13 +565,13 @@ class OrderService extends ChangeNotifier {
             }
             
             await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
-            notifyOrderUpdate();
+            notifyListeners();
             return true;
           } catch (e2) {
             debugPrint('Error with basic quantity update: $e2');
             // Still attempt to complete the sale without inventory changes
             await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
-            notifyOrderUpdate();
+            notifyListeners();
             return true;
           }
         }
@@ -634,7 +608,7 @@ class OrderService extends ChangeNotifier {
       );
       
       // Refresh stats
-      notifyOrderUpdate();
+      notifyListeners();
       
       return true;
     } catch (e) {
