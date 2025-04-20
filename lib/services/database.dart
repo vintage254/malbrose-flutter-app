@@ -406,10 +406,82 @@ class DatabaseService {
             order_number TEXT,
             order_details TEXT,
             original_amount REAL,
-            customer_id INTEGER
+            customer_id INTEGER,
+            customer_name TEXT,
+            order_id INTEGER,
+            amount REAL,
+            payment_date TEXT,
+            payment_amount REAL,
+            payment_method TEXT,
+            payment_details TEXT,
+            updated_at TEXT
           )
         ''');
         print('Creditors table created or already exists');
+      } else {
+        // Check if order_id column exists in creditors table and add it if missing
+        var result = await db.rawQuery("PRAGMA table_info($tableCreditors)");
+        var columns = result.map((col) => col['name'].toString()).toList();
+        
+        if (!columns.contains('order_id')) {
+          await db.execute('ALTER TABLE $tableCreditors ADD COLUMN order_id INTEGER');
+          print('Added order_id column to creditors table');
+        }
+        
+        if (!columns.contains('customer_name')) {
+          await db.execute('ALTER TABLE $tableCreditors ADD COLUMN customer_name TEXT');
+          print('Added customer_name column to creditors table');
+        }
+        
+        if (!columns.contains('amount')) {
+          await db.execute('ALTER TABLE $tableCreditors ADD COLUMN amount REAL');
+          print('Added amount column to creditors table');
+        }
+        
+        if (!columns.contains('payment_date')) {
+          await db.execute('ALTER TABLE $tableCreditors ADD COLUMN payment_date TEXT');
+          print('Added payment_date column to creditors table');
+        }
+        
+        if (!columns.contains('payment_amount')) {
+          await db.execute('ALTER TABLE $tableCreditors ADD COLUMN payment_amount REAL');
+          print('Added payment_amount column to creditors table');
+        }
+        
+        if (!columns.contains('payment_method')) {
+          await db.execute('ALTER TABLE $tableCreditors ADD COLUMN payment_method TEXT');
+          print('Added payment_method column to creditors table');
+        }
+        
+        if (!columns.contains('payment_details')) {
+          await db.execute('ALTER TABLE $tableCreditors ADD COLUMN payment_details TEXT');
+          print('Added payment_details column to creditors table');
+        }
+        
+        if (!columns.contains('updated_at')) {
+          await db.execute('ALTER TABLE $tableCreditors ADD COLUMN updated_at TEXT');
+          print('Added updated_at column to creditors table');
+        }
+      }
+      
+      // Create credit_transactions table if it doesn't exist
+      if (!tableNames.contains(tableCreditTransactions)) {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS $tableCreditTransactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER,
+            customer_name TEXT,
+            order_id INTEGER,
+            order_number TEXT,
+            amount REAL,
+            transaction_type TEXT,
+            payment_method TEXT,
+            date TEXT,
+            description TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+          )
+        ''');
+        print('Credit transactions table created or already exists');
       }
       
       // Create debtors table if it doesn't exist
@@ -1831,7 +1903,15 @@ class DatabaseService {
             order_number TEXT,
             order_details TEXT,
             original_amount REAL,
-            customer_id INTEGER
+            customer_id INTEGER,
+            customer_name TEXT,
+            order_id INTEGER,
+            amount REAL,
+            payment_date TEXT,
+            payment_amount REAL,
+            payment_method TEXT,
+            payment_details TEXT,
+            updated_at TEXT
           )
         ''');
         print('Recreated creditors table without UNIQUE constraint');
@@ -1863,7 +1943,15 @@ class DatabaseService {
             order_number TEXT,
             order_details TEXT,
             original_amount REAL,
-            customer_id INTEGER
+            customer_id INTEGER,
+            customer_name TEXT,
+            order_id INTEGER,
+            amount REAL,
+            payment_date TEXT,
+            payment_amount REAL,
+            payment_method TEXT,
+            payment_details TEXT,
+            updated_at TEXT
           )
         ''');
         print('Created new creditors table without UNIQUE constraint');
@@ -1884,6 +1972,30 @@ class DatabaseService {
           )
         ''');
         print('Created activity_logs table');
+      }
+      
+      // Get list of all tables in the database
+      final tableQuery = await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table'");
+      final tableNames = tableQuery.map((t) => t['name'] as String).toList();
+      
+      // Create credit_transactions table if it doesn't exist
+      if (!tableNames.contains(tableCreditTransactions)) {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS $tableCreditTransactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER,
+            customer_name TEXT,
+            order_id INTEGER,
+            order_number TEXT,
+            amount REAL,
+            transaction_type TEXT,
+            payment_method TEXT,
+            date TEXT,
+            description TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+          )
+        ''');
+        print('Credit transactions table created or already exists');
       }
       
       print('Fixed database successfully');
@@ -2244,7 +2356,11 @@ class DatabaseService {
             tableOrders,
             {
               'order_status': 'COMPLETED',
-              'payment_status': paymentMethod == 'Credit' ? 'PENDING' : 'PAID',
+              'payment_status': paymentMethod == 'Credit' ? 'PENDING' : 
+                            (paymentMethod.contains('Credit:') || 
+                             paymentMethod.contains('credit:') || 
+                             paymentMethod.contains(', Credit') || 
+                             paymentMethod.contains(', credit')) ? 'PARTIAL' : 'PAID',
               'payment_method': paymentMethod,
               'updated_at': DateTime.now().toIso8601String(),
             },
@@ -4173,13 +4289,26 @@ class DatabaseService {
       print('Existing columns in creditors table: ${columnNames.join(', ')}');
       
       // List of required columns and their definitions
+      // Expanded to include all columns referenced in _showCreditDetailsDialog
       final requiredColumns = {
         'order_number': 'TEXT',
         'order_details': 'TEXT',
         'original_amount': 'REAL',
         'customer_id': 'INTEGER',
+        'customer_name': 'TEXT',
         'receipt_number': 'TEXT',
         'last_updated': 'TEXT',
+        'name': 'TEXT',
+        'balance': 'REAL',
+        'details': 'TEXT',
+        'status': 'TEXT NOT NULL DEFAULT "PENDING"',
+        'amount': 'REAL',
+        'payment_amount': 'REAL DEFAULT 0.0',
+        'payment_date': 'TEXT',
+        'payment_method': 'TEXT',
+        'payment_details': 'TEXT',
+        'created_at': 'TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP',
+        'updated_at': 'TEXT',
       };
       
       // Add any missing columns
@@ -4197,6 +4326,7 @@ class DatabaseService {
   }
 
   // Creates a credit record for a customer
+  @Deprecated('Use addCreditorRecordForOrder instead for more robust credit handling')
   Future<void> createCredit(
     int customerId, 
     String customerName, 
@@ -4204,46 +4334,40 @@ class DatabaseService {
     String orderNumber,
     double amount
   ) async {
+    print('WARNING: createCredit is deprecated. Please use addCreditorRecordForOrder instead.');
     final db = await database;
     
-    // First check if customer exists in creditors table
-    final List<Map<String, dynamic>> existingCreditors = await db.query(
-      tableCreditors,
-      where: 'customer_id = ?',
-      whereArgs: [customerId],
-    );
-    
     await db.transaction((txn) async {
-      if (existingCreditors.isEmpty) {
-        // Create new creditor record
-        await txn.insert(tableCreditors, {
-          'customer_id': customerId,
-          'customer_name': customerName,
-          'order_id': orderId,
-          'order_number': orderNumber,
-          'amount': amount,
-          'status': 'OPEN',
-          'payment_date': null,
-          'payment_amount': 0.0,
-          'payment_method': null,
-          'payment_details': null,
-          'balance': amount,
-          'created_at': DateTime.now().toIso8601String(),
-          'updated_at': DateTime.now().toIso8601String(),
-        });
-      } else {
-        // Update existing creditor balance
-        final currentBalance = existingCreditors.first['balance'] as double? ?? 0.0;
-        await txn.update(
-          tableCreditors,
-          {
-            'balance': currentBalance + amount,
-            'updated_at': DateTime.now().toIso8601String(),
-          },
-          where: 'customer_id = ?',
-          whereArgs: [customerId],
-        );
+      // Check if a record already exists for the specific orderNumber
+      final List<Map<String, dynamic>> existingCreditors = await txn.query(
+        tableCreditors,
+        where: 'order_number = ?',
+        whereArgs: [orderNumber],
+        limit: 1
+      );
+      
+      if (existingCreditors.isNotEmpty) {
+        print('Warning: Credit entry already exists for order #$orderNumber. Skipping duplicate creation.');
+        return; // Skip the insert to prevent duplicates
       }
+      
+      // Create new creditor record since no duplicate exists
+      await txn.insert(tableCreditors, {
+        'customer_id': customerId,
+        'customer_name': customerName,
+        'name': customerName, // Add this field to match NOT NULL constraint
+        'order_id': orderId,
+        'order_number': orderNumber,
+        'amount': amount,
+        'status': 'OPEN',
+        'payment_date': null,
+        'payment_amount': 0.0,
+        'payment_method': null,
+        'payment_details': null,
+        'balance': amount,
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+      });
       
       // Add credit transaction record
       await txn.insert(tableCreditTransactions, {
@@ -4269,6 +4393,86 @@ class DatabaseService {
           'details': 'Created credit of ${amount.toStringAsFixed(2)} for $customerName (Order #$orderNumber)',
           'timestamp': DateTime.now().toIso8601String(),
         });
+      }
+    });
+  }
+  
+  /// Creates a dedicated creditor record for a specific order
+  /// This improves over createCredit by ensuring each order has its own separate credit record
+  /// and preventing accidental merging of credit amounts
+  Future<void> addCreditorRecordForOrder(
+    int customerId,
+    String customerName,
+    int orderId,
+    String orderNumber,
+    double amount,
+    {String? details, 
+     double? originalOrderAmount,
+     String? orderDetailsSummary}
+  ) async {
+    final db = await database;
+    final timestamp = DateTime.now().toIso8601String();
+    
+    await db.transaction((txn) async {
+      // Check if a record already exists for the specific orderNumber
+      final List<Map<String, dynamic>> existingCreditors = await txn.query(
+        tableCreditors,
+        where: 'order_number = ?',
+        whereArgs: [orderNumber],
+        limit: 1
+      );
+      
+      if (existingCreditors.isNotEmpty) {
+        print('Warning: Credit entry already exists for order #$orderNumber. Skipping duplicate creation.');
+        return; // Skip creation to prevent duplicates
+      }
+      
+      // Insert a new creditor record specifically for this order
+      await txn.insert(tableCreditors, {
+        'customer_id': customerId,
+        'customer_name': customerName,
+        'name': customerName, // Required NOT NULL field
+        'order_id': orderId,
+        'order_number': orderNumber,
+        'amount': amount,
+        'original_amount': originalOrderAmount ?? amount,
+        'status': 'PENDING', // Use consistent status naming
+        'details': details ?? 'Credit for order #$orderNumber',
+        'order_details': orderDetailsSummary,
+        'payment_date': null,
+        'payment_amount': 0.0,
+        'payment_method': null,
+        'payment_details': null,
+        'balance': amount, // Initial balance equals the full amount
+        'created_at': timestamp,
+        'updated_at': timestamp,
+      });
+      
+      // Record this in the credit transactions log
+      await txn.insert(tableCreditTransactions, {
+        'customer_id': customerId,
+        'customer_name': customerName,
+        'order_id': orderId,
+        'order_number': orderNumber,
+        'amount': amount,
+        'transaction_type': 'CREDIT',
+        'payment_method': 'Credit',
+        'date': timestamp,
+        'description': details ?? 'Credit purchase for order #$orderNumber',
+        'created_at': timestamp,
+      });
+      
+      // Log the activity
+      final currentUser = await getCurrentUserWithTxn(txn);
+      if (currentUser != null) {
+        await logActivityWithTxn(
+          txn,
+          currentUser['id'],
+          currentUser['username'],
+          'Created credit',
+          actionCreateCreditor,
+          'Created credit of ${amount.toStringAsFixed(2)} for $customerName (Order #$orderNumber)'
+        );
       }
     });
   }

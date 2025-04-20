@@ -418,6 +418,8 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
         builder: (context) => OrderScreen(
           editingOrder: widget.order,
           isEditing: true,
+          preserveOrderNumber: true,              // Keep the order number
+          preventDuplicateCreation: true,         // Critical flag to prevent duplicates
         ),
       ),
     );
@@ -451,6 +453,133 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
     setState(() {
       _totalPaid = totalPaid;
     });
+  }
+
+  // New method to directly complete sales from the credit dialog without creating loops
+  void _directlyCompleteSale(String paymentMethod, double remainingCredit) {
+    // Similar to _completeSale but bypasses the credit dialog check
+    final validItems = widget.order.items.where((item) => item.productId > 0).toList();
+    
+    print('ReceiptPanel - Directly completing sale for order ${widget.order.orderNumber}');
+    print('ReceiptPanel - Payment method: $paymentMethod, Remaining credit: $remainingCredit');
+    print('ReceiptPanel - Valid items: ${validItems.length} of ${widget.order.items.length}');
+    
+    if (widget.order.items.any((item) => item.productId <= 0)) {
+      print('ReceiptPanel - Warning: Order contains invalid products:');
+      for (var item in widget.order.items.where((item) => item.productId <= 0)) {
+        print('  - ${item.productName} (ID: ${item.productId})');
+      }
+    }
+    
+    // Same logic as _completeSale for handling valid items
+    if (validItems.isEmpty && widget.order.totalAmount > 0) {
+      print('ReceiptPanel - No valid items but order has total amount: ${widget.order.totalAmount}');
+      print('ReceiptPanel - Creating a placeholder item for receipt generation');
+      
+      validItems.add(OrderItem(
+        id: 0,
+        orderId: widget.order.id ?? 0,
+        productId: 1, // Use a valid ID to pass the check
+        quantity: 1,
+        unitPrice: widget.order.totalAmount / 3, // Use a reasonable unit price
+        sellingPrice: widget.order.totalAmount, // Make sure selling price matches total
+        totalAmount: widget.order.totalAmount,
+        productName: "Order Total",
+        isSubUnit: false,
+      ));
+    }
+    
+    // Make sure all items have the correct relationship between selling price and total amount
+    final correctedItems = validItems.map((item) {
+      // Calculate effective price (adjusted or selling price)
+      final effectivePrice = item.adjustedPrice ?? item.sellingPrice;
+      
+      // Check if totalAmount doesn't match quantity * effectivePrice
+      if ((item.quantity * effectivePrice - item.totalAmount).abs() > 0.01) {
+        print('ReceiptPanel - Correcting item pricing for ${item.productName}: ' +
+              'Qty: ${item.quantity}, Original Total: ${item.totalAmount}, ' +
+              'Calculated Total: ${item.quantity * effectivePrice}');
+              
+        // Return a corrected item
+        return item.copyWith(
+          totalAmount: item.quantity * effectivePrice,
+        );
+      }
+      return item;
+    }).toList();
+    
+    if (correctedItems.isEmpty) {
+      UIHelpers.showSnackBarWithContext(
+        context, 
+        'Cannot complete sale - no valid product items in order',
+        isError: true,
+      );
+      return;
+    }
+    
+    // Generate a distinct sales receipt number if not already generated
+    _salesReceiptNumber ??= ReceiptNumberGenerator.generateSalesReceiptNumber();
+    
+    print('ReceiptPanel - Generated sales receipt number: $_salesReceiptNumber');
+    
+    // Calculate total paid from split payments
+    double cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
+    double mobileAmount = double.tryParse(_mobileAmountController.text) ?? 0;
+    double bankAmount = double.tryParse(_bankAmountController.text) ?? 0;
+    double totalPaid = cashAmount + mobileAmount + bankAmount;
+    
+    // Calculate the correct total based on the selling prices
+    final correctTotal = correctedItems.fold<double>(0, (sum, item) => sum + item.totalAmount);
+    
+    // Create a copy of the order with the selected payment method and only valid items
+    final updatedOrder = Order(
+      id: widget.order.id,
+      orderNumber: widget.order.orderNumber,
+      salesReceiptNumber: _salesReceiptNumber,
+      heldReceiptNumber: widget.order.heldReceiptNumber,
+      customerId: widget.order.customerId,
+      customerName: widget.order.customerName,
+      totalAmount: correctTotal, // Use the corrected total amount
+      orderStatus: widget.order.orderStatus,
+      // Improved payment status logic for credit orders
+      paymentStatus: remainingCredit > 0 ? 'PARTIAL' : 'PAID', // Use PARTIAL for split payments with credit
+      paymentMethod: paymentMethod,
+      createdBy: widget.order.createdBy,
+      createdAt: widget.order.createdAt,
+      orderDate: widget.order.orderDate,
+      items: correctedItems, // Use the corrected items
+    );
+    
+    print('ReceiptPanel - Completing sale with payment method: $paymentMethod');
+    print('ReceiptPanel - Order items count: ${correctedItems.length}');
+    print('ReceiptPanel - Corrected total amount: $correctTotal');
+    
+    // For split payments with remaining credit, ensure a credit record is created
+    if (remainingCredit > 0 && updatedOrder.customerId != null && updatedOrder.customerName != null) {
+      print('ReceiptPanel - Creating credit record for partial payment, remaining credit: $remainingCredit');
+      
+      // Create credit record for the remaining balance
+      try {
+        DatabaseService.instance.addCreditorRecordForOrder(
+          updatedOrder.customerId!,
+          updatedOrder.customerName!,
+          updatedOrder.id!,
+          updatedOrder.orderNumber,
+          remainingCredit,  // Use the remaining credit amount calculated from split payment
+          details: 'Credit from split payment transaction',
+          orderDetailsSummary: 'Split payment for order #${updatedOrder.orderNumber}'
+        );
+        print('ReceiptPanel - Credit record created successfully for order ${updatedOrder.orderNumber}');
+      } catch (e) {
+        print('ReceiptPanel - Error creating credit record: $e');
+      }
+    }
+    
+    // Call the onProcessSale callback with the updated order
+    widget.onProcessSale(updatedOrder);
+    
+    // Log the sales receipt in the activity log
+    _logSalesReceipt(updatedOrder);
   }
 
   void _completeSale() {
@@ -550,7 +679,12 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       customerName: widget.order.customerName,
       totalAmount: correctTotal, // Use the corrected total amount
       orderStatus: widget.order.orderStatus,
-      paymentStatus: totalPaid >= correctTotal ? 'PAID' : 'PENDING',
+      // Improved payment status logic:
+      // 1. For full direct payments (cash, mobile, bank) -> 'PAID'
+      // 2. For credit sales -> 'CREDIT'
+      // 3. For partial payments -> 'PARTIAL'
+      paymentStatus: totalPaid >= correctTotal ? 'PAID' : 
+                     (effectivePaymentMethod.toLowerCase().contains('credit') ? 'CREDIT' : 'PARTIAL'),
       paymentMethod: effectivePaymentMethod,
       createdBy: widget.order.createdBy,
       createdAt: widget.order.createdAt,
@@ -893,18 +1027,31 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                 ),
               ),
               pw.SizedBox(height: 5),
-              pw.Row(
-                children: [
-                  pw.Text(
-                    'Payment Mode:',
-                    style: const pw.TextStyle(fontSize: 9),
-                  ),
-                  pw.SizedBox(width: 5),
-                  pw.Text(
-                    widget.order.paymentMethod ?? _selectedPaymentMethod,
-                    style: const pw.TextStyle(fontSize: 9),
-                  ),
-                ],
+              // Use a container for payment details to allow for wrapping long text
+              pw.Container(
+                width: double.infinity,
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(
+                      'Payment Mode:',
+                      style: pw.TextStyle(
+                        fontSize: 9,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                    pw.SizedBox(height: 2),
+                    pw.Text(
+                      // Check if the payment method contains split payment details
+                      widget.order.paymentMethod?.contains(':') == true || 
+                      widget.order.paymentMethod?.contains(',') == true
+                          ? widget.order.paymentMethod!  // Use the full detailed string
+                          : (widget.order.paymentMethod ?? _selectedPaymentMethod),
+                      style: const pw.TextStyle(fontSize: 9),
+                      softWrap: true,
+                    ),
+                  ],
+                ),
               ),
               pw.Row(
                 children: [
@@ -1035,20 +1182,38 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
   }
 
   Future<void> _showCreditDetailsDialog() async {
-    // Reset the controllers
-    _creditDetailsController.clear();
+    // Get existing split payment values from the main interface
+    // We'll store these values separately since we need to preserve the controllers as-is
+    final String cashText = _cashAmountController.text;
+    final String mobileText = _mobileAmountController.text;
+    final String bankText = _bankAmountController.text;
+    
+    double existingCashAmount = double.tryParse(cashText) ?? 0;
+    double existingMobileAmount = double.tryParse(mobileText) ?? 0;
+    double existingBankAmount = double.tryParse(bankText) ?? 0;
+    
+    // Calculate total paid amount
+    double existingTotalPaid = existingCashAmount + existingMobileAmount + existingBankAmount;
+    
+    // Setup the controllers for the dialog
+    // We'll create temporary controllers just for the dialog to avoid controller conflicts
+    final dialogCashController = TextEditingController(text: existingCashAmount > 0 ? existingCashAmount.toStringAsFixed(2) : '');
+    final dialogMobileController = TextEditingController(text: existingMobileAmount > 0 ? existingMobileAmount.toStringAsFixed(2) : '');
+    final dialogBankController = TextEditingController(text: existingBankAmount > 0 ? existingBankAmount.toStringAsFixed(2) : '');
+    final dialogNotesController = TextEditingController();
+    
     _creditCustomerNameController.text = widget.order.customerName ?? '';
-    _cashAmountController.clear();
-    _mobileAmountController.clear();
-    _bankAmountController.clear();
     _selectedCustomer = null;
     
-    // Calculate remaining credit amount (initially the full amount)
+    // Calculate remaining credit amount based on existing payments
     double totalAmount = widget.order.totalAmount;
-    double remainingCredit = totalAmount;
+    double remainingCredit = totalAmount - existingTotalPaid;
     
-    // Generate a credit receipt number
+    // Generate a credit receipt number if needed
     final creditReceiptNumber = ReceiptNumberGenerator.generateCreditReceiptNumber();
+    
+    print('ReceiptPanel - Using existing payment: Cash: ${existingCashAmount}, Mobile: ${existingMobileAmount}, Bank: ${existingBankAmount}');
+    print('ReceiptPanel - Total paid amount: ${existingTotalPaid}, Remaining credit: ${remainingCredit}');
     
     print('ReceiptPanel - Generated credit receipt number: $creditReceiptNumber');
     
@@ -1071,9 +1236,9 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
         builder: (context, setState) {
           // Calculate the remaining credit amount based on entered values
           void updateRemainingCredit() {
-            double cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
-            double mobileAmount = double.tryParse(_mobileAmountController.text) ?? 0;
-            double bankAmount = double.tryParse(_bankAmountController.text) ?? 0;
+            double cashAmount = double.tryParse(dialogCashController.text) ?? 0;
+            double mobileAmount = double.tryParse(dialogMobileController.text) ?? 0;
+            double bankAmount = double.tryParse(dialogBankController.text) ?? 0;
             
             double totalPaid = cashAmount + mobileAmount + bankAmount;
             
@@ -1192,7 +1357,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                     children: [
                       Expanded(
                         child: TextFormField(
-                          controller: _cashAmountController,
+                          controller: dialogCashController,
                           decoration: const InputDecoration(
                             labelText: 'Cash Amount',
                             border: OutlineInputBorder(),
@@ -1209,7 +1374,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: TextFormField(
-                          controller: _mobileAmountController,
+                          controller: dialogMobileController,
                           decoration: const InputDecoration(
                             labelText: 'Mobile Payment',
                             border: OutlineInputBorder(),
@@ -1230,7 +1395,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                     children: [
                       Expanded(
                         child: TextFormField(
-                          controller: _bankAmountController,
+                          controller: dialogBankController,
                           decoration: const InputDecoration(
                             labelText: 'Bank Transfer',
                             border: OutlineInputBorder(),
@@ -1248,7 +1413,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   ),
                   const SizedBox(height: 16),
                   TextFormField(
-                    controller: _creditDetailsController,
+                    controller: dialogNotesController,
                     decoration: const InputDecoration(
                       labelText: 'Payment Notes',
                       border: OutlineInputBorder(),
@@ -1276,11 +1441,21 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                     return;
                   }
                   
-                  // Validate total paid amount
-                  double cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
-                  double mobileAmount = double.tryParse(_mobileAmountController.text) ?? 0;
-                  double bankAmount = double.tryParse(_bankAmountController.text) ?? 0;
+                  // Get values from dialog-specific controllers
+                  double cashAmount = double.tryParse(dialogCashController.text) ?? 0;
+                  double mobileAmount = double.tryParse(dialogMobileController.text) ?? 0;
+                  double bankAmount = double.tryParse(dialogBankController.text) ?? 0;
                   double totalPaid = cashAmount + mobileAmount + bankAmount;
+                  
+                  // Update main screen controllers with these values for persistence
+                  if (cashAmount > 0) _cashAmountController.text = cashAmount.toStringAsFixed(2);
+                  if (mobileAmount > 0) _mobileAmountController.text = mobileAmount.toStringAsFixed(2);
+                  if (bankAmount > 0) _bankAmountController.text = bankAmount.toStringAsFixed(2);
+                  
+                  // Update notes if any were entered
+                  if (dialogNotesController.text.isNotEmpty) {
+                    _creditDetailsController.text = dialogNotesController.text;
+                  }
                   
                   if (totalPaid > totalAmount) {
                     UIHelpers.showSnackBarWithContext(
@@ -1300,13 +1475,52 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   if (bankAmount > 0) paymentDetails.add('Bank: KSH ${bankAmount.toStringAsFixed(2)}');
                   if (remainingCredit > 0) paymentDetails.add('Credit: KSH ${remainingCredit.toStringAsFixed(2)}');
                   
+                  // Determine effective payment method based on split payments
                   String paymentMethodsUsed = paymentDetails.join(', ');
                   
-                  // First complete the sale normally
-                  _completeSale();
+                  String effectivePaymentMethod;
+                  if (paymentDetails.length > 1) {
+                    // It's a split payment
+                    effectivePaymentMethod = paymentMethodsUsed;
+                  } else if (remainingCredit > 0 && totalPaid == 0) {
+                    // Full credit payment
+                    effectivePaymentMethod = 'Credit';
+                  } else {
+                    // Single payment method
+                    effectivePaymentMethod = remainingCredit > 0 ? 'Credit' : _selectedPaymentMethod;
+                  }
                   
-                  // Then add the credit record if there's a remaining balance
-                  if (remainingCredit > 0) {
+                  print('ReceiptPanel - Effective payment method: $effectivePaymentMethod');
+                  
+                  // Bypass the normal _completeSale() flow to avoid the loop
+                  // Instead, directly complete the sale with the effective payment method
+                  _directlyCompleteSale(effectivePaymentMethod, remainingCredit);
+                  
+                  // Skip the credit record creation since we'll handle it in _directlyCompleteSale
+                  // But we still want to log the split payment if applicable
+                  // Log the split payment if applicable
+                  if (cashAmount > 0 || mobileAmount > 0 || bankAmount > 0) {
+                    try {
+                      final currentUser = AuthService.instance.currentUser;
+                      if (currentUser != null) {
+                        await DatabaseService.instance.logActivity(
+                          currentUser.id!,
+                          currentUser.username,
+                          'split_payment',
+                          'Split Payment',
+                          'Order #${widget.order.orderNumber}: $paymentMethodsUsed',
+                        );
+                      }
+                    } catch (e) {
+                      print('Error logging split payment: $e');
+                    }
+                  }
+                  
+                  // Just return from here, we don't need the remaining code since _directlyCompleteSale handles everything
+                  return;
+                  
+                  // Keep this condition for backward compatibility, but it should never run now
+                  if (false && remainingCredit > 0) {
                     try {
                       // Make sure customer ID is set
                       int? customerId = widget.order.customerId;
@@ -1439,24 +1653,6 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                         'Error adding credit record: $e',
                         isError: true,
                       );
-                    }
-                  }
-                  
-                  // Log the split payment if applicable
-                  if (cashAmount > 0 || mobileAmount > 0 || bankAmount > 0) {
-                    try {
-                      final currentUser = AuthService.instance.currentUser;
-                      if (currentUser != null) {
-                        await DatabaseService.instance.logActivity(
-                          currentUser.id!,
-                          currentUser.username,
-                          'split_payment',
-                          'Split Payment',
-                          'Order #${widget.order.orderNumber}: $paymentMethodsUsed',
-                        );
-                      }
-                    } catch (e) {
-                      print('Error logging split payment: $e');
                     }
                   }
                 },

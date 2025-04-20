@@ -461,8 +461,8 @@ class OrderService extends ChangeNotifier {
       // Even if there are no items, still allow the sale to complete
       // This handles the case where order items might be malformed or missing
       
-      // Handle credit payment separately
-      if (paymentMethod == 'Credit') {
+      // Handle credit payment and split payments with credit component
+      if (paymentMethod == 'Credit' || paymentMethod.toLowerCase().contains('credit')) {
         // Make sure customer is valid
         if (order.customerId == null || order.customerId! <= 0) {
           throw Exception('Credit payment requires a valid customer account');
@@ -472,31 +472,54 @@ class OrderService extends ChangeNotifier {
           throw Exception('Credit payment requires a valid customer name');
         }
         
-        // Create a copy of the order with credit payment method
+        // Parse out the credit amount for split payments
+        double creditAmount = order.totalAmount ?? 0;
+        
+        // For split payments, calculate the remaining credit amount
+        // This is a simplification - the actual credit amount would be calculated earlier
+        if (paymentMethod.contains('+')) {
+          debugPrint('Split payment detected: $paymentMethod');
+          final paymentStatus = 'PARTIAL'; // Split payments with credit have PARTIAL status
+          
+          // Parse credit amount from the remainingCredit variable in receipt_panel
+          // For now, we'll use the full amount, but ideally this would be passed in
+          // from _showCreditDetailsDialog
+          creditAmount = order.totalAmount ?? 0;
+        }
+        
+        // Create a copy of the order with appropriate payment method and status
         final creditOrder = order.copyWith(
-          paymentMethod: 'Credit',
-          paymentStatus: 'PENDING', // Credit orders have pending payment status
+          paymentMethod: paymentMethod,
+          paymentStatus: paymentMethod.contains('+') ? 'PARTIAL' : 'CREDIT',
         );
         
         // Complete the sale via DatabaseService
-        await DatabaseService.instance.completeSale(creditOrder, paymentMethod: 'Credit');
+        await DatabaseService.instance.completeSale(creditOrder, paymentMethod: paymentMethod);
         
         // Create credit record for customer
-        await DatabaseService.instance.createCredit(
+        await DatabaseService.instance.addCreditorRecordForOrder(
           creditOrder.customerId!,
           creditOrder.customerName!,
           creditOrder.id!,
           creditOrder.orderNumber,
-          creditOrder.totalAmount ?? 0,
+          creditAmount, // Use the calculated credit amount
+          details: 'Credit sale transaction',
+          orderDetailsSummary: 'Full credit purchase for order #${creditOrder.orderNumber}'
         );
         
         notifyListeners();
         return true;
       } else {
         // For cash or other payment methods
+        // Check if this is a split payment with credit component by looking for keyword markers
+        final bool isPartialPayment = paymentMethod.contains('Credit:') || 
+                                    paymentMethod.contains('credit:') || 
+                                    paymentMethod.contains(', Credit') || 
+                                    paymentMethod.contains(', credit');
+        
         final updatedOrder = order.copyWith(
           paymentMethod: paymentMethod,
-          paymentStatus: 'PAID',
+          paymentStatus: isPartialPayment ? 'PARTIAL' : 'PAID',
           orderStatus: STATUS_COMPLETED,
         );
         

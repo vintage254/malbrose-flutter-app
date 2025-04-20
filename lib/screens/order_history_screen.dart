@@ -273,9 +273,12 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                       ),
                     ],
                     rows: _filteredOrders.map((orderData) {
-                      final isCompleted = orderData['status'] == 'COMPLETED';
-                      final isPending = orderData['status'] == 'PENDING';
-                      final isReverted = orderData['status'] == 'REVERTED';
+                      // Get status, checking for both 'status' and 'order_status' fields with null safety
+                      final status = orderData['order_status'] as String? ?? 
+                                    orderData['status'] as String? ?? 'UNKNOWN';
+                      final isCompleted = status == 'COMPLETED';
+                      final isPending = status == 'PENDING';
+                      final isReverted = status == 'REVERTED';
                       
                       return DataRow2(
                         onTap: () {
@@ -290,11 +293,11 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                               DateTime.parse(orderData['created_at']),
                             ),
                           )),
-                          DataCell(Text(orderData['customer_name'])),
+                          DataCell(Text(orderData['customer_name'] ?? 'Unknown')),
                           DataCell(Text(
                             'KSH ${NumberFormat('#,##0.00').format(orderData['total_amount'])}',
                           )),
-                          DataCell(_buildStatusChip(orderData['status'])),
+                          DataCell(_buildStatusChip(status)),
                           DataCell(
                             Row(
                               mainAxisSize: MainAxisSize.min,
@@ -548,9 +551,12 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
     );
   }
 
-  Widget _buildStatusChip(String status) {
+  Widget _buildStatusChip(String? status) {
+    // Handle null status
+    final statusText = status?.toUpperCase() ?? 'UNKNOWN';
     Color color;
-    switch (status.toUpperCase()) {
+    
+    switch (statusText) {
       case 'COMPLETED':
         color = Colors.green;
         break;
@@ -558,14 +564,18 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
         color = Colors.orange;
         break;
       case 'CANCELLED':
+      case 'REVERTED':
         color = Colors.red;
+        break;
+      case 'ON_HOLD':
+        color = Colors.blue;
         break;
       default:
         color = Colors.grey;
     }
 
     return Chip(
-      label: Text(status),
+      label: Text(status ?? 'Unknown'),
       backgroundColor: color.withOpacity(0.2),
       labelStyle: TextStyle(color: color),
       padding: const EdgeInsets.all(4),
@@ -580,8 +590,10 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
     final query = _searchQuery.toLowerCase();
     return _orders.where((order) {
       final orderNumber = order['order_number'].toString().toLowerCase();
-      final customerName = (order['customer_name'] as String).toLowerCase();
-      final status = (order['status'] as String).toLowerCase();
+      final customerName = (order['customer_name'] as String? ?? '').toLowerCase();
+      // Use order_status if available, fall back to status, with null safety
+      final status = (order['order_status'] as String? ?? 
+                     order['status'] as String? ?? 'unknown').toLowerCase();
       
       return orderNumber.contains(query) || 
              customerName.contains(query) || 

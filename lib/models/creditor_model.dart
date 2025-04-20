@@ -9,6 +9,15 @@ class Creditor {
   final String? orderNumber;
   final String? orderDetails;
   final double? originalAmount;
+  final int? customerId;
+  final String? customerName;
+  final int? orderId;
+  final double? amount;
+  final DateTime? paymentDate;
+  final double? paymentAmount;
+  final String? paymentMethod;
+  final String? paymentDetails;
+  final DateTime? updatedAt;
 
   Creditor({
     this.id,
@@ -21,6 +30,15 @@ class Creditor {
     this.orderNumber,
     this.orderDetails,
     this.originalAmount,
+    this.customerId,
+    this.customerName,
+    this.orderId,
+    this.amount,
+    this.paymentDate,
+    this.paymentAmount,
+    this.paymentMethod,
+    this.paymentDetails,
+    this.updatedAt,
   });
 
   Map<String, dynamic> toMap() {
@@ -35,6 +53,15 @@ class Creditor {
       'order_number': orderNumber,
       'order_details': orderDetails,
       'original_amount': originalAmount,
+      'customer_id': customerId,
+      'customer_name': customerName,
+      'order_id': orderId,
+      'amount': amount,
+      'payment_date': paymentDate?.toIso8601String(),
+      'payment_amount': paymentAmount,
+      'payment_method': paymentMethod,
+      'payment_details': paymentDetails,
+      'updated_at': updatedAt?.toIso8601String(),
     };
   }
 
@@ -54,6 +81,19 @@ class Creditor {
       orderNumber: map['order_number'] as String?,
       orderDetails: map['order_details'] as String?,
       originalAmount: map['original_amount'] as double?,
+      customerId: map['customer_id'] as int?,
+      customerName: map['customer_name'] as String?,
+      orderId: map['order_id'] as int?,
+      amount: map['amount'] as double?,
+      paymentDate: map['payment_date'] != null 
+          ? DateTime.parse(map['payment_date'] as String)
+          : null,
+      paymentAmount: map['payment_amount'] as double?,
+      paymentMethod: map['payment_method'] as String?,
+      paymentDetails: map['payment_details'] as String?,
+      updatedAt: map['updated_at'] != null 
+          ? DateTime.parse(map['updated_at'] as String)
+          : null,
     );
   }
 
@@ -68,6 +108,15 @@ class Creditor {
     String? orderNumber,
     String? orderDetails,
     double? originalAmount,
+    int? customerId,
+    String? customerName,
+    int? orderId,
+    double? amount,
+    DateTime? paymentDate,
+    double? paymentAmount,
+    String? paymentMethod,
+    String? paymentDetails,
+    DateTime? updatedAt,
   }) {
     return Creditor(
       id: id ?? this.id,
@@ -80,6 +129,15 @@ class Creditor {
       orderNumber: orderNumber ?? this.orderNumber,
       orderDetails: orderDetails ?? this.orderDetails,
       originalAmount: originalAmount ?? this.originalAmount,
+      customerId: customerId ?? this.customerId,
+      customerName: customerName ?? this.customerName,
+      orderId: orderId ?? this.orderId,
+      amount: amount ?? this.amount,
+      paymentDate: paymentDate ?? this.paymentDate,
+      paymentAmount: paymentAmount ?? this.paymentAmount,
+      paymentMethod: paymentMethod ?? this.paymentMethod,
+      paymentDetails: paymentDetails ?? this.paymentDetails,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 } 
