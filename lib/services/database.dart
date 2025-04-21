@@ -19,14 +19,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bcrypt/bcrypt.dart';
 
 class DatabaseService {
-  static final DatabaseService instance = DatabaseService._init();
+  static final DatabaseService instance = DatabaseService._privateConstructor();
   static Database? _database;
   final _lock = Lock();
   bool _initialized = false;
 
-  // Database constants
-  static const String dbName = 'malbrose_db.db';
-  static const int dbVersion = 1;
+  // Database name and version
+  static const dbName = 'mb_pos_db.db';
+  static const dbVersion = 1; // Increment this when schema changes
   
   // Add this property to fix missing databaseVersion error
   final int databaseVersion = 1;
@@ -68,45 +68,18 @@ class DatabaseService {
   static const String PERMISSION_FULL_ACCESS = 'FULL_ACCESS';
   static const String PERMISSION_BASIC = 'BASIC';
 
-  DatabaseService._init();
+  DatabaseService._privateConstructor();
 
   // Completely rewritten database getter to be more reliable
   Future<Database> get database async {
-    try {
+    if (_database != null) return _database!;
+    
+    return await _lock.synchronized(() async {
       if (_database != null) return _database!;
-
-      // Use a lock to prevent multiple initializations at the same time
-      return await _lock.synchronized(() async {
-        if (_database != null) return _database!;
-        
-        // Initialize the database with retry 
-        _database = await _initDB();
-        _initialized = true;
-        
-        // Add admin user if not exists
-        await _ensureAdminUserExists();
-        
-        return _database!;
-      });
-    } catch (e) {
-      print('Critical error getting database: $e');
       
-      // Last resort emergency fallback - create in-memory database
-      try {
-        if (_database == null) {
-          print('Creating emergency in-memory database');
-          _database = await openDatabase(
-            ':memory:',
-            version: databaseVersion,
-            onCreate: _createTables,
-          );
-        }
-        return _database!;
-      } catch (fallbackError) {
-        print('Fatal error creating fallback database: $fallbackError');
-        rethrow;
-      }
-    }
+      _database = await _initDatabase();
+      return _database!;
+    });
   }
 
   // Add a method to explicitly close the database
@@ -892,7 +865,7 @@ class DatabaseService {
           // Verify the order is completed
           final orderData = await txn.query(
             tableOrders,
-            where: 'id = ? AND status = ?',
+            where: 'id = ? AND order_status = ?',
             whereArgs: [order.id, 'COMPLETED'],
             limit: 1,
           );
@@ -973,6 +946,7 @@ class DatabaseService {
             tableOrders,
             {
               'status': 'REVERTED',
+              'order_status': 'REVERTED', // Also update order_status for consistency
               'payment_status': 'REVERTED',
               'updated_at': DateTime.now().toIso8601String(),
             },
@@ -1849,7 +1823,53 @@ class DatabaseService {
   }
 
   // Initialize the database (backward compatibility method name)
-  Future<Database> _initDatabase() => _initDB();
+  Future<Database> _initDatabase() async {
+    if (_initialized) {
+      print('Database already initialized');
+      if (_database != null) return _database!;
+    }
+    
+    try {
+      final databasePath = await getDatabasesPath();
+      final dbPath = p.join(databasePath, dbName);
+      
+      // Ensure the directory exists
+      final dbDir = Directory(p.dirname(dbPath));
+      if (!await dbDir.exists()) {
+        await dbDir.create(recursive: true);
+      }
+      
+      // Open database with proper configuration
+      return await databaseFactoryFfi.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: dbVersion,
+          onCreate: _createTables,
+          // We'll avoid automatically running migrations on each start since we have
+          // a comprehensive schema creation in _createTables
+          onUpgrade: null, // Remove onUpgrade to avoid unnecessary schema changes
+          onOpen: (db) async {
+            // Ensure all tables exist when opening
+            await _ensureTablesExist(db);
+            
+            // Enable foreign keys
+            await db.execute('PRAGMA foreign_keys = ON');
+            
+            // Set journal mode to WAL for better performance
+            await db.execute('PRAGMA journal_mode = WAL');
+            
+            // Set synchronous to NORMAL for better performance while maintaining safety
+            await db.execute('PRAGMA synchronous = NORMAL');
+            
+            print('Database opened with pragmas set');
+          }
+        )
+      );
+    } catch (e) {
+      print('Error initializing database: $e');
+      rethrow;
+    }
+  }
 
   // Force recreate creditors table to remove UNIQUE constraint - improved version
   Future<void> fixUniqueConstraint() async {
@@ -2085,7 +2105,7 @@ class DatabaseService {
                 tableOrders,
                 {
                   'payment_status': 'PAID',
-                  'last_updated': timestamp,
+                  'updated_at': timestamp,
                 },
                 where: 'order_number = ?',
                 whereArgs: [orderNumber],
@@ -2351,22 +2371,41 @@ class DatabaseService {
             throw Exception('No items found for order');
           }
           
-          // Update order status using order_status field
-          await txn.update(
+          // Determine the correct payment status - first respect the Order object's value
+          String finalPaymentStatus;
+          if (order.paymentStatus != null && order.paymentStatus!.isNotEmpty) {
+            // Use the payment status already set in the Order object
+            finalPaymentStatus = order.paymentStatus!;
+            print("DatabaseService.completeSale: Using order's payment_status: '$finalPaymentStatus' for order #${order.orderNumber}");
+          } else {
+            // Determine based on payment method with improved detection
+            if (paymentMethod == 'Credit') {
+              finalPaymentStatus = 'CREDIT';
+            } else if (paymentMethod.toLowerCase().contains('credit')) {
+              // More robust check for any split payment containing 'credit'
+              finalPaymentStatus = 'PARTIAL';
+              print("DatabaseService.completeSale: Split payment detected in: '$paymentMethod' for order #${order.orderNumber}");
+            } else {
+              finalPaymentStatus = 'PAID';
+            }
+            print("DatabaseService.completeSale: Determined payment_status: '$finalPaymentStatus' for order #${order.orderNumber}");
+          }
+          
+          // Update order status using order_status field and set consistent payment_status
+          final rowsAffected = await txn.update(
             tableOrders,
             {
               'order_status': 'COMPLETED',
-              'payment_status': paymentMethod == 'Credit' ? 'PENDING' : 
-                            (paymentMethod.contains('Credit:') || 
-                             paymentMethod.contains('credit:') || 
-                             paymentMethod.contains(', Credit') || 
-                             paymentMethod.contains(', credit')) ? 'PARTIAL' : 'PAID',
+              'status': 'COMPLETED', // Also update status field for consistency
+              'payment_status': finalPaymentStatus,
               'payment_method': paymentMethod,
               'updated_at': DateTime.now().toIso8601String(),
             },
             where: 'order_number = ?',
             whereArgs: [order.orderNumber],
           );
+          
+          print("DatabaseService.completeSale: Updated $rowsAffected rows for order #${order.orderNumber} with payment_status: '$finalPaymentStatus'");
           
           // Update product quantities
           for (var item in orderItems) {
@@ -3383,6 +3422,7 @@ class DatabaseService {
           tableOrders,
           {
             'order_status': status,
+            'status': status, // Also update status for consistency
             'updated_at': DateTime.now().toIso8601String(),
           },
           where: 'id = ?',
@@ -3884,10 +3924,19 @@ class DatabaseService {
     try {
       final db = await database;
       
-      // Hash the password if not already hashed
+      // Hash the password only if it's not already in bcrypt format
       if (userData.containsKey('password')) {
         final password = userData['password'] as String;
-        userData['password'] = _hashPassword(password);
+        // Check if it looks like a bcrypt hash (starts with $2a$, $2b$, or $2y$)
+        if (!password.startsWith(r'$2a$') && 
+            !password.startsWith(r'$2b$') && 
+            !password.startsWith(r'$2y$')) {
+          print("createUser: Hashing plain password");
+          userData['password'] = _hashPassword(password);
+        } else {
+          print("createUser: Password already hashed, using as-is");
+          // Password is already hashed, don't modify it
+        }
       }
       
       // Set default values if not provided
@@ -4615,5 +4664,73 @@ class DatabaseService {
     );
     
     return maps.isNotEmpty ? maps.first : null;
+  }
+
+  /// Get customer orders with items in a single efficient query
+  Future<Map<String, List<Map<String, dynamic>>>> getCustomerOrdersWithItems(
+    int customerId, {
+    String? startDate, 
+    String? endDate
+  }) async {
+    final db = await database;
+    
+    try {
+      // Build date filter conditions if dates provided
+      String dateFilter = '';
+      List<dynamic> dateArgs = [];
+      
+      if (startDate != null && endDate != null) {
+        dateFilter = ' AND o.created_at >= ? AND o.created_at < ?';
+        dateArgs = [startDate, endDate];
+      } else if (startDate != null) {
+        dateFilter = ' AND o.created_at >= ?';
+        dateArgs = [startDate];
+      } else if (endDate != null) {
+        dateFilter = ' AND o.created_at < ?';
+        dateArgs = [endDate];
+      }
+      
+      // Get all orders for customer with date filtering
+      final orders = await db.rawQuery('''
+        SELECT *
+        FROM $tableOrders o
+        WHERE o.customer_id = ?$dateFilter
+        ORDER BY o.created_at DESC
+      ''', [customerId, ...dateArgs]);
+      
+      // Extract order IDs for the items query
+      final orderIds = orders.map((order) => order['id'] as int).toList();
+      
+      // No orders? Return empty results
+      if (orderIds.isEmpty) {
+        return {
+          'orders': [],
+          'orderItems': []
+        };
+      }
+      
+      // Convert orderIds to placeholders for SQL query
+      final placeholders = orderIds.map((_) => '?').join(',');
+      
+      // Get all items for these orders in a single query
+      final orderItems = await db.rawQuery('''
+        SELECT oi.*, p.product_name
+        FROM $tableOrderItems oi
+        LEFT JOIN $tableProducts p ON oi.product_id = p.id
+        WHERE oi.order_id IN ($placeholders)
+        ORDER BY oi.order_id, oi.id
+      ''', [...orderIds]);
+      
+      return {
+        'orders': orders,
+        'orderItems': orderItems
+      };
+    } catch (e) {
+      print('Error in getCustomerOrdersWithItems: $e');
+      return {
+        'orders': [],
+        'orderItems': []
+      };
+    }
   }
 }

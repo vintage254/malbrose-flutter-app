@@ -58,220 +58,90 @@ class Order {
     };
   }
 
-  factory Order.fromMap(Map<String, dynamic> map) {
-    final customerName = map['customer_name'] as String?;
-    if (customerName == null || customerName.isEmpty) {
-      throw ArgumentError('Customer name is required');
-    }
-
-    // Parse items from items_json if present
+  static Order fromMap(Map<String, dynamic> map) {
+    // Handle parsing items
     List<OrderItem> orderItems = [];
-    if (map['items_json'] != null) {
-      try {
-        final orderNumber = map['order_number'] as String? ?? 'Unknown';
-        print('Raw items_json before parsing: ${map['items_json']}');
-        
-        // Function to convert map to OrderItem safely
-        OrderItem? createOrderItemSafely(Map<String, dynamic> itemData, int orderId) {
+    
+    try {
+      if (map.containsKey('items_json')) {
+        final itemsJson = map['items_json'];
+        if (itemsJson != null && itemsJson.toString().isNotEmpty) {
+          // Try to parse different formats of items_json
           try {
-            // Extract values with safe fallbacks
-            final productId = itemData['product_id'] is int
-                ? itemData['product_id'] as int
-                : int.tryParse(itemData['product_id']?.toString() ?? '') ?? 0;
-                
-            final quantity = itemData['quantity'] is int
-                ? itemData['quantity'] as int
-                : int.tryParse(itemData['quantity']?.toString() ?? '') ?? 1;
-                
-            final unitPrice = itemData['unit_price'] is num
-                ? (itemData['unit_price'] as num).toDouble()
-                : double.tryParse(itemData['unit_price']?.toString() ?? '') ?? 0.0;
-                
-            final sellingPrice = itemData['selling_price'] is num
-                ? (itemData['selling_price'] as num).toDouble()
-                : (double.tryParse(itemData['selling_price']?.toString() ?? '') ?? unitPrice);
-                
-            final productName = itemData['product_name']?.toString() ?? 'Unknown Product';
-            
-            // Calculate total if not available
-            final providedTotal = itemData['total_amount'] is num
-                ? (itemData['total_amount'] as num).toDouble()
-                : double.tryParse(itemData['total_amount']?.toString() ?? '');
-            final totalAmount = providedTotal ?? (sellingPrice * quantity);
-            
-            // Convert is_sub_unit which might come as int, bool, or string
-            bool isSubUnit = false;
-            if (itemData['is_sub_unit'] != null) {
-              if (itemData['is_sub_unit'] is bool) {
-                isSubUnit = itemData['is_sub_unit'] as bool;
-              } else if (itemData['is_sub_unit'] is int) {
-                isSubUnit = (itemData['is_sub_unit'] as int) == 1;
-              } else if (itemData['is_sub_unit'] is String) {
-                isSubUnit = (itemData['is_sub_unit'] as String).toLowerCase() == 'true' || 
-                          (itemData['is_sub_unit'] as String) == '1';
-              }
-            }
-            
-            // Skip invalid items
-            if (productId <= 0 || productName.isEmpty || quantity <= 0) {
-              print('Skipping invalid item: $itemData');
-              return null;
-            }
-            
-            print('Successfully created OrderItem: $productName (ID: $productId, Qty: $quantity)');
-            
-            return OrderItem(
-              id: itemData['id'] is int ? itemData['id'] as int : null,
-              orderId: orderId,
-              productId: productId,
-              quantity: quantity,
-              unitPrice: unitPrice,
-              sellingPrice: sellingPrice,
-              totalAmount: totalAmount,
-              productName: productName,
-              isSubUnit: isSubUnit,
-              subUnitName: itemData['sub_unit_name']?.toString(),
-              subUnitQuantity: itemData['sub_unit_quantity'] is num
-                  ? (itemData['sub_unit_quantity'] as num).toDouble()
-                  : double.tryParse(itemData['sub_unit_quantity']?.toString() ?? ''),
-              adjustedPrice: itemData['adjusted_price'] is num
-                  ? (itemData['adjusted_price'] as num).toDouble()
-                  : double.tryParse(itemData['adjusted_price']?.toString() ?? ''),
-            );
-          } catch (e) {
-            print('Error creating individual OrderItem: $e');
-            print('Problem item data: $itemData');
-            return null;
-          }
-        }
-        
-        // MULTIPLE APPROACHES TO PARSE THE DATA
-        final orderId = map['id'] is int ? map['id'] as int : 0;
-        var itemsList = <Map<String, dynamic>>[];
-        var rawJson = map['items_json'];
-        
-        // APPROACH 1: Direct List
-        if (rawJson is List) {
-          print('Approach 1: Processing direct List');
-          if (rawJson.isNotEmpty) {
-            if (rawJson.first is List) {
-              // Handle nested list format: [[{item1}, {item2}]]
-              try {
-                // Use safer method to extract from nested list
-                for (var outerItem in rawJson) {
-                  if (outerItem is List) {
-                    for (var innerItem in outerItem) {
-                      if (innerItem is Map<String, dynamic>) {
-                        itemsList.add(innerItem);
-                      }
-                    }
-                  } else if (outerItem is Map<String, dynamic>) {
-                    // Sometimes the first item might be a List but others are Maps
-                    itemsList.add(outerItem);
-                  }
+            try {
+              // Try to parse as a List<dynamic>
+              dynamic itemsList = json.decode(itemsJson.toString());
+              
+              if (itemsList is List) {
+                if (itemsList.isNotEmpty && itemsList[0] is List) {
+                  // Handle nested JSON arrays [[{...}]]
+                  itemsList = itemsList[0];
                 }
-              } catch (e) {
-                print('Error processing nested list: $e');
-                // Fallback: try to work with the raw list
-                for (var item in rawJson) {
+
+                for (var item in itemsList) {
                   if (item is Map<String, dynamic>) {
-                    itemsList.add(item);
+                    final productId = (item['product_id'] as num?)?.toInt() ?? 0;
+                    final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
+                    final unitPrice = (item['unit_price'] as num?)?.toDouble() ?? 0.0;
+                    final sellingPrice = (item['selling_price'] as num?)?.toDouble() ?? 0.0;
+                    final totalAmount = (item['total_amount'] as num?)?.toDouble() ?? 0.0;
+                    final productName = item['product_name'] as String? ?? 'Unknown Product';
+                    
+                    orderItems.add(OrderItem(
+                      orderId: map['id'] as int? ?? 0,
+                      productId: productId,
+                      quantity: quantity,
+                      unitPrice: unitPrice,
+                      sellingPrice: sellingPrice,
+                      totalAmount: totalAmount,
+                      productName: productName,
+                      isSubUnit: item['is_sub_unit'] == 1,
+                      subUnitName: item['sub_unit_name'] as String?,
+                      subUnitQuantity: (item['sub_unit_quantity'] as num?)?.toDouble(),
+                      adjustedPrice: (item['adjusted_price'] as num?)?.toDouble(),
+                    ));
                   }
                 }
               }
-            } else {
-              // Standard list format: [{item1}, {item2}]
-              for (var item in rawJson) {
-                if (item is Map<String, dynamic>) {
-                  itemsList.add(item);
-                }
-              }
-            }
-          }
-        }
-        // APPROACH 2: String parsing
-        else if (rawJson is String || rawJson.toString().isNotEmpty) {
-          print('Approach 2: Processing string representation');
-          String jsonStr = rawJson.toString();
-          
-          try {
-            // Attempt to parse as JSON
-            var parsed = json.decode(jsonStr);
-            
-            if (parsed is List) {
-              if (parsed.isNotEmpty && parsed.first is List) {
-                // Handle nested list in string: "[[{\"item1\"}, {\"item2\"}]]"
-                try {
-                  // Handle multi-level nesting more safely
-                  for (var outerItem in parsed) {
-                    if (outerItem is List) {
-                      for (var innerItem in outerItem) {
-                        if (innerItem is Map<String, dynamic>) {
-                          itemsList.add(innerItem);
-                        }
-                      }
-                    } else if (outerItem is Map<String, dynamic>) {
-                      // Sometimes mixed format
-                      itemsList.add(outerItem);
-                    }
-                  }
-                } catch (e) {
-                  print('Error processing nested JSON list: $e');
-                  // Fallback for simple first-level nesting
-                  try {
-                    List<dynamic> innerList = parsed.first as List<dynamic>;
-                    for (var item in innerList) {
-                      if (item is Map<String, dynamic>) {
-                        itemsList.add(item);
-                      }
-                    }
-                  } catch (e) {
-                    print('Fallback also failed: $e');
-                  }
-                }
-              } else {
-                // Standard list in string: "[{\"item1\"}, {\"item2\"}]"
-                for (var item in parsed) {
-                  if (item is Map<String, dynamic>) {
-                    itemsList.add(item);
-                  }
-                }
-              }
-            } else if (parsed is Map<String, dynamic>) {
-              // Single item: "{\"item1\"}"
-              itemsList.add(parsed);
+            } catch (e) {
+              print('Error parsing items_json as List: $e');
             }
           } catch (e) {
-            print('Error parsing JSON string: $e');
+            print('Error parsing items_json: $e');
           }
         }
-        
-        print('Successfully parsed ${itemsList.length} items from JSON for order $orderNumber');
-        
-        // Now process the list of items
-        for (var itemData in itemsList) {
-          final orderItem = createOrderItemSafely(itemData, orderId);
-          if (orderItem != null) {
-            orderItems.add(orderItem);
-          }
-        }
-      } catch (e) {
-        print('Error parsing items_json: $e');
-        print('Raw items_json: ${map['items_json']}');
       }
+    } catch (e) {
+      print('Error processing items_json: $e');
     }
 
-    double totalAmount = (map['total_amount'] as num?)?.toDouble() ?? 0.0;
+    // Handle customer name - use non-null default if original is null/empty
+    String? customerName = map['customer_name'] as String?;
+    if (customerName == null || customerName.isEmpty) {
+      customerName = 'Walk-in Customer';
+    }
 
-    // Ensure the total amount matches the sum of item totals
+    // Calculate total from items if available or use the provided total
+    double totalAmount = 0.0;
     if (orderItems.isNotEmpty) {
-      final calculatedTotal = orderItems.fold<double>(0, (sum, item) => sum + item.totalAmount);
-      if (calculatedTotal > 0 && (totalAmount == 0 || (calculatedTotal - totalAmount).abs() > 0.01)) {
-        print('Warning: Order total amount ($totalAmount) does not match sum of items ($calculatedTotal). Using calculated total.');
-        totalAmount = calculatedTotal;
-      }
+      // Sum up individual item totals
+      totalAmount = orderItems.fold<double>(
+        0, 
+        (sum, item) => sum + item.totalAmount
+      );
+    } else {
+      // Fallback to the total in the order if no items
+      totalAmount = map['total_amount'] != null ? 
+                    (map['total_amount'] as num).toDouble() : 
+                    0.0;
     }
-
+    
+    // Explicitly prioritize order_status over the deprecated status field
+    // Status field is planned to be removed in future updates
+    final orderStatus = map['order_status'] as String? ?? 
+                       map['status'] as String? ?? // Fallback to status field (deprecated)
+                       'PENDING';
+    
     return Order(
       id: map['id'] as int?,
       orderNumber: map['order_number'] as String,
@@ -280,7 +150,7 @@ class Order {
       totalAmount: totalAmount,
       customerName: customerName,
       customerId: (map['customer_id'] as num?)?.toInt(),
-      orderStatus: map['order_status'] as String? ?? map['status'] as String? ?? 'PENDING',
+      orderStatus: orderStatus,
       paymentStatus: map['payment_status'] as String? ?? 'PENDING',
       paymentMethod: map['payment_method'] as String?,
       createdBy: (map['created_by'] as num?)?.toInt() ?? 1,

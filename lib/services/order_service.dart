@@ -445,9 +445,6 @@ class OrderService extends ChangeNotifier {
     }
   }
 
-
-  
-  
   // Complete a sale
   Future<bool> completeSale(Order order, {String paymentMethod = 'Cash'}) async {
     try {
@@ -479,7 +476,10 @@ class OrderService extends ChangeNotifier {
         // This is a simplification - the actual credit amount would be calculated earlier
         if (paymentMethod.contains('+')) {
           debugPrint('Split payment detected: $paymentMethod');
-          final paymentStatus = 'PARTIAL'; // Split payments with credit have PARTIAL status
+          
+          // Split payments with credit have PARTIAL status
+          final paymentStatus = 'PARTIAL';
+          debugPrint('Setting payment status to $paymentStatus for split payment');
           
           // Parse credit amount from the remainingCredit variable in receipt_panel
           // For now, we'll use the full amount, but ideally this would be passed in
@@ -488,9 +488,14 @@ class OrderService extends ChangeNotifier {
         }
         
         // Create a copy of the order with appropriate payment method and status
+        final String finalPaymentStatus = paymentMethod.toLowerCase().contains('credit') && 
+                                    paymentMethod != 'Credit' ? 'PARTIAL' : 'CREDIT';
+                                    
+        debugPrint('OrderService.completeSale: Setting payment status to $finalPaymentStatus for order #${order.orderNumber}');
+        
         final creditOrder = order.copyWith(
           paymentMethod: paymentMethod,
-          paymentStatus: paymentMethod.contains('+') ? 'PARTIAL' : 'CREDIT',
+          paymentStatus: finalPaymentStatus,
         );
         
         // Complete the sale via DatabaseService
@@ -507,21 +512,24 @@ class OrderService extends ChangeNotifier {
           orderDetailsSummary: 'Full credit purchase for order #${creditOrder.orderNumber}'
         );
         
+        // Refresh stats before notifying listeners to ensure UI updates with latest data
+        await refreshStats();
         notifyListeners();
         return true;
       } else {
         // For cash or other payment methods
         // Check if this is a split payment with credit component by looking for keyword markers
-        final bool isPartialPayment = paymentMethod.contains('Credit:') || 
-                                    paymentMethod.contains('credit:') || 
-                                    paymentMethod.contains(', Credit') || 
-                                    paymentMethod.contains(', credit');
+        final bool isPartialPayment = paymentMethod.toLowerCase().contains('credit');
+        
+        debugPrint('OrderService.completeSale: Payment method: $paymentMethod, isPartial: $isPartialPayment');
         
         final updatedOrder = order.copyWith(
           paymentMethod: paymentMethod,
           paymentStatus: isPartialPayment ? 'PARTIAL' : 'PAID',
           orderStatus: STATUS_COMPLETED,
         );
+        
+        debugPrint('OrderService.completeSale: Set payment status to ${updatedOrder.paymentStatus} for order #${updatedOrder.orderNumber}');
         
         try {
           // Update product quantities safely without using last_updated field
@@ -571,6 +579,8 @@ class OrderService extends ChangeNotifier {
           // Complete the order - updating status
           await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
           
+          // Refresh stats before notifying listeners to ensure UI updates with latest data
+          await refreshStats();
           notifyListeners();
           return true;
         } catch (e) {
@@ -588,12 +598,18 @@ class OrderService extends ChangeNotifier {
             }
             
             await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
+            
+            // Refresh stats before notifying listeners to ensure UI updates with latest data
+            await refreshStats();
             notifyListeners();
             return true;
           } catch (e2) {
             debugPrint('Error with basic quantity update: $e2');
             // Still attempt to complete the sale without inventory changes
             await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
+            
+            // Refresh stats before notifying listeners to ensure UI updates with latest data
+            await refreshStats();
             notifyListeners();
             return true;
           }

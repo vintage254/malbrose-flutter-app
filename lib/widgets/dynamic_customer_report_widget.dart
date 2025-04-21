@@ -47,170 +47,161 @@ class DynamicCustomerReportWidget extends StatelessWidget {
 
     return Card(
       margin: const EdgeInsets.all(defaultPadding),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.vertical,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Padding(
-            padding: const EdgeInsets.all(defaultPadding),
-            child: SizedBox(
-              width: MediaQuery.of(context).size.width * 0.9,
+      child: Padding(
+        padding: const EdgeInsets.all(defaultPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header with title and action buttons
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Customer Report',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.download),
+                      label: const Text('Download PDF'),
+                      onPressed: () => _generateAndDownloadPdf(context),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.print),
+                      label: const Text('Print'),
+                      onPressed: () => _printReport(context),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const Divider(),
+            
+            // Report header information
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header with title and action buttons
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Customer Report',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        const SizedBox(width: defaultPadding),
-                        Row(
+                  _buildInfoRow('Customer:', customer.name),
+                  _buildInfoRow('Generated On:', DateFormat('MMM dd, yyyy').format(DateTime.now())),
+                  
+                  // Date range information
+                  Builder(
+                    builder: (context) {
+                      if (startDate != null && endDate != null) {
+                        return _buildInfoRow('Report Period:', 
+                          '${DateFormat('MMM dd, yyyy').format(startDate!)} to ${DateFormat('MMM dd, yyyy').format(endDate!)}');
+                      } else if (startDate != null) {
+                        return _buildInfoRow('From:', DateFormat('MMM dd, yyyy').format(startDate!));
+                      } else if (endDate != null) {
+                        return _buildInfoRow('To:', DateFormat('MMM dd, yyyy').format(endDate!));
+                      } else {
+                        return const SizedBox.shrink();
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: defaultPadding),
+            
+            // Orders and items in expandable panels
+            Expanded(
+              child: ListView(
+                children: [
+                  ...orders.map((order) {
+                    // Extract values with null safety
+                    final orderId = order['id'] as int?;
+                    if (orderId == null) {
+                      return const SizedBox.shrink(); // Skip orders with null ID
+                    }
+                    
+                    final orderItems = itemsByOrder[orderId] ?? [];
+                    final orderNumber = order['order_number'] as String? ?? 'Unknown';
+                    
+                    DateTime orderDate;
+                    try {
+                      orderDate = DateTime.parse(order['created_at'] as String? ?? '');
+                    } catch (e) {
+                      // Use current date as fallback for invalid dates
+                      orderDate = DateTime.now();
+                      print('Error parsing order date: $e');
+                    }
+                    
+                    // Use order_status with fallback to status for consistent behavior
+                    final status = order['order_status'] as String? ?? 
+                                order['status'] as String? ?? 
+                                'UNKNOWN';
+                    
+                    final totalAmount = (order['total_amount'] as num?)?.toDouble() ?? 0.0;
+                    
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      elevation: 2,
+                      color: status == 'COMPLETED' ? Colors.green.shade50 : Colors.orange.shade50,
+                      child: ExpansionTile(
+                        initiallyExpanded: true, // Show order details by default
+                        title: Text('Order #$orderNumber - ${DateFormat('MMM dd, yyyy').format(orderDate)}'),
+                        subtitle: Row(
                           children: [
-                            ElevatedButton.icon(
-                              icon: const Icon(Icons.download),
-                              label: const Text('Download PDF'),
-                              onPressed: () => _generateAndDownloadPdf(context),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              icon: const Icon(Icons.print),
-                              label: const Text('Print'),
-                              onPressed: () => _printReport(context),
-                            ),
+                            Text('Total: KSH ${totalAmount.toStringAsFixed(2)}'),
+                            const SizedBox(width: 16),
+                            _buildStatusChip(status),
                           ],
                         ),
-                      ],
-                    ),
-                  ),
-                  const Divider(),
-                  
-                  // Report header information
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildInfoRow('Customer:', customer.name),
-                        _buildInfoRow('Generated On:', DateFormat('MMM dd, yyyy').format(DateTime.now())),
-                        
-                        // Date range information
-                        Builder(
-                          builder: (context) {
-                            if (startDate != null && endDate != null) {
-                              return _buildInfoRow('Report Period:', 
-                                '${DateFormat('MMM dd, yyyy').format(startDate!)} to ${DateFormat('MMM dd, yyyy').format(endDate!)}');
-                            } else if (startDate != null) {
-                              return _buildInfoRow('From:', DateFormat('MMM dd, yyyy').format(startDate!));
-                            } else if (endDate != null) {
-                              return _buildInfoRow('To:', DateFormat('MMM dd, yyyy').format(endDate!));
-                            } else {
-                              return const SizedBox.shrink();
-                            }
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                  
-                  const SizedBox(height: defaultPadding),
-                  
-                  // Orders table
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      minWidth: 500,
-                      maxHeight: 400,
-                    ),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.vertical,
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: DataTable(
-                          horizontalMargin: 20,
-                          columnSpacing: 30,
-                          headingRowColor: WidgetStateProperty.all(Colors.grey.shade200),
-                          columns: const [
-                            DataColumn(label: Text('Order #')),
-                            DataColumn(label: Text('Date')),
-                            DataColumn(label: Text('Items')),
-                            DataColumn(label: Text('Total Amount')),
-                            DataColumn(label: Text('Status')),
-                          ],
-                          rows: orders.map((order) {
-                            // Extract values with null safety
-                            final orderId = order['id'] as int?;
-                            if (orderId == null) {
-                              // Skip orders with null ID
-                              return DataRow(cells: [
-                                DataCell(Text('ERROR')),
-                                DataCell(Text('')),
-                                DataCell(Text('')),
-                                DataCell(Text('')),
-                                DataCell(Text('INVALID DATA')),
-                              ]);
-                            }
-                            
-                            final orderItems = itemsByOrder[orderId] ?? [];
-                            final orderNumber = order['order_number'] as String? ?? 'Unknown';
-                            
-                            DateTime orderDate;
-                            try {
-                              orderDate = DateTime.parse(order['created_at'] as String? ?? '');
-                            } catch (e) {
-                              // Use current date as fallback for invalid dates
-                              orderDate = DateTime.now();
-                              print('Error parsing order date: $e');
-                            }
-                            
-                            final totalAmount = (order['total_amount'] as num?)?.toDouble() ?? 0.0;
-                            final status = order['status'] as String? ?? 'UNKNOWN';
-                            
-                            return DataRow(
-                              color: WidgetStateProperty.resolveWith<Color?>((Set<WidgetState> states) {
-                                return status == 'COMPLETED' ? Colors.green.shade50 : Colors.orange.shade50;
-                              }),
-                              cells: [
-                                DataCell(Text(orderNumber)),
-                                DataCell(Text(DateFormat('MMM dd, yyyy').format(orderDate))),
-                                DataCell(
-                                  Text(orderItems.length.toString()),
-                                  onTap: () => _showOrderItemsDialog(context, order, orderItems),
-                                ),
-                                DataCell(Text('KSH ${totalAmount.toStringAsFixed(2)}')),
-                                DataCell(
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: status == 'COMPLETED' ? Colors.green : Colors.orange,
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Text(
-                                      status,
-                                      style: const TextStyle(color: Colors.white),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            );
-                          }).toList(),
-                        ),
+                        children: [
+                          Container(
+                            width: double.infinity,
+                            constraints: BoxConstraints(
+                              minWidth: MediaQuery.of(context).size.width * 0.9,
+                            ),
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              child: DataTable(
+                                columnSpacing: 24,
+                                horizontalMargin: 12,
+                                columns: const [
+                                  DataColumn(label: Text('Product')),
+                                  DataColumn(label: Text('Quantity')),
+                                  DataColumn(label: Text('Unit Price')),
+                                  DataColumn(label: Text('Total')),
+                                ],
+                                rows: orderItems.map((item) {
+                                  final isSubUnit = (item['is_sub_unit'] as int?) == 1;
+                                  final subUnitName = item['sub_unit_name'] as String?;
+                                  
+                                  return DataRow(
+                                    cells: [
+                                      DataCell(Text(item['product_name'] as String? ?? 'Unknown')),
+                                      DataCell(Text(
+                                        '${item['quantity']?.toString() ?? '0'}${isSubUnit ? " ${subUnitName ?? 'pcs'}" : ""}'
+                                      )),
+                                      DataCell(Text('KSH ${((item['selling_price'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(2)}')),
+                                      DataCell(Text('KSH ${((item['total_amount'] as num?)?.toDouble() ?? 0.0).toStringAsFixed(2)}')),
+                                    ],
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ),
-                  
-                  const SizedBox(height: defaultPadding),
+                    );
+                  }),
                   
                   // Summary section
                   Container(
                     padding: const EdgeInsets.all(16),
+                    margin: const EdgeInsets.only(top: 16),
                     decoration: BoxDecoration(
                       color: Colors.blue.shade50,
                       borderRadius: BorderRadius.circular(8),
@@ -248,7 +239,7 @@ class DynamicCustomerReportWidget extends StatelessWidget {
                 ],
               ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -277,6 +268,30 @@ class DynamicCustomerReportWidget extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildStatusChip(String status) {
+    Color color;
+    switch (status.toUpperCase()) {
+      case 'COMPLETED':
+        color = Colors.green;
+        break;
+      case 'PENDING':
+        color = Colors.orange;
+        break;
+      case 'CANCELLED':
+        color = Colors.red;
+        break;
+      default:
+        color = Colors.grey;
+    }
+
+    return Chip(
+      label: Text(status),
+      backgroundColor: color.withOpacity(0.2),
+      labelStyle: TextStyle(color: color),
+      padding: const EdgeInsets.all(4),
     );
   }
 
@@ -433,9 +448,20 @@ class DynamicCustomerReportWidget extends StatelessWidget {
       itemsByOrder[orderId]!.add(item);
     }
     
-    // Completed and pending orders
-    final completedOrders = orders.where((order) => order['status'] == 'COMPLETED').toList();
-    final pendingOrders = orders.where((order) => order['status'] != 'COMPLETED').toList();
+    // Completed and pending orders - prioritize order_status over status (deprecated)
+    final completedOrders = orders.where((order) {
+      final status = order['order_status'] as String? ?? 
+                    order['status'] as String? ?? 
+                    'UNKNOWN';
+      return status == 'COMPLETED';
+    }).toList();
+    
+    final pendingOrders = orders.where((order) {
+      final status = order['order_status'] as String? ?? 
+                    order['status'] as String? ?? 
+                    'UNKNOWN';
+      return status != 'COMPLETED';
+    }).toList();
     
     pdf.addPage(
       pw.MultiPage(
@@ -531,7 +557,9 @@ class DynamicCustomerReportWidget extends StatelessWidget {
                   final orderNumber = order['order_number'] as String;
                   final orderDate = DateTime.parse(order['created_at'] as String);
                   final totalAmount = (order['total_amount'] as num).toDouble();
-                  final status = order['status'] as String;
+                  // Prioritize order_status over status (deprecated)
+                  final status = order['order_status'] as String? ?? 
+                               order['status'] as String? ?? 'UNKNOWN';
                   
                   return [
                     orderNumber,

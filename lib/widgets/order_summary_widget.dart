@@ -31,7 +31,10 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
   }
 
   Future<void> _handleOrderTap(BuildContext context, Map<String, dynamic> order) async {
-    final status = order['status'] as String? ?? 'UNKNOWN';
+    // Prioritize order_status over the deprecated status field
+    // Status field is planned to be removed in future updates
+    final status = order['order_status'] as String? ?? 
+                  order['status'] as String? ?? 'UNKNOWN';
     
     // Handle both PENDING and ON_HOLD orders similarly
     if (status == 'PENDING' || status == 'ON_HOLD') {
@@ -296,100 +299,120 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
                 ),
               ),
               Expanded(
-                child: recentOrders.isEmpty 
-                  ? Center(child: Text('No orders found', style: TextStyle(color: Colors.white)))
-                  : ListView.builder(
-                      controller: _scrollController,
-                      itemCount: recentOrders.length,
-                      itemBuilder: (context, index) {
-                        final order = recentOrders[index];
-                        
-                        // Check for both 'status' and 'order_status' fields since both might be used
-                        final status = order['order_status'] as String? ?? 
-                                      order['status'] as String? ?? 
-                                      'PENDING';
-                                      
-                        // Check if this order is a converted held order that should be hidden
-                        if (status == 'CONVERTED') {
-                          return SizedBox.shrink(); // Hide converted orders
-                        }
-                        
-                        final paymentStatus = order['payment_status'] as String? ?? 'PENDING';
-                        final createdAt = DateTime.parse(order['created_at'] as String);
-                        
-                        return Card(
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 16.0,
-                            vertical: 8.0,
+                child: recentOrders.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No orders yet today',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
                           ),
-                          color: _getStatusColor(status),
-                          child: InkWell(
-                            onTap: () => _handleOrderTap(context, order),
-                            child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Flexible(
-                                        child: Text(
-                                          'Order #${order['order_number']}',
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scrollController,
+                        itemCount: recentOrders.length,
+                        itemBuilder: (context, index) {
+                          final order = recentOrders[index];
+                          // Get order status with null safety
+                          final status = order['order_status'] as String? ?? 
+                                        order['status'] as String? ?? 
+                                        'UNKNOWN';
+                                        
+                          // Get payment status with null safety
+                          final paymentStatus = order['payment_status'] as String? ?? 'PENDING';
+                          
+                          DateTime createdAt;
+                          try {
+                            createdAt = DateTime.parse(order['created_at'] as String);
+                          } catch (e) {
+                            // Fallback to current date
+                            createdAt = DateTime.now();
+                          }
+                          
+                          return Card(
+                            margin: const EdgeInsets.symmetric(
+                              horizontal: 16.0,
+                              vertical: 8.0,
+                            ),
+                            color: _getStatusColor(status),
+                            child: InkWell(
+                              onTap: () => _handleOrderTap(context, order),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            'Order #${order['order_number']}',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          DateFormat('HH:mm').format(createdAt),
+                                          style: const TextStyle(color: Colors.white70),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        // Display customer name
+                                        Text(
+                                          '${order['customer_name'] ?? 'Walk-in customer'}',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                        // Show amount
+                                        Text(
+                                          'KSH ${(order['total_amount'] as double?)?.toStringAsFixed(2) ?? '0.00'}',
                                           style: const TextStyle(
                                             fontWeight: FontWeight.bold,
                                             color: Colors.white,
                                           ),
-                                          overflow: TextOverflow.ellipsis,
                                         ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        DateFormat('HH:mm').format(createdAt),
-                                        style: const TextStyle(color: Colors.white70),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Customer: ${order['customer_name'] ?? 'Walk-in'}',
-                                    style: const TextStyle(color: Colors.white),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  Text(
-                                    'Total: KSH ${NumberFormat('#,##0.00').format(order['total_amount'])}',
-                                    style: const TextStyle(color: Colors.white),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        'Status: $status',
-                                        style: const TextStyle(color: Colors.white70),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      if (paymentStatus != 'PENDING')
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    // Bottom row with status and payment indicators
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        // Status chip
                                         Chip(
-                                          label: Text(
-                                            paymentStatus,
-                                            style: TextStyle(fontSize: 10, color: Colors.white),
-                                          ),
-                                          backgroundColor: paymentStatus == 'PAID' 
-                                            ? Colors.green 
-                                            : Colors.orange,
-                                          padding: EdgeInsets.zero,
-                                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                          label: Text(status),
+                                          backgroundColor: Colors.white.withOpacity(0.2),
+                                          labelStyle: const TextStyle(color: Colors.white),
+                                          padding: const EdgeInsets.all(0),
                                         ),
-                                    ],
-                                  ),
-                                ],
+                                        // Payment status chip (if not pending)
+                                        if (paymentStatus != 'PENDING')
+                                          Chip(
+                                            label: Text(paymentStatus),
+                                            backgroundColor: _getPaymentStatusColor(paymentStatus),
+                                            labelStyle: const TextStyle(color: Colors.white),
+                                            padding: const EdgeInsets.all(0),
+                                          ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
+                          );
+                        },
+                      ),
               ),
             ],
           ),
@@ -398,14 +421,31 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
     );
   }
 
+  // Order status color
   Color _getStatusColor(String status) {
     switch (status.toUpperCase()) {
       case 'COMPLETED':
         return Colors.green.withOpacity(0.7);
       case 'PENDING':
         return Colors.orange.withOpacity(0.7);
+      case 'ON_HOLD':
+        return Colors.blue.withOpacity(0.7);  
       default:
         return Colors.grey.withOpacity(0.7);
+    }
+  }
+  
+  // Payment status color
+  Color _getPaymentStatusColor(String paymentStatus) {
+    switch (paymentStatus.toUpperCase()) {
+      case 'PAID':
+        return Colors.green.withOpacity(0.8);
+      case 'PARTIAL':
+        return Colors.orange.withOpacity(0.8);
+      case 'CREDIT':
+        return Colors.deepOrange.withOpacity(0.8);
+      default:
+        return Colors.grey.withOpacity(0.8);
     }
   }
 

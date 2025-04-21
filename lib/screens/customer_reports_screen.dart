@@ -90,64 +90,50 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
     });
     
     try {
-      // Get all orders for the selected customer
-      final orders = await DatabaseService.instance.getCustomerOrders(_selectedCustomer!.id!);
+      // Format date strings for SQL query if dates are selected
+      String? startDateStr, endDateStr;
+      if (_startDate != null) {
+        startDateStr = DateFormat('yyyy-MM-dd').format(_startDate!);
+      }
+      if (_endDate != null) {
+        // Add one day to include the end date fully
+        final nextDay = _endDate!.add(const Duration(days: 1));
+        endDateStr = DateFormat('yyyy-MM-dd').format(nextDay);
+      }
       
-      // Filter orders by date range if specified
-      final filteredOrders = orders.where((order) {
-        if (_startDate == null && _endDate == null) return true;
-        
-        final orderDateStr = order['created_at'] as String?;
-        if (orderDateStr == null) return false; // Skip records with null dates
-        
-        try {
-          final orderDate = DateTime.parse(orderDateStr);
-          
-          if (_startDate != null && _endDate != null) {
-            return orderDate.isAfter(_startDate!) && 
-                  orderDate.isBefore(_endDate!.add(const Duration(days: 1)));
-          } else if (_startDate != null) {
-            return orderDate.isAfter(_startDate!);
-          } else if (_endDate != null) {
-            return orderDate.isBefore(_endDate!.add(const Duration(days: 1)));
-          }
-        } catch (e) {
-          print('Error parsing date: $orderDateStr - $e');
-          return false; // Skip records with invalid dates
-        }
-        
-        return true;
-      }).toList();
+      // Get orders AND their items in a single optimized query
+      final result = await DatabaseService.instance.getCustomerOrdersWithItems(
+        _selectedCustomer!.id!,
+        startDate: startDateStr,
+        endDate: endDateStr,
+      );
       
-      // Get order items for each order
-      List<Map<String, dynamic>> allOrderItems = [];
+      final orders = result['orders'] as List<Map<String, dynamic>>;
+      final orderItems = result['orderItems'] as List<Map<String, dynamic>>;
+      
       double completedAmount = 0.0;
       double pendingAmount = 0.0;
       
-      for (final order in filteredOrders) {
-        final orderId = order['id'];
-        if (orderId == null) continue; // Skip orders with null ID
+      // Process orders with the correct status field
+      for (final order in orders) {
+        // Use order_status with fallback to status for consistent behavior
+        final orderStatus = order['order_status'] as String? ?? 
+                          order['status'] as String? ?? 
+                          'UNKNOWN';
         
-        try {
-          final items = await DatabaseService.instance.getOrderItems(orderId as int);
-          allOrderItems.addAll(items);
-          
-          // Calculate totals based on order status
-          final orderTotal = ((order['total_amount'] as num?) ?? 0).toDouble();
-          if (order['status'] == 'COMPLETED') {
-            completedAmount += orderTotal;
-          } else {
-            pendingAmount += orderTotal;
-          }
-        } catch (e) {
-          print('Error loading items for order $orderId: $e');
+        // Calculate totals based on the consistent status
+        final orderTotal = ((order['total_amount'] as num?) ?? 0).toDouble();
+        if (orderStatus == 'COMPLETED') {
+          completedAmount += orderTotal;
+        } else {
+          pendingAmount += orderTotal;
         }
       }
       
       if (mounted) {
         setState(() {
-          _orders = filteredOrders;
-          _orderItems = allOrderItems;
+          _orders = orders;
+          _orderItems = orderItems;
           _completedAmount = completedAmount;
           _pendingAmount = pendingAmount;
           _totalAmount = completedAmount + pendingAmount;

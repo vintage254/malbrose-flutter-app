@@ -309,6 +309,7 @@ class _SalesScreenState extends State<SalesScreen> {
           DatabaseService.tableOrders,
           {
             'order_status': 'COMPLETED',
+            'status': 'COMPLETED',
             'payment_status': order.paymentMethod == 'Credit' ? 'PENDING' : 'PAID',
             'payment_method': order.paymentMethod,
             'updated_at': DateTime.now().toIso8601String(),
