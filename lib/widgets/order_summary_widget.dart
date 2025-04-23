@@ -319,8 +319,8 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
                                         order['status'] as String? ?? 
                                         'UNKNOWN';
                                         
-                          // Get payment status with null safety
-                          final paymentStatus = order['payment_status'] as String? ?? 'PENDING';
+                          // Get payment status with null safety but override when needed
+                          final String actualPaymentStatus = _getActualPaymentStatus(order);
                           
                           DateTime createdAt;
                           try {
@@ -389,20 +389,48 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                       children: [
-                                        // Status chip
-                                        Chip(
-                                          label: Text(status),
-                                          backgroundColor: Colors.white.withOpacity(0.2),
-                                          labelStyle: const TextStyle(color: Colors.white),
-                                          padding: const EdgeInsets.all(0),
+                                        // Status chip with improved styling
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: status == 'REVERTED' 
+                                                ? Colors.red.withOpacity(0.8)
+                                                : Colors.white.withOpacity(0.15),
+                                            borderRadius: BorderRadius.circular(12),
+                                            border: Border.all(
+                                              color: Colors.white.withOpacity(0.3),
+                                              width: 1,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            status,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 12,
+                                            ),
+                                          ),
                                         ),
-                                        // Payment status chip (if not pending)
-                                        if (paymentStatus != 'PENDING')
-                                          Chip(
-                                            label: Text(paymentStatus),
-                                            backgroundColor: _getPaymentStatusColor(paymentStatus),
-                                            labelStyle: const TextStyle(color: Colors.white),
-                                            padding: const EdgeInsets.all(0),
+                                        // Payment status chip with corrected status logic
+                                        if (actualPaymentStatus != 'PENDING')
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                            decoration: BoxDecoration(
+                                              color: _getPaymentStatusColor(actualPaymentStatus),
+                                              borderRadius: BorderRadius.circular(12),
+                                              border: Border.all(
+                                                color: Colors.white.withOpacity(0.3),
+                                                width: 1,
+                                              ),
+                                            ),
+                                            child: Text(
+                                              actualPaymentStatus,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 12,
+                                              ),
+                                            ),
                                           ),
                                       ],
                                     ),
@@ -425,13 +453,15 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
   Color _getStatusColor(String status) {
     switch (status.toUpperCase()) {
       case 'COMPLETED':
-        return Colors.green.withOpacity(0.7);
+        return Colors.green.shade700;
       case 'PENDING':
-        return Colors.orange.withOpacity(0.7);
+        return Colors.orange.shade600;
       case 'ON_HOLD':
-        return Colors.blue.withOpacity(0.7);  
+        return Colors.blue.shade600;
+      case 'REVERTED':
+        return Colors.grey.shade600;
       default:
-        return Colors.grey.withOpacity(0.7);
+        return Colors.grey.shade600;
     }
   }
   
@@ -439,14 +469,47 @@ class _OrderSummaryWidgetState extends State<OrderSummaryWidget> {
   Color _getPaymentStatusColor(String paymentStatus) {
     switch (paymentStatus.toUpperCase()) {
       case 'PAID':
-        return Colors.green.withOpacity(0.8);
+        return Colors.green.shade600;
       case 'PARTIAL':
-        return Colors.orange.withOpacity(0.8);
+        return Colors.orange.shade700;
       case 'CREDIT':
-        return Colors.deepOrange.withOpacity(0.8);
+        return Colors.deepOrange.shade700;
+      case 'REVERTED':
+        return Colors.red.shade700;
       default:
-        return Colors.grey.withOpacity(0.8);
+        return Colors.grey.shade700;
     }
+  }
+
+  // Add a helper method to determine the actual payment status
+  String _getActualPaymentStatus(Map<String, dynamic> order) {
+    final dbPaymentStatus = order['payment_status'] as String? ?? 'PENDING';
+    final paymentMethod = order['payment_method'] as String? ?? '';
+    
+    // No need to process pending status
+    if (dbPaymentStatus == 'PENDING') {
+      return dbPaymentStatus;
+    }
+    
+    // If payment method contains 'credit' but status is 'PAID'
+    if (dbPaymentStatus == 'PAID' && 
+        paymentMethod.toString().toLowerCase().contains('credit')) {
+      
+      // Check if there's any indication this was fully paid off
+      // For example, if there's an updated_at field much later than created_at
+      // This is a heuristic that might need adjustment based on your data
+      
+      // For now, look for "PAID OFF" or "SETTLED" in the payment method
+      if (paymentMethod.toString().toLowerCase().contains('paid off') ||
+          paymentMethod.toString().toLowerCase().contains('settled')) {
+        return 'PAID'; // This was a credit order but is now fully paid
+      }
+      
+      return 'PARTIAL'; // Otherwise treat as a split payment with credit
+    }
+    
+    // Otherwise return the database value
+    return dbPaymentStatus;
   }
 
   @override

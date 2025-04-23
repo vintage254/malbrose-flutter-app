@@ -542,7 +542,9 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       totalAmount: correctTotal, // Use the corrected total amount
       orderStatus: widget.order.orderStatus,
       // Improved payment status logic for credit orders
-      paymentStatus: remainingCredit > 0 ? 'PARTIAL' : 'PAID', // Use PARTIAL for split payments with credit
+      paymentStatus: (remainingCredit > 0 || paymentMethod.toLowerCase().contains('credit'))
+          ? (paymentMethod == 'Credit' ? 'CREDIT' : 'PARTIAL') // For credit payments: full credit vs. split+credit
+          : 'PAID', // For fully paid orders with no credit component
       paymentMethod: paymentMethod,
       createdBy: widget.order.createdBy,
       createdAt: widget.order.createdAt,
@@ -683,8 +685,9 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       // 1. For full direct payments (cash, mobile, bank) -> 'PAID'
       // 2. For credit sales -> 'CREDIT'
       // 3. For partial payments -> 'PARTIAL'
-      paymentStatus: totalPaid >= correctTotal ? 'PAID' : 
-                     (effectivePaymentMethod.toLowerCase().contains('credit') ? 'CREDIT' : 'PARTIAL'),
+      paymentStatus: (effectivePaymentMethod.toLowerCase().contains('credit')) 
+                     ? (effectivePaymentMethod == 'Credit' ? 'CREDIT' : 'PARTIAL')
+                     : (totalPaid >= correctTotal ? 'PAID' : 'PARTIAL'),
       paymentMethod: effectivePaymentMethod,
       createdBy: widget.order.createdBy,
       createdAt: widget.order.createdAt,
@@ -1609,7 +1612,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                           await txn.update(
                             DatabaseService.tableOrders,
                             {
-                              'payment_status': totalPaid >= widget.order.totalAmount ? 'PAID' : 'PARTIAL',
+                              'payment_status': remainingCredit > 0 ? 'PARTIAL' : 'PAID',
                               'payment_method': totalPaid > 0 && remainingCredit > 0 ? 'Split Payment' : 'Credit',
                               'updated_at': DateTime.now().toIso8601String()
                             },

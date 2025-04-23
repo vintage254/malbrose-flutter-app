@@ -60,3 +60,4 @@ flutter:
   assets:
     - assets/images/logo.png
     - assets/images/malbrose.png
+    - assets/images/malbrose.svg

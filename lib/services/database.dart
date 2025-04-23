@@ -17,6 +17,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bcrypt/bcrypt.dart';
+import 'package:flutter/foundation.dart'; // Add this at the top for debugPrint
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._privateConstructor();
@@ -2101,14 +2102,53 @@ class DatabaseService {
             
             // Also update the order status if fully paid
             if (status == 'PAID') {
+              // Get the original order's payment method first
+              final originalOrder = await txn.query(
+                tableOrders,
+                columns: ['payment_method', 'payment_status'],
+                where: 'order_number = ?',
+                whereArgs: [orderNumber],
+                limit: 1,
+              );
+              
+              String updatedPaymentMethod;
+              if (originalOrder.isNotEmpty && originalOrder[0]['payment_method'] != null) {
+                // Append [PAID OFF] to the existing payment method
+                updatedPaymentMethod = '${originalOrder[0]['payment_method']} [PAID OFF]';
+              } else {
+                // If no payment method exists, create a new one
+                updatedPaymentMethod = 'Credit [PAID OFF]';
+              }
+              
               await txn.update(
                 tableOrders,
                 {
                   'payment_status': 'PAID',
+                  'payment_method': updatedPaymentMethod,
                   'updated_at': timestamp,
                 },
                 where: 'order_number = ?',
                 whereArgs: [orderNumber],
+              );
+
+              // Add diagnostic logging
+              print('Updated order #$orderNumber payment status to PAID and method to "$updatedPaymentMethod"');
+              
+              // Also log the payment transaction
+              await txn.insert(
+                tableCreditTransactions,
+                {
+                  'customer_id': order['customer_id'] as int? ?? 0,
+                  'customer_name': customerName,
+                  'order_id': order['order_id'] as int? ?? 0,
+                  'order_number': orderNumber,
+                  'amount': amountToApply,
+                  'transaction_type': 'PAYMENT',
+                  'payment_method': paymentMethod,
+                  'date': timestamp,
+                  'description': 'Payment of $amountToApply for order #$orderNumber. $paymentDetails',
+                  'created_at': timestamp,
+                },
               );
             }
             
@@ -2339,6 +2379,11 @@ class DatabaseService {
 
   // Update the completeSale method to log properly
   Future<void> completeSale(Order order, {String paymentMethod = 'Cash'}) async {
+    // Distinctive logging pattern to easily find in logs
+    print("========================= DATABASE COMPLETION START =========================");
+    print("ORDER #${order.orderNumber}: PAYMENT METHOD = '$paymentMethod'");
+    print("ORDER #${order.orderNumber}: PAYMENT STATUS FROM ORDER = '${order.paymentStatus}'");
+    
     int retryCount = 0;
     const maxRetries = 3;
     const baseDelay = 200; // milliseconds
@@ -2355,7 +2400,13 @@ class DatabaseService {
             limit: 1,
           );
           
+          print("ORDER #${order.orderNumber}: EXISTING DB ROW FOUND = ${orderData.isNotEmpty}");
+          if (orderData.isNotEmpty) {
+            print("ORDER #${order.orderNumber}: CURRENT DB STATUS = '${orderData.first['payment_status']}', METHOD = '${orderData.first['payment_method']}'");
+          }
+          
           if (orderData.isEmpty) {
+            print("ORDER #${order.orderNumber}: ERROR - Order not found or already completed");
             throw Exception('Order not found or already completed');
           }
           
@@ -2367,29 +2418,77 @@ class DatabaseService {
             WHERE oi.order_id = ?
           ''', [order.id]);
           
+          print("ORDER #${order.orderNumber}: ORDER ITEMS COUNT = ${orderItems.length}");
+          
           if (orderItems.isEmpty) {
+            print("ORDER #${order.orderNumber}: ERROR - No items found for order");
             throw Exception('No items found for order');
           }
           
           // Determine the correct payment status - first respect the Order object's value
           String finalPaymentStatus;
-          if (order.paymentStatus != null && order.paymentStatus!.isNotEmpty) {
-            // Use the payment status already set in the Order object
+          
+          print("ORDER #${order.orderNumber}: PAYMENT METHOD STRING = '$paymentMethod'");
+          print("ORDER #${order.orderNumber}: CONTAINS 'credit' = ${paymentMethod.toLowerCase().contains('credit')}");
+          print("ORDER #${order.orderNumber}: ORDER PAYMENT STATUS = '${order.paymentStatus}'");
+          print("ORDER #${order.orderNumber}: PAYMENT STATUS NULL/EMPTY = ${order.paymentStatus == null || order.paymentStatus!.isEmpty}");
+          print("ORDER #${order.orderNumber}: PAYMENT STATUS IS PENDING = ${order.paymentStatus == 'PENDING'}");
+          
+          // Log the branch that will be taken
+          if (order.paymentStatus != null && order.paymentStatus!.isNotEmpty && order.paymentStatus != 'PENDING') {
+            print("ORDER #${order.orderNumber}: USING ORDER'S PAYMENT STATUS BRANCH");
+          } else {
+            print("ORDER #${order.orderNumber}: CALCULATING PAYMENT STATUS BRANCH");
+          }
+          
+          // Add SQL logging at the beginning
+          await logDiagnosticInfo(
+            'PAYMENT_STATUS_START',
+            'Order #${order.orderNumber}: Method=$paymentMethod, InitialStatus=${order.paymentStatus}'
+          );
+          
+          if (order.paymentStatus != null && order.paymentStatus!.isNotEmpty && order.paymentStatus != 'PENDING') {
+            // Use the payment status already set in the Order object only if it's not PENDING
             finalPaymentStatus = order.paymentStatus!;
-            print("DatabaseService.completeSale: Using order's payment_status: '$finalPaymentStatus' for order #${order.orderNumber}");
+            print("ORDER #${order.orderNumber}: USING ORDER'S PAYMENT STATUS: '$finalPaymentStatus'");
+            await logDiagnosticInfo(
+              'PAYMENT_STATUS_DECISION',
+              'Order #${order.orderNumber}: Using order status=$finalPaymentStatus'
+            );
           } else {
             // Determine based on payment method with improved detection
             if (paymentMethod == 'Credit') {
               finalPaymentStatus = 'CREDIT';
+              print("ORDER #${order.orderNumber}: SETTING STATUS TO 'CREDIT' (FULL CREDIT)");
+              await logDiagnosticInfo(
+                'PAYMENT_STATUS_DECISION',
+                'Order #${order.orderNumber}: Full credit payment, setting status=CREDIT'
+              );
             } else if (paymentMethod.toLowerCase().contains('credit')) {
               // More robust check for any split payment containing 'credit'
               finalPaymentStatus = 'PARTIAL';
-              print("DatabaseService.completeSale: Split payment detected in: '$paymentMethod' for order #${order.orderNumber}");
+              print("ORDER #${order.orderNumber}: SETTING STATUS TO 'PARTIAL' (SPLIT WITH CREDIT)");
+              await logDiagnosticInfo(
+                'PAYMENT_STATUS_DECISION',
+                'Order #${order.orderNumber}: Split with credit, setting status=PARTIAL'
+              );
             } else {
               finalPaymentStatus = 'PAID';
+              print("ORDER #${order.orderNumber}: SETTING STATUS TO 'PAID' (NO CREDIT)");
+              await logDiagnosticInfo(
+                'PAYMENT_STATUS_DECISION',
+                'Order #${order.orderNumber}: No credit, setting status=PAID'
+              );
             }
-            print("DatabaseService.completeSale: Determined payment_status: '$finalPaymentStatus' for order #${order.orderNumber}");
           }
+          
+          print("ORDER #${order.orderNumber}: FINAL PAYMENT STATUS TO BE SAVED = '$finalPaymentStatus'");
+          
+          // Add another log right before the update
+          await logDiagnosticInfo(
+            'PAYMENT_STATUS_UPDATE',
+            'Order #${order.orderNumber}: Final status to save=$finalPaymentStatus, Method=$paymentMethod'
+          );
           
           // Update order status using order_status field and set consistent payment_status
           final rowsAffected = await txn.update(
@@ -2405,7 +2504,41 @@ class DatabaseService {
             whereArgs: [order.orderNumber],
           );
           
-          print("DatabaseService.completeSale: Updated $rowsAffected rows for order #${order.orderNumber} with payment_status: '$finalPaymentStatus'");
+          // Log detailed update information
+          print("ORDER #${order.orderNumber}: DATABASE UPDATE ROWS AFFECTED = $rowsAffected");
+          
+          // Verify the row was updated correctly by querying it back
+          final verifyUpdate = await txn.query(
+            tableOrders,
+            columns: ['payment_status', 'payment_method', 'order_status'],
+            where: 'order_number = ?',
+            whereArgs: [order.orderNumber],
+            limit: 1,
+          );
+          
+          if (verifyUpdate.isNotEmpty) {
+            final savedStatus = verifyUpdate.first['payment_status'] as String?;
+            final savedMethod = verifyUpdate.first['payment_method'] as String?;
+            final savedOrderStatus = verifyUpdate.first['order_status'] as String?;
+            print("ORDER #${order.orderNumber}: VERIFICATION - SAVED STATUS = '$savedStatus', METHOD = '$savedMethod', ORDER STATUS = '$savedOrderStatus'");
+            
+            // Add verification log to database
+            await logDiagnosticInfo(
+              'PAYMENT_STATUS_VERIFY',
+              'Order #${order.orderNumber}: Saved status=$savedStatus, Expected=$finalPaymentStatus, Method=$savedMethod'
+            );
+            
+            // CRITICAL: Alert if status is wrong
+            if (savedStatus != finalPaymentStatus) {
+              print("ORDER #${order.orderNumber}: !!!ERROR!!! - SAVED STATUS '$savedStatus' DOESN'T MATCH EXPECTED '$finalPaymentStatus'");
+              await logDiagnosticInfo(
+                'PAYMENT_STATUS_MISMATCH',
+                'Order #${order.orderNumber}: MISMATCH! Saved=$savedStatus, Expected=$finalPaymentStatus'
+              );
+            }
+          } else {
+            print("ORDER #${order.orderNumber}: !!!ERROR!!! - COULDN'T VERIFY UPDATE, ROW NOT FOUND");
+          }
           
           // Update product quantities
           for (var item in orderItems) {
@@ -2415,7 +2548,7 @@ class DatabaseService {
             final subUnitQuantity = item['sub_unit_quantity'] as double?;
             
             if (productId <= 0) {
-              print('Warning: Invalid product ID found: $productId');
+              print("ORDER #${order.orderNumber}: WARNING - Invalid product ID found: $productId");
               continue;
             }
             
@@ -2450,18 +2583,23 @@ class DatabaseService {
         });
         
         // If we get here, the transaction was successful
+        print("ORDER #${order.orderNumber}: DATABASE TRANSACTION COMPLETED SUCCESSFULLY");
+        print("========================= DATABASE COMPLETION END =========================");
         break;
         
       } catch (e) {
         retryCount++;
+        print("ORDER #${order.orderNumber}: ERROR IN DATABASE UPDATE: $e");
+        
         if (retryCount >= maxRetries) {
-          print('Error completing sale after $maxRetries attempts: $e');
+          print("ORDER #${order.orderNumber}: MAX RETRIES REACHED, GIVING UP AFTER $retryCount ATTEMPTS");
+          print("========================= DATABASE COMPLETION FAILED =========================");
           rethrow;
         }
         
-        // Exponential backoff
-        final delay = baseDelay * (1 << (retryCount - 1));
-        print('Retrying sale completion after $delay ms (attempt $retryCount)');
+        // Calculate backoff delay with jitter
+        final delay = baseDelay * (1 << retryCount) + (Random().nextInt(50));
+        print("ORDER #${order.orderNumber}: RETRY $retryCount AFTER $delay ms");
         await Future.delayed(Duration(milliseconds: delay));
       }
     }
@@ -4731,6 +4869,28 @@ class DatabaseService {
         'orders': [],
         'orderItems': []
       };
+    }
+  }
+
+  // Add a method to log diagnostic info to the database
+  Future<void> logDiagnosticInfo(String action, String details) async {
+    try {
+      final db = await database;
+      final currentUser = AuthService.instance.currentUser;
+      await db.insert(
+        tableActivityLogs,
+        {
+          'user_id': currentUser?.id ?? 0,
+          'username': currentUser?.username ?? 'system',
+          'action': 'DIAGNOSTIC_LOG',
+          'action_type': action,
+          'details': details,
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+    } catch (e) {
+      // If logging fails, use regular print as fallback
+      print('Error logging diagnostic info: $e');
     }
   }
 }

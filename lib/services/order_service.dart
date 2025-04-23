@@ -448,24 +448,31 @@ class OrderService extends ChangeNotifier {
   // Complete a sale
   Future<bool> completeSale(Order order, {String paymentMethod = 'Cash'}) async {
     try {
+      print("|||||||||| ORDER SERVICE - SALE COMPLETION START ||||||||||");
+      print("|||||||||| ORDER #${order.orderNumber}: PAYMENT METHOD = '$paymentMethod'");
+      print("|||||||||| ORDER #${order.orderNumber}: PAYMENT STATUS FROM ORDER = '${order.paymentStatus}'");
+      print("|||||||||| ORDER #${order.orderNumber}: PAYMENT METHOD FROM ORDER = '${order.paymentMethod}'");
+      
       if (order.id == null) {
+        print("|||||||||| ORDER #${order.orderNumber}: ERROR - Order ID is null");
         throw Exception('Order ID is null');
       }
       
       // First validate all product IDs
-      debugPrint('OrderService - Valid items: ${order.items.where((item) => item.productId > 0).length} of ${order.items.length}');
-      
-      // Even if there are no items, still allow the sale to complete
-      // This handles the case where order items might be malformed or missing
+      print("|||||||||| ORDER #${order.orderNumber}: VALID ITEMS = ${order.items.where((item) => item.productId > 0).length} / ${order.items.length}");
       
       // Handle credit payment and split payments with credit component
       if (paymentMethod == 'Credit' || paymentMethod.toLowerCase().contains('credit')) {
+        print("|||||||||| ORDER #${order.orderNumber}: CREDIT PAYMENT FLOW DETECTED");
+        
         // Make sure customer is valid
         if (order.customerId == null || order.customerId! <= 0) {
+          print("|||||||||| ORDER #${order.orderNumber}: ERROR - Invalid customer ID for credit payment");
           throw Exception('Credit payment requires a valid customer account');
         }
         
         if (order.customerName == null || order.customerName!.isEmpty) {
+          print("|||||||||| ORDER #${order.orderNumber}: ERROR - Invalid customer name for credit payment");
           throw Exception('Credit payment requires a valid customer name');
         }
         
@@ -473,41 +480,43 @@ class OrderService extends ChangeNotifier {
         double creditAmount = order.totalAmount ?? 0;
         
         // For split payments, calculate the remaining credit amount
-        // This is a simplification - the actual credit amount would be calculated earlier
         if (paymentMethod.contains('+')) {
-          debugPrint('Split payment detected: $paymentMethod');
+          print("|||||||||| ORDER #${order.orderNumber}: SPLIT PAYMENT DETECTED: '$paymentMethod'");
           
           // Split payments with credit have PARTIAL status
           final paymentStatus = 'PARTIAL';
-          debugPrint('Setting payment status to $paymentStatus for split payment');
+          print("|||||||||| ORDER #${order.orderNumber}: SETTING PAYMENT STATUS TO '$paymentStatus' FOR SPLIT PAYMENT");
           
-          // Parse credit amount from the remainingCredit variable in receipt_panel
-          // For now, we'll use the full amount, but ideally this would be passed in
-          // from _showCreditDetailsDialog
           creditAmount = order.totalAmount ?? 0;
+          print("|||||||||| ORDER #${order.orderNumber}: CREDIT AMOUNT = $creditAmount");
         }
         
         // Create a copy of the order with appropriate payment method and status
         final String finalPaymentStatus = paymentMethod.toLowerCase().contains('credit') && 
                                     paymentMethod != 'Credit' ? 'PARTIAL' : 'CREDIT';
                                     
-        debugPrint('OrderService.completeSale: Setting payment status to $finalPaymentStatus for order #${order.orderNumber}');
+        print("|||||||||| ORDER #${order.orderNumber}: CALCULATED PAYMENT STATUS = '$finalPaymentStatus'");
         
         final creditOrder = order.copyWith(
           paymentMethod: paymentMethod,
           paymentStatus: finalPaymentStatus,
         );
         
+        print("|||||||||| ORDER #${order.orderNumber}: CREATED CREDIT ORDER WITH PAYMENT STATUS = '${creditOrder.paymentStatus}'");
+        print("|||||||||| ORDER #${order.orderNumber}: CREATED CREDIT ORDER WITH PAYMENT METHOD = '${creditOrder.paymentMethod}'");
+        
         // Complete the sale via DatabaseService
+        print("|||||||||| ORDER #${order.orderNumber}: CALLING DATABASE SERVICE completeSale");
         await DatabaseService.instance.completeSale(creditOrder, paymentMethod: paymentMethod);
         
         // Create credit record for customer
+        print("|||||||||| ORDER #${order.orderNumber}: CREATING CREDITOR RECORD FOR CUSTOMER ID ${creditOrder.customerId}");
         await DatabaseService.instance.addCreditorRecordForOrder(
           creditOrder.customerId!,
           creditOrder.customerName!,
           creditOrder.id!,
           creditOrder.orderNumber,
-          creditAmount, // Use the calculated credit amount
+          creditAmount,
           details: 'Credit sale transaction',
           orderDetailsSummary: 'Full credit purchase for order #${creditOrder.orderNumber}'
         );
@@ -515,21 +524,22 @@ class OrderService extends ChangeNotifier {
         // Refresh stats before notifying listeners to ensure UI updates with latest data
         await refreshStats();
         notifyListeners();
+        print("|||||||||| ORDER #${order.orderNumber}: CREDIT PAYMENT FLOW COMPLETED SUCCESSFULLY");
+        print("|||||||||| ORDER SERVICE - SALE COMPLETION END ||||||||||");
         return true;
       } else {
-        // For cash or other payment methods
-        // Check if this is a split payment with credit component by looking for keyword markers
-        final bool isPartialPayment = paymentMethod.toLowerCase().contains('credit');
+        // Regular non-credit sale with full payment
+        print("|||||||||| ORDER #${order.orderNumber}: STANDARD PAYMENT FLOW DETECTED");
         
-        debugPrint('OrderService.completeSale: Payment method: $paymentMethod, isPartial: $isPartialPayment');
-        
+        // Create updated order with PAID status
         final updatedOrder = order.copyWith(
+          orderStatus: 'COMPLETED',
+          paymentStatus: order.paymentStatus ?? 'PAID', // Use existing status if available, otherwise PAID
           paymentMethod: paymentMethod,
-          paymentStatus: isPartialPayment ? 'PARTIAL' : 'PAID',
-          orderStatus: STATUS_COMPLETED,
         );
         
-        debugPrint('OrderService.completeSale: Set payment status to ${updatedOrder.paymentStatus} for order #${updatedOrder.orderNumber}');
+        print("|||||||||| ORDER #${order.orderNumber}: CREATED UPDATED ORDER WITH PAYMENT STATUS = '${updatedOrder.paymentStatus}'");
+        print("|||||||||| ORDER #${order.orderNumber}: CREATED UPDATED ORDER WITH PAYMENT METHOD = '${updatedOrder.paymentMethod}'");
         
         try {
           // Update product quantities safely without using last_updated field
@@ -539,7 +549,7 @@ class OrderService extends ChangeNotifier {
             // Get current product quantity
             final productDetails = await DatabaseService.instance.getProductById(item.productId);
             if (productDetails == null) {
-              debugPrint('Warning: Product ${item.productId} not found for quantity update');
+              print("|||||||||| ORDER #${order.orderNumber}: WARNING - Product ${item.productId} not found");
               continue;
             }
             
@@ -572,19 +582,21 @@ class OrderService extends ChangeNotifier {
               where: 'id = ?',
               whereArgs: [item.productId],
             );
-            
-            debugPrint('Updated product ${item.productId} quantity from $currentQuantity to $newQuantity');
           }
           
           // Complete the order - updating status
+          print("|||||||||| ORDER #${order.orderNumber}: CALLING DATABASE SERVICE completeSale (standard flow)");
           await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
           
           // Refresh stats before notifying listeners to ensure UI updates with latest data
           await refreshStats();
           notifyListeners();
+          print("|||||||||| ORDER #${order.orderNumber}: STANDARD PAYMENT FLOW COMPLETED SUCCESSFULLY");
+          print("|||||||||| ORDER SERVICE - SALE COMPLETION END ||||||||||");
           return true;
         } catch (e) {
-          debugPrint('Error updating product quantities: $e');
+          print("|||||||||| ORDER #${order.orderNumber}: ERROR UPDATING QUANTITIES - $e");
+          
           // Try again with a more basic approach
           try {
             final db = await DatabaseService.instance.database;
@@ -597,26 +609,34 @@ class OrderService extends ChangeNotifier {
               );
             }
             
+            // Add detailed logging right before second retry call to DatabaseService
+            print("|||||||||| ORDER #${order.orderNumber}: CALLING DATABASE SERVICE completeSale (retry)");
             await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
             
             // Refresh stats before notifying listeners to ensure UI updates with latest data
             await refreshStats();
             notifyListeners();
+            print("|||||||||| ORDER #${order.orderNumber}: STANDARD PAYMENT FLOW COMPLETED SUCCESSFULLY (RETRY)");
+            print("|||||||||| ORDER SERVICE - SALE COMPLETION END ||||||||||");
             return true;
           } catch (e2) {
-            debugPrint('Error with basic quantity update: $e2');
+            print("|||||||||| ORDER #${order.orderNumber}: ERROR WITH BASIC QUANTITY UPDATE - $e2");
+            
             // Still attempt to complete the sale without inventory changes
+            print("|||||||||| ORDER #${order.orderNumber}: CALLING DATABASE SERVICE completeSale (fallback)");
             await DatabaseService.instance.completeSale(updatedOrder, paymentMethod: paymentMethod);
             
             // Refresh stats before notifying listeners to ensure UI updates with latest data
             await refreshStats();
             notifyListeners();
+            print("|||||||||| ORDER #${order.orderNumber}: STANDARD PAYMENT FLOW COMPLETED WITH ERRORS");
+            print("|||||||||| ORDER SERVICE - SALE COMPLETION END ||||||||||");
             return true;
           }
         }
       }
     } catch (e) {
-      debugPrint('Error completing sale in OrderService: $e');
+      print("|||||||||| ORDER SERVICE - ERROR COMPLETING SALE: $e ||||||||||");
       return false;
     }
   }

@@ -9,12 +9,16 @@ class OrderReceiptDialog extends StatefulWidget {
   final List<CartItem> items;
   final String? customerName;
   final String paymentMethod;
+  final String? orderNumber;
+  final Function(String paymentMethod)? onCompleteSale;
 
   const OrderReceiptDialog({
     super.key,
     required this.items,
     this.customerName,
     this.paymentMethod = 'Cash',
+    this.orderNumber,
+    this.onCompleteSale,
   });
 
   @override
@@ -24,11 +28,16 @@ class OrderReceiptDialog extends StatefulWidget {
 class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
   late List<CartItem> _orderItems;
   final bool _isLoading = false;
+  String _selectedPaymentMethod = 'Cash';
+  final TextEditingController _cashAmountController = TextEditingController();
+  final TextEditingController _creditAmountController = TextEditingController();
+  bool _isSplitPayment = false;
 
   @override
   void initState() {
     super.initState();
     _orderItems = widget.items;
+    _selectedPaymentMethod = widget.paymentMethod;
     print('OrderReceiptDialog - Items count: ${_orderItems.length}');
     if (_orderItems.isNotEmpty) {
       final firstItem = _orderItems.first;
@@ -40,6 +49,25 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
       print('OrderReceiptDialog - Widget items length: ${widget.items.length}');
       print('OrderReceiptDialog - Payment method: ${widget.paymentMethod}');
     }
+    
+    _calculateInitialAmounts();
+  }
+  
+  void _calculateInitialAmounts() {
+    final totalAmount = _orderItems.fold<double>(
+      0,
+      (sum, item) => sum + item.total,
+    );
+    
+    _cashAmountController.text = totalAmount.toStringAsFixed(2);
+    _creditAmountController.text = "0.00";
+  }
+
+  @override
+  void dispose() {
+    _cashAmountController.dispose();
+    _creditAmountController.dispose();
+    super.dispose();
   }
 
   @override
@@ -64,6 +92,8 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
             Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())}'),
             if (widget.customerName != null && widget.customerName!.isNotEmpty)
               Text('Customer: ${widget.customerName}'),
+            if (widget.orderNumber != null)
+              Text('Order #: ${widget.orderNumber}'),
             const Divider(),
             // Table header
             Row(
@@ -118,6 +148,93 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+            
+            // Payment method section
+            if (widget.onCompleteSale != null) ...[
+              const Text('Payment Method:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              
+              // Payment method selection
+              Row(
+                children: [
+                  Expanded(
+                    child: RadioListTile<String>(
+                      title: const Text('Cash'),
+                      value: 'Cash',
+                      groupValue: _selectedPaymentMethod,
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedPaymentMethod = value!;
+                          _isSplitPayment = false;
+                          _calculateInitialAmounts();
+                        });
+                      },
+                    ),
+                  ),
+                  Expanded(
+                    child: RadioListTile<String>(
+                      title: const Text('Credit'),
+                      value: 'Credit',
+                      groupValue: _selectedPaymentMethod,
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedPaymentMethod = value!;
+                          _isSplitPayment = false;
+                          _cashAmountController.text = "0.00";
+                          _creditAmountController.text = totalAmount.toStringAsFixed(2);
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              
+              // Split payment option
+              CheckboxListTile(
+                title: const Text('Split Payment'),
+                value: _isSplitPayment,
+                onChanged: (value) {
+                  setState(() {
+                    _isSplitPayment = value!;
+                    if (_isSplitPayment) {
+                      _selectedPaymentMethod = 'Split';
+                      _cashAmountController.text = (totalAmount / 2).toStringAsFixed(2);
+                      _creditAmountController.text = (totalAmount / 2).toStringAsFixed(2);
+                    } else {
+                      _selectedPaymentMethod = 'Cash';
+                      _calculateInitialAmounts();
+                    }
+                  });
+                },
+              ),
+              
+              // Split payment fields
+              if (_isSplitPayment) ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _cashAmountController,
+                  decoration: const InputDecoration(
+                    labelText: 'Cash Amount',
+                    prefixText: 'KSH ',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.number,
+                  onChanged: (_) => _updateSplitPayment(totalAmount),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _creditAmountController,
+                  decoration: const InputDecoration(
+                    labelText: 'Credit Amount',
+                    prefixText: 'KSH ',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.number,
+                  onChanged: (_) => _updateSplitPayment(totalAmount),
+                ),
+              ],
+            ],
           ],
         ),
       ),
@@ -126,6 +243,23 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Close'),
         ),
+        if (widget.onCompleteSale != null)
+          ElevatedButton(
+            onPressed: () {
+              String paymentMethodString;
+              if (_isSplitPayment) {
+                final cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
+                final creditAmount = double.tryParse(_creditAmountController.text) ?? 0;
+                paymentMethodString = 'Cash: KSH ${cashAmount.toStringAsFixed(2)}, Credit: KSH ${creditAmount.toStringAsFixed(2)}';
+              } else {
+                paymentMethodString = _selectedPaymentMethod;
+              }
+              
+              widget.onCompleteSale!(paymentMethodString);
+              Navigator.pop(context);
+            },
+            child: const Text('Complete Sale'),
+          ),
         ElevatedButton(
           onPressed: () => _printReceipt(),
           child: const Text('Print Receipt'),
@@ -134,6 +268,21 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
     );
   }
   
+  void _updateSplitPayment(double totalAmount) {
+    double cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
+    double creditAmount = double.tryParse(_creditAmountController.text) ?? 0;
+    
+    // Ensure total matches the order total
+    if (cashAmount + creditAmount != totalAmount) {
+      creditAmount = totalAmount - cashAmount;
+      if (creditAmount < 0) {
+        cashAmount = totalAmount;
+        creditAmount = 0;
+      }
+      _creditAmountController.text = creditAmount.toStringAsFixed(2);
+    }
+  }
+
   Future<void> _printReceipt() async {
     try {
       print('Printing receipt with ${widget.items.length} items');
@@ -148,7 +297,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
       );
       
       // Generate a unique order number if not available
-      final orderNumber = 'ORD-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
+      final orderNumber = widget.orderNumber ?? 'ORD-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
       
       // Current timestamp
       final now = DateTime.now();
