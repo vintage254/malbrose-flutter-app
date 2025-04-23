@@ -119,6 +119,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       ),
       padding: const EdgeInsets.all(defaultPadding),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -147,56 +148,65 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
             ),
           ),
           const SizedBox(height: defaultPadding),
-          Text('Customer: ${widget.order.customerName ?? "N/A"}'),
-          Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(widget.order.orderDate)}'),
-          const Divider(),
+          Text('Customer: ${widget.order.customerName ?? "N/A"}',
+               style: const TextStyle(color: Colors.white)),
+          Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(widget.order.orderDate)}',
+               style: const TextStyle(color: Colors.white)),
+          const SizedBox(height: 8),
+          
           Expanded(
-            child: _isLoading 
-              ? const Center(child: CircularProgressIndicator())
-              : _orderItems.isEmpty
-                ? const Center(child: Text('No items in this order'))
-                : ListView.builder(
-                    itemCount: _orderItems.length,
-                    itemBuilder: (context, index) {
-                      final item = _orderItems[index];
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 4.0),
-                        child: Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                item['product_name'] ?? 'Product not found',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text('Quantity: ${item['quantity']}'),
-                                  Text('Unit Price: KSH ${(item['unit_price'] as num).toStringAsFixed(2)}'),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    'Subtotal: KSH ${(item['total_amount'] as num).toStringAsFixed(2)}',
-                                    style: const TextStyle(fontWeight: FontWeight.bold),
+            flex: 3,
+            child: Card(
+              color: Colors.white.withOpacity(0.9),
+              elevation: 4,
+              child: _isLoading 
+                ? const Center(child: CircularProgressIndicator())
+                : _orderItems.isEmpty
+                  ? const Center(child: Text('No items in this order'))
+                  : ListView.builder(
+                      itemCount: _orderItems.length,
+                      itemBuilder: (context, index) {
+                        final item = _orderItems[index];
+                        return Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          elevation: 2,
+                          child: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item['product_name'] ?? 'Product not found',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
                                   ),
-                                ],
-                              ),
-                            ],
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('Quantity: ${item['quantity']}'),
+                                    Text('Unit Price: KSH ${(item['unit_price'] as num).toStringAsFixed(2)}'),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      'Subtotal: KSH ${(item['total_amount'] as num).toStringAsFixed(2)}',
+                                      style: const TextStyle(fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
+                        );
+                      },
+                    ),
+            ),
           ),
           const Divider(),
           Row(
@@ -241,7 +251,6 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   items: const [
                     DropdownMenuItem(value: 'Cash', child: Text('Cash')),
                     DropdownMenuItem(value: 'Mobile Payment', child: Text('Mobile Payment')),
-                    DropdownMenuItem(value: 'Credit Card', child: Text('Credit Card')),
                     DropdownMenuItem(value: 'Bank Transfer', child: Text('Bank Transfer')),
                     DropdownMenuItem(value: 'Credit', child: Text('Credit')),
                   ],

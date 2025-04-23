@@ -3832,6 +3832,37 @@ class DatabaseService {
     }
   }
 
+  /// Get all customers with their order counts and total amounts
+  Future<List<Map<String, dynamic>>> getCustomersWithOrderCounts() async {
+    try {
+      final db = await database;
+      
+      // Use a raw query to join customers with orders and count orders
+      final results = await db.rawQuery('''
+        SELECT c.*, 
+               COUNT(DISTINCT o.id) as total_orders,
+               SUM(o.total_amount) as total_amount,
+               MAX(o.created_at) as last_order_date
+        FROM $tableCustomers c
+        LEFT JOIN $tableOrders o ON c.id = o.customer_id
+        GROUP BY c.id
+        ORDER BY c.name
+      ''');
+      
+      print('Loaded ${results.length} customers with their order counts');
+      
+      // Log sample customer data for debugging
+      if (results.isNotEmpty) {
+        print('Sample customer: Name=${results.first['name']}, Orders=${results.first['total_orders']}');
+      }
+      
+      return results;
+    } catch (e) {
+      print('Error getting customers with order counts: $e');
+      return [];
+    }
+  }
+
   /// Get orders for a specific customer
   Future<List<Map<String, dynamic>>> getCustomerOrders(int customerId) async {
     try {

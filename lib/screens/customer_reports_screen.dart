@@ -50,10 +50,11 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
   Future<void> _loadCustomers() async {
     setState(() => _isLoading = true);
     try {
-      final customersData = await DatabaseService.instance.getAllCustomers();
+      final customersWithOrdersData = await DatabaseService.instance.getCustomersWithOrderCounts();
+      
       if (mounted) {
         setState(() {
-          _customers = customersData
+          _customers = customersWithOrdersData
               .map((map) => Customer.fromMap(map))
               .where((customer) => customer.name
                   .toLowerCase()
@@ -64,7 +65,7 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading customers: $e')),
+          SnackBar(content: Text('Error loading customers with order counts: $e')),
         );
       }
     } finally {
