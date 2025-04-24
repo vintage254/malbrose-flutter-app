@@ -89,8 +89,8 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
               return constraints.maxWidth < 600
                 ? const SizedBox.shrink() // Hide on very small screens
                 : const Expanded(
-                    flex: 1,
-                    child: SideMenuWidget(),
+            flex: 1,
+            child: SideMenuWidget(),
                   );
             }
           ),
@@ -107,58 +107,58 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
                           scrollDirection: Axis.horizontal,
                           physics: const AlwaysScrollableScrollPhysics(),
                           child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Sales Report',
-                                style: Theme.of(context).textTheme.titleLarge,
-                              ),
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Sales Report',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
                               const SizedBox(width: 16),
-                              Row(
-                                children: [
-                                  TextButton.icon(
-                                    icon: const Icon(Icons.calendar_today),
-                                    label: Text(
-                                      '${DateFormat('MMM dd, yyyy').format(_startDate)} - ${DateFormat('MMM dd, yyyy').format(_endDate)}',
-                                    ),
-                                    onPressed: _selectDateRange,
+                            Row(
+                              children: [
+                                TextButton.icon(
+                                  icon: const Icon(Icons.calendar_today),
+                                  label: Text(
+                                    '${DateFormat('MMM dd, yyyy').format(_startDate)} - ${DateFormat('MMM dd, yyyy').format(_endDate)}',
                                   ),
-                                  IconButton(
-                                    icon: const Icon(Icons.refresh),
-                                    onPressed: _loadSalesReport,
+                                  onPressed: _selectDateRange,
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.refresh),
+                                  onPressed: _loadSalesReport,
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton.icon(
+                                  onPressed: _printSalesReport,
+                                  icon: const Icon(Icons.print),
+                                  label: const Text('Print Report'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.blue,
+                                    foregroundColor: Colors.white,
                                   ),
-                                  const SizedBox(width: 8),
-                                  ElevatedButton.icon(
-                                    onPressed: _printSalesReport,
-                                    icon: const Icon(Icons.print),
-                                    label: const Text('Print Report'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.blue,
-                                      foregroundColor: Colors.white,
-                                    ),
+                                ),
+                                const SizedBox(width: 8),
+                                ElevatedButton.icon(
+                                  onPressed: _isExporting ? null : _exportToExcel,
+                                  icon: _isExporting 
+                                    ? const SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: CircularProgressIndicator(
+                                          color: Colors.white,
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.file_download),
+                                  label: const Text('Export to Excel'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
                                   ),
-                                  const SizedBox(width: 8),
-                                  ElevatedButton.icon(
-                                    onPressed: _isExporting ? null : _exportToExcel,
-                                    icon: _isExporting 
-                                      ? const SizedBox(
-                                          width: 24,
-                                          height: 24,
-                                          child: CircularProgressIndicator(
-                                            color: Colors.white,
-                                            strokeWidth: 2,
-                                          ),
-                                        )
-                                      : const Icon(Icons.file_download),
-                                    label: const Text('Export to Excel'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.green,
-                                      foregroundColor: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                                ),
+                              ],
+                            ),
+                          ],
                           ),
                         ),
                         const SizedBox(height: defaultPadding),
@@ -185,42 +185,42 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
 
     // Create all the summary cards
     final summaryCards = [
-      _buildSummaryCard(
-        'Total Sales',
-        'KSH ${totalSales.toStringAsFixed(2)}',
-        Colors.blue,
-        Icons.shopping_cart,
-      ),
-      _buildSummaryCard(
-        'Total Cost',
-        'KSH ${totalCost.toStringAsFixed(2)}',
-        Colors.orange,
-        Icons.inventory_2,
-      ),
-      _buildSummaryCard(
-        'Total Profit',
-        'KSH ${totalProfit.toStringAsFixed(2)}',
-        Colors.green,
-        Icons.trending_up,
-      ),
-      _buildSummaryCard(
-        'Total Orders',
-        totalOrders.toString(),
-        Colors.purple,
-        Icons.receipt_long,
-      ),
-      _buildSummaryCard(
-        'Items Sold',
-        '$totalQuantity units',
-        Colors.indigo,
-        Icons.inventory,
-      ),
-      _buildSummaryCard(
-        'Unique Customers',
-        uniqueCustomers.toString(),
-        Colors.teal,
-        Icons.people,
-      ),
+        _buildSummaryCard(
+          'Total Sales',
+          'KSH ${totalSales.toStringAsFixed(2)}',
+          Colors.blue,
+          Icons.shopping_cart,
+        ),
+        _buildSummaryCard(
+          'Total Cost',
+          'KSH ${totalCost.toStringAsFixed(2)}',
+          Colors.orange,
+          Icons.inventory_2,
+        ),
+        _buildSummaryCard(
+          'Total Profit',
+          'KSH ${totalProfit.toStringAsFixed(2)}',
+          Colors.green,
+          Icons.trending_up,
+        ),
+        _buildSummaryCard(
+          'Total Orders',
+          totalOrders.toString(),
+          Colors.purple,
+          Icons.receipt_long,
+        ),
+        _buildSummaryCard(
+          'Items Sold',
+          '$totalQuantity units',
+          Colors.indigo,
+          Icons.inventory,
+        ),
+        _buildSummaryCard(
+          'Unique Customers',
+          uniqueCustomers.toString(),
+          Colors.teal,
+          Icons.people,
+        ),
     ];
 
     // Use a LayoutBuilder to detect available width
@@ -281,15 +281,21 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
     
     return Column(
       children: [
-        // Add indicator text for horizontal scrolling
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: const [
-            Icon(Icons.swipe, color: Colors.grey),
-            SizedBox(width: 4),
-            Text("Swipe to see more columns", 
-                 style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic)),
-          ],
+        // Show swipe hint only when table might not fit on screen
+        LayoutBuilder(
+          builder: (context, constraints) {
+            // Only show the hint if screen might be too narrow for all columns
+            // A typical table needs about 1100-1200px, so check against that
+            return constraints.maxWidth < 1200 ? Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: const [
+                Icon(Icons.swipe, color: Colors.grey),
+                SizedBox(width: 4),
+                Text("Swipe to see all columns", 
+                     style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic)),
+              ],
+            ) : const SizedBox.shrink(); // Don't show hint on wide screens
+          }
         ),
         const SizedBox(height: 4),
         // Wrap in container to set border and show it's a scrollable area
@@ -301,35 +307,39 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
           child: Scrollbar(
             thickness: 8,
             radius: const Radius.circular(4),
-            thumbVisibility: true,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
-                border: TableBorder.all(color: Colors.grey.shade300, width: 0.5),
-                columnSpacing: 20,
-                dataRowHeight: 56,
-                columns: const [
-                  DataColumn(label: Text('Date', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Order #', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Customer', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Product', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Quantity', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Buying Price', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Selling Price', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Total', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Profit', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Margin %', style: TextStyle(fontWeight: FontWeight.bold))),
-                ],
-                rows: salesByOrder.entries.expand((entry) {
-                  final orderItems = entry.value;
-                  // Use the first item for order-level information
-                  final firstItem = orderItems.first;
-                  
-                  return orderItems.map((sale) => _buildSaleRow(sale, isFirstInOrder: sale == firstItem)).toList();
-                }).toList(),
-              ),
-            ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+              physics: const ClampingScrollPhysics(),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return DataTable(
+                    headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
+                    border: TableBorder.all(color: Colors.grey.shade300, width: 0.5),
+                    columnSpacing: 20,
+                    dataRowHeight: 56,
+          columns: const [
+                      DataColumn(label: Text('Date', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Order #', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Customer', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Product', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Quantity', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Buying Price', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Selling Price', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Total', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Profit', style: TextStyle(fontWeight: FontWeight.bold))),
+                      DataColumn(label: Text('Margin %', style: TextStyle(fontWeight: FontWeight.bold))),
+          ],
+          rows: salesByOrder.entries.expand((entry) {
+            final orderItems = entry.value;
+            // Use the first item for order-level information
+            final firstItem = orderItems.first;
+            
+            return orderItems.map((sale) => _buildSaleRow(sale, isFirstInOrder: sale == firstItem)).toList();
+          }).toList(),
+                  );
+                },
+        ),
+      ),
           ),
         ),
       ],
@@ -411,11 +421,11 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
             FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                value,
-                style: TextStyle(
+              value,
+              style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: color,
+                fontWeight: FontWeight.bold,
+                color: color,
                 ),
                 textAlign: TextAlign.center,
               ),

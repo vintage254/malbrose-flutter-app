@@ -29,8 +29,51 @@ class BackupService {
   
   // Get the database path
   Future<String> _getDatabasePath() async {
-    final databasesPath = await getDatabasesPath();
-    return path.join(databasesPath, 'malbrose_db.db');
+    try {
+      // First try to get the current database path from the DatabaseService
+      final db = await DatabaseService.instance.database;
+      final dbPath = db.path;
+      
+      // If we have a valid path, use it
+      if (dbPath.isNotEmpty) {
+        debugPrint('Using current database path: $dbPath');
+        return dbPath;
+      }
+      
+      // Fallback to the standard location
+      final databasesPath = await getDatabasesPath();
+      final standardPath = path.join(databasesPath, 'malbrose_db.db');
+      
+      // Check if file exists at standard path
+      if (await File(standardPath).exists()) {
+        debugPrint('Found database at standard path: $standardPath');
+        return standardPath;
+      }
+      
+      // Final fallback - check in .dart_tool directory
+      final toolPath = path.join(
+        Directory.current.path, 
+        '.dart_tool', 
+        'sqflite_common_ffi', 
+        'databases', 
+        'malbrose_db.db'
+      );
+      
+      if (await File(toolPath).exists()) {
+        debugPrint('Found database at .dart_tool path: $toolPath');
+        return toolPath;
+      }
+      
+      // If no database file found, throw exception with helpful details
+      String errorMsg = 'Cannot locate database file. Checked paths:\n';
+      errorMsg += '- $dbPath (current db path)\n';
+      errorMsg += '- $standardPath (standard path)\n';
+      errorMsg += '- $toolPath (.dart_tool path)';
+      throw Exception(errorMsg);
+    } catch (e) {
+      debugPrint('Error in _getDatabasePath: $e');
+      rethrow;
+    }
   }
   
   // Create a backup of the database

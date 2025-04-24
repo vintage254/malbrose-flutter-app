@@ -98,7 +98,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: defaultPadding),
                 const Text(
-                  'Your Complete Hardware Store Management Solution',
+                  'Your Complete Point of Sale System',
                   style: TextStyle(
                     fontSize: 18,
                     color: Colors.white70,

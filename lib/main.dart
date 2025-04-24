@@ -10,7 +10,7 @@ import 'package:path/path.dart' show join;
 import 'package:my_flutter_app/screens/order_screen.dart';
 import 'package:my_flutter_app/screens/sales_screen.dart';
 import 'package:my_flutter_app/screens/product_management_screen.dart';
-import 'package:my_flutter_app/screens/user_management_screen.dart';
+import 'package:my_flutter_app/screens/settings_screen.dart';
 import 'package:my_flutter_app/screens/activity_log_screen.dart';
 import 'package:my_flutter_app/screens/home_screen.dart';
 import 'package:my_flutter_app/screens/main_screen.dart';
@@ -33,6 +33,7 @@ import 'package:my_flutter_app/screens/printer_settings_screen.dart';
 import 'package:my_flutter_app/services/config_service.dart';
 import 'package:my_flutter_app/screens/backup_screen.dart';
 import 'package:my_flutter_app/services/backup_service.dart';
+import 'package:my_flutter_app/screens/license_check_screen.dart';
 
 void main() async {
 
@@ -69,6 +70,11 @@ void main() async {
   // REMOVED: Don't reset database on startup
   // This was only needed for initial setup/testing
   // await cleanStartApp();
+
+  // Initialize ConfigService
+  print('Initializing ConfigService...');
+  await ConfigService.instance.initialize();
+  print('ConfigService initialized');
 
   // Check if setup is completed
   print('Checking if setup is completed...');
@@ -145,7 +151,9 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     print('Building MyApp widget, setupCompleted: $setupCompleted');
     
-    final home = setupCompleted ? const HomeScreen() : const SetupWizardScreen();
+    final home = setupCompleted 
+        ? LicenseCheckScreen(child: const HomeScreen()) 
+        : const SetupWizardScreen();
     print('Home widget selected: ${home.runtimeType}');
     
     return MaterialApp(
@@ -160,22 +168,22 @@ class MyApp extends StatelessWidget {
       home: home,
       routes: {
         '/login': (context) => const LoginScreen(),
-        '/home': (context) => const HomeScreen(),
-        '/main': (context) => const MainScreen(),
-        '/orders': (context) => const OrderScreen(),
-        '/held-orders':(context) => const HeldOrdersScreen(),
-        '/sales': (context) => const SalesScreen(),
-        '/products': (context) => const ProductManagementScreen(),
-        '/users': (context) => const UserManagementScreen(),
-        '/activity': (context) => const ActivityLogScreen(),
-        '/creditors': (context) => const CreditorsScreen(),
-        '/debtors': (context) => const DebtorsScreen(),
-        '/customer-reports': (context) => const CustomerReportsScreen(),
-        '/sales-report': (context) => const SalesReportScreen(),
-        '/printer-settings': (context) => const PrinterSettingsScreen(),
+        '/home': (context) => const LicenseCheckScreen(child: HomeScreen()),
+        '/main': (context) => const LicenseCheckScreen(child: MainScreen()),
+        '/orders': (context) => const LicenseCheckScreen(child: OrderScreen()),
+        '/held-orders':(context) => const LicenseCheckScreen(child: HeldOrdersScreen()),
+        '/sales': (context) => const LicenseCheckScreen(child: SalesScreen()),
+        '/products': (context) => const LicenseCheckScreen(child: ProductManagementScreen()),
+        '/settings': (context) => const LicenseCheckScreen(child: SettingsScreen()),
+        '/activity': (context) => const LicenseCheckScreen(child: ActivityLogScreen()),
+        '/creditors': (context) => const LicenseCheckScreen(child: CreditorsScreen()),
+        '/debtors': (context) => const LicenseCheckScreen(child: DebtorsScreen()),
+        '/customer-reports': (context) => const LicenseCheckScreen(child: CustomerReportsScreen()),
+        '/sales-report': (context) => const LicenseCheckScreen(child: SalesReportScreen()),
+        '/printer-settings': (context) => const LicenseCheckScreen(child: PrinterSettingsScreen()),
         '/setup': (context) => const SetupWizardScreen(),
-        '/backup': (context) => const BackupScreen(),
-        '/order-history': (context) => const OrderHistoryScreen(),
+        '/backup': (context) => const LicenseCheckScreen(child: BackupScreen()),
+        '/order-history': (context) => const LicenseCheckScreen(child: OrderHistoryScreen()),
       },
     );
   }

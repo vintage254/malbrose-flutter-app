@@ -24,6 +24,18 @@ class ConfigService {
   String _businessEmail = '';
   String _businessLogo = '';
   
+  // VAT settings
+  double _vatRate = 16.0; // Default VAT rate in Kenya
+  bool _enableVat = true; // Whether to handle VAT
+  bool _showVatOnReceipt = true; // Whether to show VAT on receipts
+  
+  // Receipt settings
+  String _receiptHeader = 'Thank you for shopping with us!';
+  String _receiptFooter = 'Goods once sold are not returnable.';
+  bool _showBusinessLogo = true;
+  bool _showCashierName = true;
+  String _dateTimeFormat = 'dd/MM/yyyy HH:mm';
+  
   // App configuration
   final String _appVersion = '1.0.0';
   bool _setupCompleted = false;
@@ -42,6 +54,18 @@ class ConfigService {
   String get businessLogo => _businessLogo;
   String get appVersion => _appVersion;
   bool get setupCompleted => _setupCompleted;
+  
+  // VAT getters
+  double get vatRate => _vatRate;
+  bool get enableVat => _enableVat;
+  bool get showVatOnReceipt => _showVatOnReceipt;
+  
+  // Receipt getters
+  String get receiptHeader => _receiptHeader;
+  String get receiptFooter => _receiptFooter;
+  bool get showBusinessLogo => _showBusinessLogo;
+  bool get showCashierName => _showCashierName;
+  String get dateTimeFormat => _dateTimeFormat;
   
   // Setters
   set isMaster(bool value) {
@@ -104,6 +128,48 @@ class ConfigService {
     _saveConfig();
   }
   
+  // VAT setters
+  set vatRate(double value) {
+    _vatRate = value;
+    _saveConfig();
+  }
+  
+  set enableVat(bool value) {
+    _enableVat = value;
+    _saveConfig();
+  }
+  
+  set showVatOnReceipt(bool value) {
+    _showVatOnReceipt = value;
+    _saveConfig();
+  }
+  
+  // Receipt setters
+  set receiptHeader(String value) {
+    _receiptHeader = value;
+    _saveConfig();
+  }
+  
+  set receiptFooter(String value) {
+    _receiptFooter = value;
+    _saveConfig();
+  }
+  
+  set showBusinessLogo(bool value) {
+    _showBusinessLogo = value;
+    _saveConfig();
+  }
+  
+  set showCashierName(bool value) {
+    _showCashierName = value;
+    _saveConfig();
+  }
+  
+  set dateTimeFormat(String value) {
+    _dateTimeFormat = value;
+    _saveConfig();
+  }
+  
   // Initialize configuration
   Future<void> initialize() async {
     await _loadConfig();
@@ -128,6 +194,18 @@ class ConfigService {
       _businessPhone = prefs.getString('business_phone') ?? '0720319340, 0721705613';
       _businessEmail = prefs.getString('business_email') ?? '';
       _businessLogo = prefs.getString('business_logo') ?? '';
+      
+      // Load VAT settings
+      _vatRate = prefs.getDouble('vat_rate') ?? 16.0;
+      _enableVat = prefs.getBool('enable_vat') ?? true;
+      _showVatOnReceipt = prefs.getBool('show_vat_on_receipt') ?? true;
+      
+      // Load receipt settings
+      _receiptHeader = prefs.getString('receipt_header') ?? 'Thank you for shopping with us!';
+      _receiptFooter = prefs.getString('receipt_footer') ?? 'Goods once sold are not returnable.';
+      _showBusinessLogo = prefs.getBool('show_business_logo') ?? true;
+      _showCashierName = prefs.getBool('show_cashier_name') ?? true;
+      _dateTimeFormat = prefs.getString('date_time_format') ?? 'dd/MM/yyyy HH:mm';
       
       // Load app configuration
       _setupCompleted = prefs.getBool('setup_completed') ?? false;
@@ -158,6 +236,18 @@ class ConfigService {
       await prefs.setString('business_email', _businessEmail);
       await prefs.setString('business_logo', _businessLogo);
       
+      // Save VAT settings
+      await prefs.setDouble('vat_rate', _vatRate);
+      await prefs.setBool('enable_vat', _enableVat);
+      await prefs.setBool('show_vat_on_receipt', _showVatOnReceipt);
+      
+      // Save receipt settings
+      await prefs.setString('receipt_header', _receiptHeader);
+      await prefs.setString('receipt_footer', _receiptFooter);
+      await prefs.setBool('show_business_logo', _showBusinessLogo);
+      await prefs.setBool('show_cashier_name', _showCashierName);
+      await prefs.setString('date_time_format', _dateTimeFormat);
+      
       // Save app configuration
       await prefs.setBool('setup_completed', _setupCompleted);
       
@@ -165,6 +255,18 @@ class ConfigService {
     } catch (e) {
       debugPrint('Error saving configuration: $e');
     }
+  }
+  
+  // Calculate VAT from gross amount
+  double calculateVatFromGross(double grossAmount) {
+    if (!_enableVat) return 0.0;
+    return grossAmount * (_vatRate / (100 + _vatRate));
+  }
+  
+  // Calculate net amount from gross amount
+  double calculateNetFromGross(double grossAmount) {
+    if (!_enableVat) return grossAmount;
+    return grossAmount - calculateVatFromGross(grossAmount);
   }
   
   // Get the local IP address
@@ -197,6 +299,14 @@ class ConfigService {
         'business_phone': _businessPhone,
         'business_email': _businessEmail,
         'business_logo': _businessLogo,
+        'vat_rate': _vatRate,
+        'enable_vat': _enableVat,
+        'show_vat_on_receipt': _showVatOnReceipt,
+        'receipt_header': _receiptHeader,
+        'receipt_footer': _receiptFooter,
+        'show_business_logo': _showBusinessLogo,
+        'show_cashier_name': _showCashierName,
+        'date_time_format': _dateTimeFormat,
         'app_version': _appVersion,
         'setup_completed': _setupCompleted,
       };
@@ -232,6 +342,18 @@ class ConfigService {
         _businessEmail = configMap['business_email'] ?? '';
         _businessLogo = configMap['business_logo'] ?? '';
         
+        // Load VAT settings
+        _vatRate = configMap['vat_rate'] ?? 16.0;
+        _enableVat = configMap['enable_vat'] ?? true;
+        _showVatOnReceipt = configMap['show_vat_on_receipt'] ?? true;
+        
+        // Load receipt settings
+        _receiptHeader = configMap['receipt_header'] ?? 'Thank you for shopping with us!';
+        _receiptFooter = configMap['receipt_footer'] ?? 'Goods once sold are not returnable.';
+        _showBusinessLogo = configMap['show_business_logo'] ?? true;
+        _showCashierName = configMap['show_cashier_name'] ?? true;
+        _dateTimeFormat = configMap['date_time_format'] ?? 'dd/MM/yyyy HH:mm';
+        
         // Save the imported configuration
         await _saveConfig();
         return true;
@@ -256,6 +378,14 @@ class ConfigService {
     _businessPhone = '0720319340, 0721705613';
     _businessEmail = '';
     _businessLogo = '';
+    _vatRate = 16.0;
+    _enableVat = true;
+    _showVatOnReceipt = true;
+    _receiptHeader = 'Thank you for shopping with us!';
+    _receiptFooter = 'Goods once sold are not returnable.';
+    _showBusinessLogo = true;
+    _showCashierName = true;
+    _dateTimeFormat = 'dd/MM/yyyy HH:mm';
     _setupCompleted = false;
     
     await _saveConfig();

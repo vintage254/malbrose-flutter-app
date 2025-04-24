@@ -3,13 +3,13 @@ import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/services/order_service.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/screens/order_screen.dart';
-import 'package:my_flutter_app/screens/debtors_screen.dart';
-import 'package:my_flutter_app/screens/creditors_screen.dart';
-import 'package:my_flutter_app/screens/sales_screen.dart';
-import 'package:my_flutter_app/screens/user_management_screen.dart';
 import 'package:my_flutter_app/screens/activity_log_screen.dart';
+import 'package:my_flutter_app/screens/creditors_screen.dart';
+import 'package:my_flutter_app/screens/debtors_screen.dart';
 import 'package:my_flutter_app/screens/sales_report_screen.dart';
 import 'package:my_flutter_app/screens/product_management_screen.dart';
+import 'package:my_flutter_app/screens/settings_screen.dart';
+import 'package:my_flutter_app/screens/sales_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 
@@ -131,10 +131,7 @@ class DashboardWidgetState extends State<DashboardWidget> {
                     title: 'Make Sale',
                     icon: Icons.point_of_sale,
                     color: Colors.purple,
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const SalesScreen()),
-                    ),
+                    onPressed: () => Navigator.pushNamed(context, '/sales'),
                   ),
                 ),
                 SizedBox(
@@ -220,7 +217,7 @@ class DashboardWidgetState extends State<DashboardWidget> {
                       color: Colors.indigo,
                       onPressed: () => Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const UserManagementScreen()),
+                        MaterialPageRoute(builder: (_) => const SettingsScreen()),
                       ),
                     ),
                   ),

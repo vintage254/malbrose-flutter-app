@@ -4924,4 +4924,37 @@ class DatabaseService {
       print('Error logging diagnostic info: $e');
     }
   }
+
+  // Add this method to the DatabaseService class
+  Future<void> switchDatabase(String databaseName) async {
+    // Close the current database connection if open
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+      _initialized = false;
+    }
+    
+    // Force unlock database if needed
+    await _forceUnlockDatabase();
+    
+    // Open the new database
+    final databasePath = await getDatabasesPath();
+    final dbPath = p.join(databasePath, databaseName);
+    
+    // Force open the new database
+    _database = await openDatabase(
+      dbPath,
+      version: dbVersion,
+      onCreate: _createTables,
+      onOpen: (db) async {
+        await _ensureTablesExist(db);
+        await db.execute('PRAGMA foreign_keys = ON');
+        await db.execute('PRAGMA journal_mode = WAL');
+        await db.execute('PRAGMA synchronous = NORMAL');
+        debugPrint('Switched to database: $databaseName');
+      }
+    );
+    
+    _initialized = true;
+  }
 }
