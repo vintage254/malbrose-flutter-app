@@ -63,11 +63,30 @@ class DatabaseService {
   static const String actionUpdateCustomerReport = 'update_customer_report';
   static const String actionPrintCustomerReport = 'print_customer_report';
   static const String actionCreateCustomer = 'create_customer';
+  static const String actionDeleteProduct = 'delete_product';
+  static const String actionUpdateCustomer = 'update_customer';
+  static const String actionDeleteCustomer = 'delete_customer';
 
   // Role and permission constants
   static const String ROLE_ADMIN = 'ADMIN';
   static const String PERMISSION_FULL_ACCESS = 'FULL_ACCESS';
   static const String PERMISSION_BASIC = 'BASIC';
+
+  // System event constants
+  static const String eventLeaderChange = 'leader_change';
+  static const String eventSyncCompleted = 'sync_completed';
+  static const String eventSyncFailed = 'sync_failed';
+  static const String eventServerStarted = 'server_started';
+  static const String eventServerStopped = 'server_stopped';
+  static const String eventSystemStartup = 'system_startup';
+  static const String eventSystemShutdown = 'system_shutdown';
+  static const String eventDatabaseMigration = 'database_migration';
+  static const String eventNetworkChange = 'network_change';
+  static const String eventDeviceConnected = 'device_connected';
+  static const String eventDeviceDisconnected = 'device_disconnected';
+  static const String eventBackupCreated = 'backup_created';
+  static const String eventBackupRestored = 'backup_restored';
+  static const String eventErrorOccurred = 'error_occurred';
 
   DatabaseService._privateConstructor();
 
@@ -483,10 +502,11 @@ class DatabaseService {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS $tableActivityLogs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            username TEXT NOT NULL,
-            action TEXT NOT NULL,
+            user_id INTEGER NOT NULL DEFAULT 0,
+            username TEXT NOT NULL DEFAULT 'system',
+            action TEXT,
             action_type TEXT,
+            event_type TEXT,
             details TEXT NOT NULL,
             timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
           )
@@ -1984,15 +2004,16 @@ class DatabaseService {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS $tableActivityLogs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            username TEXT,
-            action TEXT NOT NULL,
+            user_id INTEGER NOT NULL DEFAULT 0,
+            username TEXT NOT NULL DEFAULT 'system',
+            action TEXT,
             action_type TEXT,
-            details TEXT,
-            timestamp TEXT NOT NULL
+            event_type TEXT,
+            details TEXT NOT NULL,
+            timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
           )
         ''');
-        print('Created activity_logs table');
+        print('Activity logs table created or already exists');
       }
       
       // Get list of all tables in the database
@@ -2902,6 +2923,7 @@ class DatabaseService {
     String action,
     String actionType,
     String details,
+    {String? eventType}
   ) async {
     try {
       final db = await database;
@@ -2912,6 +2934,7 @@ class DatabaseService {
           'username': username,
           'action': action,
           'action_type': actionType,
+          'event_type': eventType,
           'details': details,
           'timestamp': DateTime.now().toIso8601String(),
         },
@@ -2926,6 +2949,7 @@ class DatabaseService {
   Future<List<Map<String, dynamic>>> getActivityLogs({
     String? userFilter,
     String? actionFilter,
+    String? eventTypeFilter,
     String? dateFilter,
   }) async {
     try {
@@ -2943,6 +2967,12 @@ class DatabaseService {
         if (whereClause.isNotEmpty) whereClause += ' AND ';
         whereClause += 'action = ?';
         whereArgs.add(actionFilter);
+      }
+      
+      if (eventTypeFilter != null) {
+        if (whereClause.isNotEmpty) whereClause += ' AND ';
+        whereClause += 'event_type = ?';
+        whereArgs.add(eventTypeFilter);
       }
       
       if (dateFilter != null) {
@@ -4703,14 +4733,16 @@ class DatabaseService {
     String action,
     String actionType,
     String details,
+    {String? eventType}
   ) async {
     await txn.insert(tableActivityLogs, {
       'user_id': userId ?? 0,
       'username': username,
       'action': action,
       'action_type': actionType,
+      'event_type': eventType,
       'details': details,
-      'created_at': DateTime.now().toIso8601String(),
+      'timestamp': DateTime.now().toIso8601String(),
     });
   }
 
@@ -4904,7 +4936,7 @@ class DatabaseService {
   }
 
   // Add a method to log diagnostic info to the database
-  Future<void> logDiagnosticInfo(String action, String details) async {
+  Future<void> logDiagnosticInfo(String eventType, String details) async {
     try {
       final db = await database;
       final currentUser = AuthService.instance.currentUser;
@@ -4913,8 +4945,8 @@ class DatabaseService {
         {
           'user_id': currentUser?.id ?? 0,
           'username': currentUser?.username ?? 'system',
-          'action': 'DIAGNOSTIC_LOG',
-          'action_type': action,
+          'action': 'system_event',
+          'event_type': eventType,
           'details': details,
           'timestamp': DateTime.now().toIso8601String(),
         },

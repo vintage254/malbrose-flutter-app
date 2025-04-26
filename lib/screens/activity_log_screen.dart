@@ -26,6 +26,7 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
   Timer? _refreshTimer;
   String? _selectedUser;
   String? _selectedAction;
+  String? _selectedEventType;
   DateTime? _selectedDate;
   final _searchController = TextEditingController();
   String _searchQuery = '';
@@ -34,12 +35,14 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
   final List<String> _actionTypes = [
     DatabaseService.actionCreateProduct,
     DatabaseService.actionUpdateProduct,
+    DatabaseService.actionDeleteProduct,
     DatabaseService.actionCreateOrder,
     DatabaseService.actionUpdateOrder,
     DatabaseService.actionCompleteSale,
     DatabaseService.actionRevertReceipt,
     DatabaseService.actionCreateCreditor,
     DatabaseService.actionUpdateCreditor,
+    DatabaseService.actionDeleteCreditor,
     DatabaseService.actionCreateDebtor,
     DatabaseService.actionUpdateDebtor,
     DatabaseService.actionLogin,
@@ -47,6 +50,34 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
     DatabaseService.actionCreateCustomerReport,
     DatabaseService.actionUpdateCustomerReport,
     DatabaseService.actionPrintCustomerReport,
+    DatabaseService.actionCreateCustomer,
+    DatabaseService.actionUpdateCustomer,
+    DatabaseService.actionDeleteCustomer,
+    'update_inventory',
+    'delete_order',
+    'payment_received',
+    'refund_issued',
+    'user_created',
+    'user_updated',
+    'system_event',
+  ];
+
+  // System event types
+  final List<String> _eventTypes = [
+    DatabaseService.eventLeaderChange,
+    DatabaseService.eventSyncCompleted,
+    DatabaseService.eventSyncFailed,
+    DatabaseService.eventServerStarted,
+    DatabaseService.eventServerStopped,
+    DatabaseService.eventSystemStartup,
+    DatabaseService.eventSystemShutdown,
+    DatabaseService.eventDatabaseMigration,
+    DatabaseService.eventNetworkChange,
+    DatabaseService.eventDeviceConnected,
+    DatabaseService.eventDeviceDisconnected,
+    DatabaseService.eventBackupCreated,
+    DatabaseService.eventBackupRestored,
+    DatabaseService.eventErrorOccurred,
   ];
 
   @override
@@ -72,6 +103,7 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
       final logs = await DatabaseService.instance.getActivityLogs(
         userFilter: _selectedUser,
         actionFilter: _selectedAction,
+        eventTypeFilter: _selectedEventType,
         dateFilter: _selectedDate?.toIso8601String(),
       );
       if (mounted) {
@@ -119,10 +151,11 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
               pw.Table.fromTextArray(
                 context: context,
                 data: <List<String>>[
-                  <String>['Date/Time', 'User', 'Action', 'Details'],
+                  <String>['Date/Time', 'User', 'Event Type', 'Action', 'Details'],
                   ..._filteredLogs.map((log) => [
                     DateFormat('dd/MM/yyyy HH:mm').format(log.timestamp),
                     log.username,
+                    log.eventType ?? 'N/A',
                     log.action.replaceAll('_', ' ').toUpperCase(),
                     log.details,
                   ]),
@@ -220,10 +253,11 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
               pw.Table.fromTextArray(
                 context: context,
                 data: <List<String>>[
-                  <String>['Date/Time', 'User', 'Action', 'Details'],
+                  <String>['Date/Time', 'User', 'Event Type', 'Action', 'Details'],
                   ..._filteredLogs.map((log) => [
                     DateFormat('dd/MM/yyyy HH:mm').format(log.timestamp),
                     log.username,
+                    log.eventType ?? 'N/A',
                     log.action.replaceAll('_', ' ').toUpperCase(),
                     log.details,
                   ]),
@@ -236,6 +270,7 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                   1: pw.Alignment.centerLeft,
                   2: pw.Alignment.centerLeft,
                   3: pw.Alignment.centerLeft,
+                  4: pw.Alignment.centerLeft,
                 },
               ),
               pw.SizedBox(height: 20),
@@ -366,6 +401,37 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                           ),
                         ),
                         const SizedBox(width: defaultPadding),
+                        // Event Type Filter
+                        SizedBox(
+                          width: 200,
+                          child: DropdownButtonFormField<String>(
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Filter by Event Type',
+                              filled: true,
+                              fillColor: Colors.white,
+                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                            value: _selectedEventType,
+                            items: [
+                              const DropdownMenuItem(
+                                value: null,
+                                child: Text('All Event Types'),
+                              ),
+                              ..._eventTypes.map((eventType) {
+                                return DropdownMenuItem(
+                                  value: eventType,
+                                  child: Text(eventType.replaceAll('_', ' ')),
+                                );
+                              }),
+                            ],
+                            onChanged: (value) {
+                              setState(() => _selectedEventType = value);
+                              _loadLogs();
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: defaultPadding),
                         // Action Filter
                         SizedBox(
                           width: 200,
@@ -434,6 +500,7 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                                 _selectedDate = null;
                                 _selectedUser = null;
                                 _selectedAction = null;
+                                _selectedEventType = null;
                                 _searchQuery = '';
                                 _searchController.clear();
                               });
@@ -489,6 +556,10 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                                     size: ColumnSize.S,
                                   ),
                                   DataColumn2(
+                                    label: Text('Event Type'),
+                                    size: ColumnSize.M,
+                                  ),
+                                  DataColumn2(
                                     label: Text('Action'),
                                     size: ColumnSize.M,
                                   ),
@@ -505,6 +576,7 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                                             .format(log.timestamp),
                                       )),
                                       DataCell(Text(log.username)),
+                                      DataCell(Text(log.eventType ?? 'N/A')),
                                       DataCell(Text(
                                         log.action.replaceAll('_', ' ').toUpperCase(),
                                       )),
@@ -530,18 +602,21 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
       final matchesSearch = _searchQuery.isEmpty ||
           log.details.toLowerCase().contains(_searchQuery.toLowerCase()) ||
           log.action.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+          (log.eventType?.toLowerCase().contains(_searchQuery.toLowerCase()) ?? false) ||
           log.username.toLowerCase().contains(_searchQuery.toLowerCase());
 
       final matchesUser = _selectedUser == null || log.username == _selectedUser;
 
       final matchesAction = _selectedAction == null || log.action == _selectedAction;
+      
+      final matchesEventType = _selectedEventType == null || log.eventType == _selectedEventType;
 
       final matchesDate = _selectedDate == null ||
           (log.timestamp.year == _selectedDate!.year &&
               log.timestamp.month == _selectedDate!.month &&
               log.timestamp.day == _selectedDate!.day);
 
-      return matchesSearch && matchesUser && matchesAction && matchesDate;
+      return matchesSearch && matchesUser && matchesAction && matchesEventType && matchesDate;
     }).toList();
   }
 }

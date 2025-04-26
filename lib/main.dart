@@ -34,6 +34,8 @@ import 'package:my_flutter_app/services/config_service.dart';
 import 'package:my_flutter_app/screens/backup_screen.dart';
 import 'package:my_flutter_app/services/backup_service.dart';
 import 'package:my_flutter_app/screens/license_check_screen.dart';
+import 'package:my_flutter_app/services/connectivity_manager.dart';
+import 'package:my_flutter_app/services/machine_config_service.dart';
 
 void main() async {
 
@@ -80,6 +82,23 @@ void main() async {
   print('Checking if setup is completed...');
   bool setupCompleted = await checkSetupCompleted();
   print('Setup completed: $setupCompleted');
+  
+  // Initialize connectivity manager if setup is completed
+  if (setupCompleted) {
+    try {
+      print('Initializing ConnectivityManager...');
+      await ConnectivityManager.instance.initialize();
+      print('ConnectivityManager initialized');
+      
+      // Listen for connectivity events
+      ConnectivityManager.instance.onConnectivityEvent.listen((event) {
+        // Log connectivity events
+        print('Connectivity event: ${event.type} - ${event.message}');
+      });
+    } catch (e) {
+      print('Error initializing ConnectivityManager: $e');
+    }
+  }
 
   // Start the app with providers
   print('Starting app with providers');

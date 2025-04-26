@@ -60,7 +60,7 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
     _loadTables();
     _loadMachineConfig();
   }
-
+  
   @override
   void dispose() {
     _tabController.dispose();
@@ -105,33 +105,71 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
     });
     
     try {
-      await _machineConfigService.setMachineRole(role);
+      // If switching to servant mode, scan for master devices first
+      if (role == MachineRole.servant) {
       setState(() {
-        _machineRole = role;
-        _isLoading = false;
-        _statusMessage = 'Machine role set to ${role.toString().split('.').last}';
+          _statusMessage = 'Scanning network for master devices...';
+        });
+        
+        // Scan for master devices on the network
+        final masterAddresses = await _machineConfigService.scanForMasters();
+        
+        if (masterAddresses.isEmpty) {
+          // No master found - prevent switch
+      setState(() {
+            _isLoading = false;
+            _statusMessage = 'No master device found on the network. Please ensure the master device is active and try again.';
       });
-    } catch (e) {
+          return;
+        } else if (masterAddresses.length > 1) {
+          // Multiple masters found - prevent switch
       setState(() {
         _isLoading = false;
-        _statusMessage = 'Error saving machine role: $e';
+            _statusMessage = 'Multiple master devices detected (${masterAddresses.join(", ")}). Please resolve the conflict and try again.';
+          });
+          return;
+        } else {
+          // Single master found - connect to it
+          final masterAddress = masterAddresses.first;
+          _masterAddressController.text = masterAddress;
+          await _machineConfigService.setMasterAddress(masterAddress);
+          setState(() {
+            _masterAddress = masterAddress;
+            _statusMessage = 'Found and connected to master at $masterAddress';
       });
     }
   }
   
+      // Save the machine role
+      await _machineConfigService.setMachineRole(role);
+      setState(() {
+        _machineRole = role;
+        _isLoading = false;
+        _statusMessage = role == MachineRole.servant 
+            ? 'Machine role set to servant, connected to master at $_masterAddress' 
+            : 'Machine role set to ${role.toString().split('.').last}';
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _statusMessage = 'Error changing machine role: $e';
+      });
+    }
+  }
+
   void _saveMasterAddress() async {
     if (_masterAddressController.text.isEmpty) {
-      setState(() {
+        setState(() {
         _statusMessage = 'Master address cannot be empty';
-      });
-      return;
-    }
-    
-    setState(() {
-      _isLoading = true;
+        });
+        return;
+      }
+      
+      setState(() {
+        _isLoading = true;
       _statusMessage = 'Saving master address...';
-    });
-    
+      });
+      
     try {
       await _machineConfigService.setMasterAddress(_masterAddressController.text);
       setState(() {
@@ -146,13 +184,13 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
       });
     }
   }
-  
+
   void _saveSyncFrequency(SyncFrequency frequency) async {
-    setState(() {
-      _isLoading = true;
+      setState(() {
+        _isLoading = true;
       _statusMessage = 'Saving sync frequency...';
-    });
-    
+      });
+      
     try {
       await _machineConfigService.setSyncFrequency(frequency);
       setState(() {
@@ -167,10 +205,10 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
       });
     }
   }
-  
+
   void _saveConflictResolution(String resolution) async {
-    setState(() {
-      _isLoading = true;
+      setState(() {
+        _isLoading = true;
       _statusMessage = 'Saving conflict resolution strategy...';
     });
     
@@ -188,7 +226,7 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
       });
     }
   }
-  
+
   void _testMasterConnection() async {
     if (_masterAddressController.text.isEmpty) {
       setState(() {
@@ -267,7 +305,7 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
         encryptBackups: _encryptBackups,
       );
       
-      setState(() {
+    setState(() {
         _isLoading = false;
         _statusMessage = 'Backup settings saved successfully';
       });
@@ -330,8 +368,8 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
         ],
       ),
     );
-  }
-  
+    }
+    
   void _createNewCompany(String name, String dbName) async {
     setState(() {
       _isLoading = true;
@@ -367,17 +405,17 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
     );
     
     if (company.isEmpty) {
-      setState(() {
+        setState(() {
         _statusMessage = 'Company not found';
-      });
-      return;
-    }
-    
-    setState(() {
-      _isLoading = true;
+        });
+        return;
+      }
+      
+      setState(() {
+        _isLoading = true;
       _statusMessage = 'Switching to company: $companyName';
-    });
-    
+      });
+      
     try {
       await _databaseService.switchDatabase(company['database']);
       await _machineConfigService.setCurrentCompany(company);
@@ -482,9 +520,9 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
   
   Widget _buildBackupTab() {
     return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16.0),
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Wrap(
@@ -532,6 +570,15 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
                     backgroundColor: Colors.orange,
                   ),
                 ),
+                ElevatedButton.icon(
+                  onPressed: _isLoading ? null : _exportOrdersCSV,
+                  icon: const Icon(Icons.request_page),
+                  label: const Text('Export Orders CSV'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.deepPurple,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
                 ElevatedButton(
                   onPressed: () => _showResetDatabaseConfirmation(context),
                   style: ElevatedButton.styleFrom(
@@ -542,23 +589,23 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
                 ),
               ],
             ),
-          ),
-        ),
-        if (_isLoading)
-          const LinearProgressIndicator(),
-        if (_statusMessage.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Text(
-              _statusMessage,
-              style: TextStyle(
-                color: _statusMessage.contains('Error') ? Colors.red : Colors.green,
-                fontWeight: FontWeight.bold,
-              ),
             ),
           ),
-        const Divider(),
-        Expanded(
+          if (_isLoading)
+            const LinearProgressIndicator(),
+          if (_statusMessage.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Text(
+                _statusMessage,
+                style: TextStyle(
+                  color: _statusMessage.contains('Error') ? Colors.red : Colors.green,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          const Divider(),
+          Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
               // On very small screens, stack the panels vertically
@@ -567,183 +614,191 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
               } else {
                 // Default layout for larger screens
                 return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Table selection panel
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Table selection panel
                     if (_allTables.isNotEmpty)
-                      Expanded(
-                        flex: 1,
-                        child: Card(
-                          margin: const EdgeInsets.all(8.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.all(8.0),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Expanded(
+                    flex: 1,
+                    child: Card(
+                      margin: const EdgeInsets.all(8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Tables for Selective Backup',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                Row(
+                                      mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const Text(
-                                      'Tables for Selective Backup',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                                    Row(
-                                      children: [
-                                        TextButton(
-                                          onPressed: () {
-                                            setState(() {
+                                    TextButton(
+                                      onPressed: () {
+                                        setState(() {
                                               _selectedTables = List.from(_allTables);
-                                            });
-                                          },
-                                          child: const Text('Select All'),
-                                        ),
-                                        TextButton(
-                                          onPressed: () {
-                                            setState(() {
+                                        });
+                                      },
+                                          style: TextButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                                          ),
+                                      child: const Text('Select All'),
+                                    ),
+                                        const SizedBox(width: 4),
+                                    TextButton(
+                                      onPressed: () {
+                                        setState(() {
                                               _selectedTables.clear();
-                                            });
-                                          },
-                                          child: const Text('Deselect All'),
-                                        ),
-                                      ],
+                                        });
+                                      },
+                                          style: TextButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                                          ),
+                                          child: const Text('Deselect'),
                                     ),
                                   ],
                                 ),
-                              ),
-                              const Divider(height: 1),
-                              Expanded(
-                                child: ListView.builder(
+                              ],
+                            ),
+                          ),
+                          const Divider(height: 1),
+                          Expanded(
+                            child: ListView.builder(
                                   itemCount: _allTables.length,
-                                  itemBuilder: (context, index) {
+                              itemBuilder: (context, index) {
                                     final table = _allTables[index];
                                     final isSelected = _selectedTables.contains(table);
-                                    final rowCount = _tableRowCounts[table] ?? 0;
-                                    
-                                    return CheckboxListTile(
-                                      title: Text(table),
-                                      subtitle: Text('Rows: $rowCount'),
-                                      value: isSelected,
-                                      onChanged: (value) {
-                                        setState(() {
+                                final rowCount = _tableRowCounts[table] ?? 0;
+                                
+                                return CheckboxListTile(
+                                  title: Text(table),
+                                  subtitle: Text('Rows: $rowCount'),
+                                  value: isSelected,
+                                  onChanged: (value) {
+                                    setState(() {
                                           if (value == true) {
                                             _selectedTables.add(table);
                                           } else {
                                             _selectedTables.remove(table);
                                           }
-                                        });
-                                      },
-                                      dense: true,
-                                    );
+                                    });
                                   },
-                                ),
-                              ),
-                            ],
+                                  dense: true,
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                // Backups list
+                Expanded(
+                  flex: 2,
+                  child: Card(
+                    margin: const EdgeInsets.all(8.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.all(8.0),
+                          child: Text(
+                            'Available Backups',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
                           ),
                         ),
-                      ),
-                    // Backups list
-                    Expanded(
-                      flex: 2,
-                      child: Card(
-                        margin: const EdgeInsets.all(8.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Padding(
-                              padding: EdgeInsets.all(8.0),
-                              child: Text(
-                                'Available Backups',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
                                   if (_isInBatchDeleteMode && _backups.isNotEmpty)
                                     Expanded(
                                       child: SingleChildScrollView(
                                         scrollDirection: Axis.horizontal,
                                         child: Row(
-                                          children: [
-                                            TextButton.icon(
-                                              icon: const Icon(Icons.select_all),
-                                              label: const Text('Select All'),
-                                              onPressed: () => _selectAllBackups(true),
-                                            ),
-                                            TextButton.icon(
-                                              icon: const Icon(Icons.deselect),
-                                              label: const Text('Deselect All'),
-                                              onPressed: () => _selectAllBackups(false),
-                                            ),
-                                            const SizedBox(width: 8),
-                                            ElevatedButton.icon(
-                                              icon: const Icon(Icons.delete_forever),
-                                              label: const Text('Delete Selected'),
-                                              onPressed: _deleteSelectedBackups,
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: Colors.red,
-                                              ),
-                                            ),
-                                          ],
+                                  children: [
+                                    TextButton.icon(
+                                      icon: const Icon(Icons.select_all),
+                                      label: const Text('Select All'),
+                                      onPressed: () => _selectAllBackups(true),
+                                    ),
+                                    TextButton.icon(
+                                      icon: const Icon(Icons.deselect),
+                                      label: const Text('Deselect All'),
+                                      onPressed: () => _selectAllBackups(false),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    ElevatedButton.icon(
+                                      icon: const Icon(Icons.delete_forever),
+                                      label: const Text('Delete Selected'),
+                                      onPressed: _deleteSelectedBackups,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    ),
+                                  ],
                                         ),
                                       ),
-                                    ),
-                                  TextButton.icon(
+                                ),
+                              TextButton.icon(
                                     icon: Icon(_isInBatchDeleteMode ? Icons.close : Icons.delete),
                                     label: Text(_isInBatchDeleteMode ? 'Cancel' : 'Batch Delete'),
-                                    onPressed: _backups.isEmpty ? null : _toggleBatchDeleteMode,
-                                    style: TextButton.styleFrom(
+                                onPressed: _backups.isEmpty ? null : _toggleBatchDeleteMode,
+                                style: TextButton.styleFrom(
                                       foregroundColor: _isInBatchDeleteMode ? Colors.blue : Colors.red,
-                                    ),
-                                  ),
-                                ],
+                                ),
                               ),
-                            ),
-                            const Divider(height: 1),
-                            Expanded(
-                              child: _backups.isEmpty
-                                  ? const Center(
-                                      child: Text(
-                                        'No backups found. Create a backup to get started.',
-                                        style: TextStyle(fontSize: 16),
-                                      ),
-                                    )
-                                  : ListView.builder(
-                                      itemCount: _backups.length,
-                                      itemBuilder: (context, index) {
-                                        final backup = _backups[index];
-                                        final fileName = basename(backup.path);
-                                        final fileSize = (backup as File).lengthSync();
-                                        final fileSizeFormatted = _formatFileSize(fileSize);
-                                        final modifiedDate = backup.statSync().modified;
-                                        
-                                        return ListTile(
+                            ],
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        Expanded(
+                          child: _backups.isEmpty
+                              ? const Center(
+                                  child: Text(
+                                    'No backups found. Create a backup to get started.',
+                                    style: TextStyle(fontSize: 16),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  itemCount: _backups.length,
+                                  itemBuilder: (context, index) {
+                                    final backup = _backups[index];
+                                    final fileName = basename(backup.path);
+                                    final fileSize = (backup as File).lengthSync();
+                                    final fileSizeFormatted = _formatFileSize(fileSize);
+                                    final modifiedDate = backup.statSync().modified;
+                                    
+                                    return ListTile(
                                           leading: _isInBatchDeleteMode
-                                            ? Checkbox(
+                                        ? Checkbox(
                                                 value: _batchSelectedBackups.contains(backup.path),
-                                                onChanged: (value) {
-                                                  setState(() {
+                                            onChanged: (value) {
+                                              setState(() {
                                                     if (value == true) {
                                                       _batchSelectedBackups.add(backup.path);
                                                     } else {
                                                       _batchSelectedBackups.remove(backup.path);
                                                     }
-                                                  });
-                                                },
-                                              )
-                                            : const Icon(Icons.backup, color: Colors.blue),
-                                          title: Text(fileName),
-                                          subtitle: Text(
-                                            'Size: $fileSizeFormatted\nCreated: ${DateFormat('yyyy-MM-dd HH:mm:ss').format(modifiedDate)}',
-                                          ),
+                                              });
+                                            },
+                                          )
+                                        : const Icon(Icons.backup, color: Colors.blue),
+                                      title: Text(fileName),
+                                      subtitle: Text(
+                                        'Size: $fileSizeFormatted\nCreated: ${DateFormat('yyyy-MM-dd HH:mm:ss').format(modifiedDate)}',
+                                      ),
                                           trailing: _isInBatchDeleteMode 
                                             ? null
                                             : Wrap(
@@ -954,35 +1009,35 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
                                 'Size: $fileSizeFormatted\nCreated: ${DateFormat('yyyy-MM-dd HH:mm:ss').format(modifiedDate)}',
                               ),
                               trailing: _isInBatchDeleteMode 
-                                ? null
-                                : Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.restore, color: Colors.green),
-                                        onPressed: () => _restoreBackup(backup.path),
-                                        tooltip: 'Restore',
+                                        ? null
+                                        : Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            IconButton(
+                                              icon: const Icon(Icons.restore, color: Colors.green),
+                                              onPressed: () => _restoreBackup(backup.path),
+                                              tooltip: 'Restore',
                                         constraints: const BoxConstraints(),
                                         padding: const EdgeInsets.all(8),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete, color: Colors.red),
-                                        onPressed: () => _deleteBackup(backup.path),
-                                        tooltip: 'Delete',
+                                            ),
+                                            IconButton(
+                                              icon: const Icon(Icons.delete, color: Colors.red),
+                                              onPressed: () => _deleteBackup(backup.path),
+                                              tooltip: 'Delete',
                                         constraints: const BoxConstraints(),
                                         padding: const EdgeInsets.all(8),
-                                      ),
-                                    ],
-                                  ),
-                            );
-                          },
+                                            ),
+                                          ],
+                                        ),
+                                    );
+                                  },
+                                ),
                         ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
-            ),
-          ),
-        ),
-      ],
     );
   }
   
@@ -1052,6 +1107,9 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
                     child: DropdownButtonFormField<MachineRole>(
                       value: _machineRole,
                       isExpanded: true, // Ensure the dropdown uses available space
+                      iconSize: 24,
+                      menuMaxHeight: 200, // Set max height for dropdown menu
+                      isDense: false, // Explicitly set this to false to give more room
                       onChanged: (value) {
                         if (value != null && value != _machineRole) {
                           _saveMachineRole(value);
@@ -1077,32 +1135,21 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
                             break;
                         }
                         
-                        // Simplify the dropdown item to reduce overflow
+                        // Use a single-line layout with no vertical stacking
                         return DropdownMenuItem<MachineRole>(
                           value: role,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                displayName,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(
-                                description,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4.0),
+                            child: Text(
+                              displayName,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         );
                       }).toList(),
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                       ),
                     ),
                   ),
@@ -1631,16 +1678,28 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
                     Text('Created: ${DateFormat('yyyy-MM-dd').format(DateTime.parse(profile['created']))}'),
                   ],
                 ),
-                trailing: isCurrentCompany
-                  ? const Chip(
-                      label: Text('Current'),
-                      backgroundColor: Colors.green,
-                      labelStyle: TextStyle(color: Colors.white),
-                    )
-                  : ElevatedButton(
-                      onPressed: () => _switchCompany(profile['name']),
-                      child: const Text('Switch'),
-                    ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isCurrentCompany)
+                      const Chip(
+                        label: Text('Current'),
+                        backgroundColor: Colors.green,
+                        labelStyle: TextStyle(color: Colors.white),
+                      )
+                    else
+                      ElevatedButton(
+                        onPressed: () => _switchCompany(profile['name']),
+                        child: const Text('Switch'),
+                      ),
+                    if (!isCurrentCompany)
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        onPressed: () => _deleteCompany(profile['name']),
+                        tooltip: 'Delete Company',
+                      ),
+                  ],
+                ),
                 isThreeLine: true,
               );
             },
@@ -1854,25 +1913,151 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
       return;
     }
     
-    setState(() {
-      _isLoading = true;
-      _statusMessage = 'Exporting backup...';
-    });
+    // Show dialog to select which backup to export
+    final selectedBackup = await showDialog<FileSystemEntity>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Backup to Export'),
+        content: Container(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Choose a backup to export:'),
+              const SizedBox(height: 16),
+              Container(
+                height: 300,
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _backups.length,
+                  itemBuilder: (context, index) {
+                    final backup = _backups[index];
+                    final fileName = basename(backup.path);
+                    final modifiedDate = backup.statSync().modified;
+                    final fileSize = backup.statSync().size;
+                    final fileSizeFormatted = _formatFileSize(fileSize);
+                    
+                    return ListTile(
+                      leading: const Icon(Icons.backup, color: Colors.blue),
+                      title: Text(fileName),
+                      subtitle: Text(
+                        'Size: $fileSizeFormatted\nCreated: ${DateFormat('yyyy-MM-dd HH:mm:ss').format(modifiedDate)}',
+                      ),
+                      onTap: () => Navigator.pop(context, backup),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              // Create new backup and return it
+              Navigator.pop(context, null);
+            },
+            child: const Text('Create New Backup'),
+          ),
+        ],
+      ),
+    );
+    
+    if (selectedBackup == null) {
+      // User might have clicked Cancel or Create New Backup
+      final wasCancel = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Export Backup'),
+          content: const Text('Do you want to create a new backup for export or cancel the operation?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, true), // true means cancel
+              child: const Text('Cancel Export'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, false), // false means create new
+              child: const Text('Create New Backup'),
+            ),
+          ],
+        ),
+      ) ?? true; // Default to cancel if dialog is dismissed
+      
+      if (wasCancel) {
+        if (mounted) {
+          setState(() {
+            _statusMessage = 'Backup export cancelled';
+            _isLoading = false;
+          });
+        }
+        return;
+      }
+      
+      // User wants to create a new backup
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Creating new backup for export...';
+          _isLoading = true;
+        });
+      }
+      
+      try {
+        // Create a new backup
+        final exportPath = await _backupService.exportBackup();
+        
+        if (mounted) {
+          setState(() {
+            _statusMessage = 'Backup exported successfully to: $exportPath';
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _statusMessage = 'Error exporting backup: $e';
+          });
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
+      return;
+    }
+    
+    // User selected an existing backup
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _statusMessage = 'Exporting selected backup...';
+      });
+    }
     
     try {
-      final exportPath = await _backupService.exportBackup();
+      final exportPath = await _backupService.exportExistingBackup(selectedBackup.path);
       
-      setState(() {
-        _statusMessage = 'Backup exported successfully to: $exportPath';
-      });
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Backup exported successfully to: $exportPath';
+        });
+      }
     } catch (e) {
-      setState(() {
-        _statusMessage = 'Error exporting backup: $e';
-      });
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Error exporting backup: $e';
+        });
+      }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
   
@@ -2234,6 +2419,119 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
     } catch (e) {
       setState(() {
         _statusMessage = 'Error resetting database: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _deleteCompany(String companyName) async {
+    // Confirm deletion
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Company'),
+        content: Text(
+          'Are you sure you want to delete "$companyName"? This will permanently delete the company profile and its database. This action cannot be undone.',
+          style: const TextStyle(color: Colors.red),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    ) ?? false;
+    
+    if (!confirmed) {
+      return;
+    }
+    
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Deleting company...';
+    });
+    
+    try {
+      await _machineConfigService.deleteCompanyProfile(companyName);
+      
+      setState(() {
+        _statusMessage = 'Company deleted successfully';
+        // Update company profiles list
+        _companyProfiles.removeWhere((company) => company['name'] == companyName);
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Error deleting company: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _exportOrdersCSV() async {
+    // Show date picker dialog
+    final dateRange = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDateRange: DateTimeRange(
+        start: DateTime.now().subtract(const Duration(days: 30)),
+        end: DateTime.now(),
+      ),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: Colors.deepPurple,
+              onPrimary: Colors.white,
+              onSurface: Colors.black,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    // If user cancelled the date picker
+    if (dateRange == null) {
+      setState(() {
+        _statusMessage = 'CSV export cancelled';
+      });
+      return;
+    }
+
+    setState(() {
+      _statusMessage = 'Exporting orders as CSV...';
+      _isLoading = true;
+    });
+    
+    try {
+      // Call the service with selected date range
+      final exportPath = await _backupService.exportOrdersAsCSV(
+        startDate: dateRange.start,
+        endDate: dateRange.end,
+      );
+      
+      setState(() {
+        _statusMessage = 'Orders exported successfully to: $exportPath';
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Error exporting orders: $e';
       });
     } finally {
       setState(() {

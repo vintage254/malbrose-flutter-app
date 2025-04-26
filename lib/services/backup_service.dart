@@ -244,11 +244,53 @@ class BackupService {
   // Export backup to external storage
   Future<String> exportBackup() async {
     try {
+      // Ask user for save location first
+      final timestamp = DateFormat('yyyy-MM-dd_HH-mm-ss').format(DateTime.now());
+      final defaultFilename = 'malbrose_backup_$timestamp.db';
+      
+      String? outputPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Choose where to save the database backup',
+        fileName: defaultFilename,
+        allowedExtensions: ['db'],
+        type: FileType.custom,
+      );
+      
+      if (outputPath == null) {
+        // User cancelled the picker
+        throw Exception('Backup export cancelled by user');
+      }
+      
+      // Ensure .db extension
+      if (!outputPath.toLowerCase().endsWith('.db')) {
+        outputPath = '$outputPath.db';
+      }
+      
       // Create a new backup
       final backupPath = await createBackup();
       final backupFile = File(backupPath);
       
-      // Generate a default filename with timestamp
+      // Copy the backup to the selected location
+      await backupFile.copy(outputPath);
+      
+      debugPrint('Backup exported to: $outputPath');
+      return outputPath;
+    } catch (e) {
+      debugPrint('Error exporting backup: $e');
+      rethrow;
+    }
+  }
+  
+  // Export existing backup to external storage
+  Future<String> exportExistingBackup(String backupPath) async {
+    try {
+      final backupFile = File(backupPath);
+      
+      if (!await backupFile.exists()) {
+        throw Exception('Backup file not found at $backupPath');
+      }
+      
+      // Extract filename from path and use as default filename
+      final filename = backupPath.split('/').last;
       final timestamp = DateFormat('yyyy-MM-dd_HH-mm-ss').format(DateTime.now());
       final defaultFilename = 'malbrose_backup_$timestamp.db';
       
@@ -542,6 +584,272 @@ class BackupService {
       }
     } catch (e) {
       debugPrint('Error creating named backup: $e');
+      rethrow;
+    }
+  }
+
+  // Export orders as CSV
+  Future<String> exportOrdersAsCSV({DateTime? startDate, DateTime? endDate}) async {
+    try {
+      // Get the database instance
+      final db = await DatabaseService.instance.database;
+      
+      // Prepare date range for query and filename
+      final now = DateTime.now();
+      startDate ??= now.subtract(const Duration(days: 30));
+      endDate ??= now;
+      
+      final startDateStr = DateFormat('yyyy-MM-dd').format(startDate);
+      final endDateStr = DateFormat('yyyy-MM-dd').format(endDate);
+      
+      // Define default filename upfront
+      final defaultFilename = 'orders_${startDateStr}_to_${endDateStr}.csv';
+      
+      // Ask user for save location first before querying database
+      String? outputPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save Orders CSV',
+        fileName: defaultFilename,
+        allowedExtensions: ['csv'],
+        type: FileType.custom,
+      );
+      
+      if (outputPath == null) {
+        // User cancelled the picker
+        throw Exception('CSV export cancelled by user');
+      }
+      
+      // Ensure .csv extension
+      if (!outputPath.toLowerCase().endsWith('.csv')) {
+        outputPath = '$outputPath.csv';
+      }
+      
+      // Query orders within date range
+      List<Map<String, dynamic>> orders = [];
+      
+      try {
+        // First check if orders table exists
+        final tableCheck = await db.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='orders'"
+        );
+        
+        if (tableCheck.isEmpty) {
+          throw Exception('Orders table does not exist in the database');
+        }
+        
+        // Check if customers table exists for JOIN
+        final customersExist = (await db.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='customers'"
+        )).isNotEmpty;
+        
+        // Query with appropriate JOIN based on schema
+        String orderQuery;
+        if (customersExist) {
+          orderQuery = '''
+            SELECT o.*, c.name as customer_name
+            FROM orders o
+            LEFT JOIN customers c ON o.customer_id = c.id
+            WHERE o.created_at BETWEEN ? AND ?
+            ORDER BY o.created_at DESC
+          ''';
+        } else {
+          orderQuery = '''
+            SELECT o.*
+            FROM orders o
+            WHERE o.created_at BETWEEN ? AND ?
+            ORDER BY o.created_at DESC
+          ''';
+        }
+        
+        orders = await db.rawQuery(orderQuery, [
+          startDate.toIso8601String(),
+          endDate.add(const Duration(days: 1)).toIso8601String()
+        ]);
+      } catch (e) {
+        debugPrint('Error querying orders: $e');
+        // If specific query fails, try a more basic query
+        try {
+          orders = await db.query('orders', orderBy: 'created_at DESC');
+        } catch (e2) {
+          debugPrint('Error with fallback query: $e2');
+          throw Exception('Could not retrieve orders from database: $e2');
+        }
+      }
+      
+      if (orders.isEmpty) {
+        throw Exception('No orders found in the selected date range');
+      }
+      
+      // Get order items for each order
+      final List<List<String>> csvData = [];
+      
+      // Add CSV header row
+      csvData.add([
+        'Order ID',
+        'Order Number',
+        'Date',
+        'Customer',
+        'Total Amount',
+        'Payment Method',
+        'Status',
+        'Product Name',
+        'Quantity',
+        'Unit Price',
+        'Item Total'
+      ]);
+      
+      // For each order, get its items
+      for (final order in orders) {
+        final orderId = order['id'];
+        final orderNumber = order['order_number'] ?? 'N/A';
+        
+        // Handle date parsing safely
+        DateTime date;
+        try {
+          date = DateTime.parse(order['created_at'] as String? ?? DateTime.now().toIso8601String());
+        } catch (e) {
+          date = DateTime.now();
+        }
+        final formattedDate = DateFormat('yyyy-MM-dd HH:mm').format(date);
+        
+        final customerName = order['customer_name'] ?? 'Walk-in';
+        final totalAmount = (order['total_amount'] as num?)?.toStringAsFixed(2) ?? '0.00';
+        final paymentMethod = order['payment_method'] ?? 'N/A';
+        final status = order['status'] ?? 'N/A';
+        
+        // Check if order_items and products tables exist
+        List<Map<String, dynamic>> items = [];
+        bool orderItemsExist = false;
+        
+        try {
+          orderItemsExist = (await db.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='order_items'"
+          )).isNotEmpty;
+          
+          if (orderItemsExist) {
+            // Check if products table exists
+            final productsExist = (await db.rawQuery(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name='products'"
+            )).isNotEmpty;
+            
+            if (productsExist) {
+              // Check products table columns for proper field names
+              final productColumns = await db.rawQuery("PRAGMA table_info(products)");
+              final orderItemColumns = await db.rawQuery("PRAGMA table_info(order_items)");
+              
+              // Find the product name column
+              String productNameCol = "name";
+              if (!productColumns.any((c) => c['name'] == 'name')) {
+                if (productColumns.any((c) => c['name'] == 'product_name')) {
+                  productNameCol = "product_name";
+                } else if (productColumns.any((c) => c['name'] == 'title')) {
+                  productNameCol = "title";
+                } else {
+                  // No suitable name column found
+                  productNameCol = "id"; // Fallback to ID
+                }
+              }
+              
+              // Get order items with product info
+              final itemsQuery = '''
+                SELECT oi.*, p.$productNameCol as product_name
+                FROM order_items oi
+                LEFT JOIN products p ON oi.product_id = p.id
+                WHERE oi.order_id = ?
+              ''';
+              items = await db.rawQuery(itemsQuery, [orderId]);
+            } else {
+              // No products table, just get order items
+              items = await db.query('order_items', where: 'order_id = ?', whereArgs: [orderId]);
+            }
+          }
+        } catch (e) {
+          debugPrint('Error fetching order items: $e');
+          // Continue with empty items rather than failing
+        }
+        
+        if (items.isEmpty) {
+          // If no items found, add just the order header
+          csvData.add([
+            orderId?.toString() ?? '',
+            orderNumber.toString(),
+            formattedDate,
+            customerName.toString(),
+            totalAmount,
+            paymentMethod.toString(),
+            status.toString(),
+            '', // Empty product info
+            '',
+            '',
+            '',
+          ]);
+        } else {
+          // Add each order item as a row
+          for (int i = 0; i < items.length; i++) {
+            final item = items[i];
+            final productName = item['product_name']?.toString() ?? 'Unknown Product';
+            
+            // Get numeric values safely
+            String quantity = '0';
+            String unitPrice = '0.00';
+            String itemTotal = '0.00';
+            
+            try {
+              quantity = (item['quantity'] as num?)?.toString() ?? '0';
+            } catch (e) {
+              // Ignore conversion errors
+            }
+            
+            try {
+              unitPrice = (item['unit_price'] as num?)?.toStringAsFixed(2) ?? '0.00';
+            } catch (e) {
+              // Ignore conversion errors
+            }
+            
+            try {
+              itemTotal = (item['total_price'] as num?)?.toStringAsFixed(2) ?? '0.00';
+            } catch (e) {
+              // If total_price doesn't exist, try to calculate it
+              try {
+                final qty = double.tryParse(quantity) ?? 0;
+                final price = double.tryParse(unitPrice) ?? 0;
+                itemTotal = (qty * price).toStringAsFixed(2);
+              } catch (e2) {
+                // Ignore calculation errors
+              }
+            }
+            
+            csvData.add([
+              orderId?.toString() ?? '',
+              orderNumber.toString(),
+              formattedDate,
+              customerName.toString(),
+              i == 0 ? totalAmount : '', // Show total amount only for first item row
+              i == 0 ? paymentMethod.toString() : '', // Show payment method only for first item row
+              i == 0 ? status.toString() : '', // Show status only for first item row
+              productName,
+              quantity,
+              unitPrice,
+              itemTotal,
+            ]);
+          }
+        }
+      }
+      
+      // Convert data to CSV string
+      final csv = csvData.map((row) => row.map((cell) {
+        // Escape quotes in cells and wrap with quotes
+        if (cell == null) return '""';
+        return '"${cell.replaceAll('"', '""')}"';
+      }).join(',')).join('\n');
+      
+      // Write CSV to file
+      final file = File(outputPath);
+      await file.writeAsString(csv);
+      
+      debugPrint('Orders exported to CSV: $outputPath');
+      return outputPath;
+    } catch (e) {
+      debugPrint('Error exporting orders as CSV: $e');
       rethrow;
     }
   }

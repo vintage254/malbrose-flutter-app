@@ -8,6 +8,9 @@ import 'package:my_flutter_app/services/database.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:my_flutter_app/services/network_discovery_service.dart';
+import 'package:my_flutter_app/services/sync_manager.dart';
+import 'package:my_flutter_app/services/master_redundancy_service.dart';
 
 enum MachineRole {
   single,
@@ -22,6 +25,21 @@ enum SyncFrequency {
   fifteenMinutes,
   hourly,
   daily
+}
+
+// Scan results class to hold information about discovered masters
+class ScanResult {
+  final String ip;
+  final bool isMaster;
+  final String? deviceName;
+  final String? version;
+  
+  ScanResult({
+    required this.ip, 
+    required this.isMaster, 
+    this.deviceName, 
+    this.version
+  });
 }
 
 class MachineConfigService {
@@ -63,6 +81,85 @@ class MachineConfigService {
   Future<void> setMachineRole(MachineRole role) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_machineRoleKey, role.index);
+    
+    // Start or stop server based on role
+    if (role == MachineRole.master) {
+      await _startMasterServer();
+    } else {
+      await _stopMasterServer();
+    }
+  }
+  
+  // Server instance for master role
+  HttpServer? _masterServer;
+  
+  // Start a simple HTTP server to respond to ping requests when in master mode
+  Future<void> _startMasterServer() async {
+    // Check if server is already running
+    if (_masterServer != null) {
+      return;
+    }
+    
+    try {
+      // Initialize the discovery service for broadcasting
+      await NetworkDiscoveryService.instance.startMasterDiscoveryServer();
+      
+      // Start the HTTP server on port 8080
+      _masterServer = await HttpServer.bind(InternetAddress.anyIPv4, 8080);
+      debugPrint('Master server started on port 8080');
+      
+      // Start redundancy service for failover capability
+      await MasterRedundancyService.instance.initialize();
+      
+      // Listen for server requests
+      _masterServer!.listen((HttpRequest request) async {
+        try {
+          await _handleMasterRequest(request);
+        } catch (e) {
+          debugPrint('Error handling master request: $e');
+          request.response.statusCode = HttpStatus.internalServerError;
+          await request.response.close();
+        }
+      });
+    } catch (e) {
+      debugPrint('Error starting master server: $e');
+      // Try a different port if 8080 is in use
+      try {
+        _masterServer = await HttpServer.bind(InternetAddress.anyIPv4, 8081);
+        debugPrint('Master server started on port 8081');
+        
+        _masterServer!.listen((HttpRequest request) async {
+          try {
+            await _handleMasterRequest(request);
+          } catch (e) {
+            debugPrint('Error handling master request: $e');
+            request.response.statusCode = HttpStatus.internalServerError;
+            await request.response.close();
+          }
+        });
+      } catch (e2) {
+        debugPrint('Failed to start master server: $e2');
+      }
+    }
+  }
+  
+  // Stop the master server
+  Future<void> _stopMasterServer() async {
+    if (_masterServer != null) {
+      await _masterServer!.close(force: true);
+      _masterServer = null;
+      debugPrint('Master server stopped');
+    }
+  }
+  
+  /// Get the device name (public method)
+  Future<String> getDeviceName() async {
+    try {
+      return Platform.localHostname;
+    } catch (e) {
+      debugPrint('Error getting device name: $e');
+      return 'unknown-device';
+    }
   }
   
   Future<String> get machineId async {
@@ -249,72 +346,67 @@ class MachineConfigService {
     return newProfile;
   }
   
-  // Switch to a different company
-  Future<void> switchCompany(String companyName) async {
+  // Delete a company profile by name
+  Future<bool> deleteCompanyProfile(String companyName) async {
     final profiles = await companyProfiles;
     
     // Check if company exists
-    final targetCompany = profiles.firstWhere(
-      (profile) => profile['name'] == companyName,
-      orElse: () => throw Exception('Company profile not found')
-    );
-    
-    // Check if the database file exists
-    final dbDir = await getDatabasesPath();
-    final dbPath = path.join(dbDir, targetCompany['database']);
-    final dbFile = File(dbPath);
-    
-    if (!await dbFile.exists()) {
-      throw Exception('Database file not found: ${targetCompany['database']}');
+    final companyIndex = profiles.indexWhere((profile) => profile['name'] == companyName);
+    if (companyIndex == -1) {
+      throw Exception('Company profile not found');
     }
     
-    // Close current database connection
-    final db = await DatabaseService.instance.database;
-    await db.close();
+    // Check if this is the current company
+    final current = await currentCompany;
+    if (current != null && current['name'] == companyName) {
+      throw Exception('Cannot delete the currently active company');
+    }
     
-    // Set current company
-    await setCurrentCompany(targetCompany);
+    // Get the database path
+    final companyToDelete = profiles[companyIndex];
+    final dbName = companyToDelete['database'] as String;
     
-    // Tell database service to reinitialize with the new database
-    await DatabaseService.instance.switchDatabase(targetCompany['database']);
+    // Remove from profiles list
+    profiles.removeAt(companyIndex);
+    await setCompanyProfiles(profiles);
+    
+    // Try to delete the database file
+    try {
+      final dbDir = await getDatabasesPath();
+      final dbPath = path.join(dbDir, dbName);
+      final dbFile = File(dbPath);
+      
+      if (await dbFile.exists()) {
+        await dbFile.delete();
+      }
+      
+      return true;
+    } catch (e) {
+      debugPrint('Error deleting company database file: $e');
+      // We still return true because the profile was removed even if file deletion failed
+      return true;
+    }
   }
   
-  // Create a new company with empty database
-  Future<void> createNewCompany(String name) async {
-    final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-    final dbName = 'malbrose_${name.replaceAll(RegExp(r'[^\w]'), '_').toLowerCase()}_$timestamp.db';
+  // Scan the network for master devices
+  Future<List<String>> scanForMasters() async {
+    final List<String> masterAddresses = [];
     
-    // Create empty database with schema
-    final dbDir = await getDatabasesPath();
-    final dbPath = path.join(dbDir, dbName);
-    
-    // Get schema from current database
-    final currentDb = await DatabaseService.instance.database;
-    final tables = await currentDb.rawQuery(
-      "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-    );
-    
-    // Create new database with schema only
-    final newDb = await openDatabase(
-      dbPath,
-      version: 1,
-      onCreate: (db, version) async {
-        for (final table in tables) {
-          final sql = table['sql'] as String?;
-          if (sql != null && sql.isNotEmpty) {
-            await db.execute(sql);
-          }
-        }
+    try {
+      // Use the new NetworkDiscoveryService instead of manual scanning
+      final masters = await NetworkDiscoveryService.instance.discoverMasters();
+      
+      // Extract IP addresses
+      for (final master in masters) {
+        masterAddresses.add(master.ip);
+        debugPrint('Found master at: ${master.ip} (${master.deviceName})');
       }
-    );
-    
-    await newDb.close();
-    
-    // Add to company profiles
-    await addCompanyProfile(name, dbName);
-    
-    // Switch to the new company
-    await switchCompany(name);
+      
+      return masterAddresses;
+    } catch (e) {
+      debugPrint('Error scanning network: $e');
+      return [];
+    }
   }
   
   // Test connection to master
@@ -324,20 +416,15 @@ class MachineConfigService {
     }
     
     try {
-      // Test connection by sending a ping to the master
-      final response = await http.get(
-        Uri.parse('http://$address/api/ping'),
-        headers: {'X-Machine-ID': await machineId}
-      ).timeout(const Duration(seconds: 5));
-      
-      return response.statusCode == 200;
+      // Use the NetworkDiscoveryService for connection testing
+      return await NetworkDiscoveryService.instance.testMasterConnection(address);
     } catch (e) {
       debugPrint('Error testing master connection: $e');
       return false;
     }
   }
   
-  // Synchronize with master (basic implementation)
+  // Synchronize with master
   Future<Map<String, dynamic>> syncWithMaster() async {
     final role = await machineRole;
     
@@ -346,120 +433,28 @@ class MachineConfigService {
     }
     
     if (role == MachineRole.master) {
-      // In master mode, we would handle incoming sync requests
-      // This would typically involve a server implementation
-      // For now, just log the call
-      debugPrint('Master mode sync: Would handle incoming sync requests');
+      // In master mode, just return success - servants will connect to us
       return {'success': true, 'message': 'Master mode sync completed'};
     }
     
     if (role == MachineRole.servant) {
-      final address = await masterAddress;
-      if (address == null || address.isEmpty) {
-        return {'success': false, 'message': 'Master address not set'};
-      }
-      
       try {
-        // Get changes since last sync
-        final db = await DatabaseService.instance.database;
-        final lastSync = await lastSyncTime;
-        final lastSyncFormatted = lastSync?.toIso8601String() ?? '2000-01-01T00:00:00.000Z';
+        // Use the robust SyncManager for actual sync operations
+        final result = await SyncManager.instance.syncWithMaster();
         
-        // Get all tables
-        final tables = await db.rawQuery(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-        );
-        
-        // For each table, get changes since last sync
-        Map<String, List<Map<String, dynamic>>> changes = {};
-        
-        for (final table in tables) {
-          final tableName = table['name'] as String?;
-          if (tableName == null) continue;
-          
-          // Only sync tables that have updated_at column
-          try {
-            final tableInfo = await db.rawQuery('PRAGMA table_info($tableName)');
-            final hasUpdatedAt = tableInfo.any((col) => col['name'] == 'updated_at');
-            
-            if (hasUpdatedAt) {
-              final rows = await db.query(
-                tableName,
-                where: 'updated_at > ?',
-                whereArgs: [lastSyncFormatted],
-              );
-              
-              if (rows.isNotEmpty) {
-                changes[tableName] = rows;
-              }
-            }
-          } catch (e) {
-            debugPrint('Error getting changes for table $tableName: $e');
-          }
-        }
-        
-        // Send changes to master
-        if (changes.isNotEmpty) {
-          final response = await http.post(
-            Uri.parse('http://$address/api/sync'),
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Machine-ID': await machineId,
-            },
-            body: jsonEncode({
-              'changes': changes,
-              'last_sync': lastSyncFormatted,
-            }),
-          ).timeout(const Duration(seconds: 30));
-          
-          if (response.statusCode == 200) {
-            // Apply changes from master
-            final masterChanges = jsonDecode(response.body) as Map<String, dynamic>?;
-            
-            if (masterChanges != null && masterChanges.containsKey('changes')) {
-              final changesFromMaster = masterChanges['changes'] as Map<String, dynamic>;
-              
-              await db.transaction((txn) async {
-                for (final tableName in changesFromMaster.keys) {
-                  final rows = changesFromMaster[tableName] as List<dynamic>;
-                  
-                  for (final row in rows) {
-                    final rowData = Map<String, dynamic>.from(row as Map);
-                    
-                    // Check if the row exists
-                    final id = rowData['id'];
-                    if (id != null) {
-                      final existingRow = await txn.query(
-                        tableName,
-                        where: 'id = ?',
-                        whereArgs: [id],
-                        limit: 1,
-                      );
-                      
-                      if (existingRow.isNotEmpty) {
-                        // Update existing row
-                        await txn.update(
-                          tableName,
-                          rowData,
-                          where: 'id = ?',
-                          whereArgs: [id],
-                        );
-                      } else {
-                        // Insert new row
-                        await txn.insert(tableName, rowData);
-                      }
-                    }
-                  }
-                }
-              });
-            }
-            
-            return {'success': true, 'message': 'Sync completed successfully'};
-          }
-          return {'success': false, 'message': 'Sync failed: Server error'};
+        if (result.success) {
+          return {
+            'success': true, 
+            'message': result.message,
+            'items_synced': result.itemsSynced,
+            'items_received': result.itemsReceived
+          };
         } else {
-          // No changes to send
-          return {'success': true, 'message': 'No changes to sync'};
+          return {
+            'success': false, 
+            'message': result.message,
+            'has_errors': result.hasErrors
+          };
         }
       } catch (e) {
         debugPrint('Error synchronizing with master: $e');
@@ -536,5 +531,148 @@ class MachineConfigService {
     await setAutoBackupEnabled(autoBackupEnabled);
     await setAutoBackupInterval(autoBackupInterval);
     await setEncryptBackups(encryptBackups);
+  }
+
+  // Handle HTTP requests to the master server
+  Future<void> _handleMasterRequest(HttpRequest request) async {
+    // Set CORS headers for all responses
+    request.response.headers.add('Access-Control-Allow-Origin', '*');
+    request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    request.response.headers.add('Access-Control-Allow-Headers', '*');
+    
+    // Handle preflight OPTIONS requests
+    if (request.method == 'OPTIONS') {
+      request.response.statusCode = HttpStatus.ok;
+      await request.response.close();
+      return;
+    }
+    
+    // Check if this machine is the active leader
+    final leaderInfo = await MasterRedundancyService.instance.getCurrentLeader();
+    final myMachineId = await machineId;
+    
+    if (leaderInfo != null && leaderInfo.machineId != myMachineId && leaderInfo.isActive) {
+      // Not the active leader, redirect if we can
+      if (request.uri.path != '/api/ping') {
+        // For ping requests, still respond to help with discovery
+        final masters = await NetworkDiscoveryService.instance.discoverMasters();
+        final activeMaster = masters.where((m) => m.machineId == leaderInfo.machineId).toList();
+        
+        if (activeMaster.isNotEmpty) {
+          // Redirect to the active leader
+          request.response.statusCode = HttpStatus.temporaryRedirect;
+          request.response.headers.set('Location', 
+              '${activeMaster.first.connectionUrl}${request.uri.path}');
+          await request.response.close();
+          return;
+        }
+      }
+    }
+    
+    // Process the request based on path
+    switch (request.uri.path) {
+      case '/api/ping':
+        await _handlePingRequest(request);
+        break;
+      case '/api/sync':
+        await _handleSyncRequest(request);
+        break;
+      default:
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+    }
+  }
+
+  // Handle ping requests
+  Future<void> _handlePingRequest(HttpRequest request) async {
+    // Get leader info for response
+    final leaderInfo = await MasterRedundancyService.instance.getCurrentLeader();
+    final myMachineId = await machineId;
+    final isLeader = leaderInfo == null || leaderInfo.machineId == myMachineId;
+    
+    // Respond with JSON
+    request.response.headers.contentType = ContentType.json;
+    final responseData = {
+      'status': 'ok',
+      'role': 'master',
+      'machine_id': myMachineId,
+      'device_name': await getDeviceName(),
+      'version': '1.0.0', // App version
+      'timestamp': DateTime.now().toIso8601String(),
+      'is_leader': isLeader,
+      'leader_id': leaderInfo?.machineId
+    };
+    
+    request.response.write(jsonEncode(responseData));
+    await request.response.close();
+  }
+
+  // Handle sync requests
+  Future<void> _handleSyncRequest(HttpRequest request) async {
+    // Validate request method
+    if (request.method != 'POST') {
+      request.response.statusCode = HttpStatus.methodNotAllowed;
+      await request.response.close();
+      return;
+    }
+    
+    // Authenticate the request
+    final authHeader = request.headers.value('X-Auth-Token');
+    final machineIdHeader = request.headers.value('X-Machine-ID');
+    
+    if (machineIdHeader == null) {
+      request.response.statusCode = HttpStatus.unauthorized;
+      request.response.write(jsonEncode({
+        'error': 'Missing machine ID header'
+      }));
+      await request.response.close();
+      return;
+    }
+    
+    // In a production app, we would validate the auth token
+    // For now, just log the connection
+    debugPrint('Sync request from machine: $machineIdHeader');
+    
+    try {
+      // Read request body
+      final requestBody = await utf8.decoder.bind(request).join();
+      final requestData = jsonDecode(requestBody) as Map<String, dynamic>;
+      
+      // Process the sync request using the sync manager
+      // This would typically:
+      // 1. Extract changes from the request
+      // 2. Apply them to our database
+      // 3. Get changes to send back
+      // 4. Respond with those changes
+      
+      // For now, we'll just echo back an empty successful response
+      final responseData = {
+        'success': true,
+        'message': 'Sync request processed',
+        'changes': {}, // In a real implementation, this would contain changes for the client
+        'timestamp': DateTime.now().toIso8601String()
+      };
+      
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode(responseData));
+      await request.response.close();
+      
+      // Track the sync in activity logs
+      final db = await DatabaseService.instance.database;
+      await db.insert('activity_logs', {
+        'event_type': 'sync_request',
+        'message': 'Sync request from $machineIdHeader',
+        'timestamp': DateTime.now().toIso8601String(),
+        'details': requestBody
+      });
+      
+    } catch (e) {
+      debugPrint('Error processing sync request: $e');
+      request.response.statusCode = HttpStatus.internalServerError;
+      request.response.write(jsonEncode({
+        'error': 'Internal server error: $e'
+      }));
+      await request.response.close();
+    }
   }
 } 
