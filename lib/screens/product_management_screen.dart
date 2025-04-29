@@ -232,10 +232,11 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
         return;
       }
       
-      // Pick Excel file
+      // Pick Excel or CSV file
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['xlsx', 'xls'],
+        allowedExtensions: ['xlsx', 'xls', 'csv'],
+        dialogTitle: 'Select Product Import File (Excel or CSV)',
       );
       
       if (result == null || result.files.isEmpty) {
@@ -244,6 +245,7 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
       
       final file = result.files.first;
       final filePath = file.path;
+      final fileExtension = file.extension?.toLowerCase() ?? '';
       
       if (filePath == null) {
         if (mounted) {
@@ -277,7 +279,7 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
       }
       
       // First, read the headers to show in the mapping dialog
-      final headersResult = await DatabaseService.instance.readExcelHeaders(filePath);
+      final headersResult = await DatabaseService.instance.readExcelHeaders(filePath, fileExtension: fileExtension);
       
       // Close the loading dialog
       if (mounted) {
@@ -307,7 +309,7 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
         
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No headers found in the Excel file')),
+            const SnackBar(content: Text('No headers found in the import file')),
           );
         }
         return;
@@ -320,6 +322,7 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
         builder: (context) => ColumnMappingDialog(
           excelHeaders: headers,
           initialMapping: initialMapping,
+          fileType: fileExtension == 'csv' ? 'CSV' : 'Excel',
         ),
       );
       
@@ -333,7 +336,7 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
       
       // Show progress dialog and trigger import outside the dialog
       if (mounted) {
-        await _startImportAndShowProgress(filePath, columnMapping);
+        await _startImportAndShowProgress(filePath, columnMapping, fileExtension);
       }
     } catch (e) {
       if (mounted) {
@@ -351,7 +354,7 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
     }
   }
 
-  Future<void> _startImportAndShowProgress(String filePath, Map<String, String?> columnMapping) async {
+  Future<void> _startImportAndShowProgress(String filePath, Map<String, String?> columnMapping, String fileExtension) async {
     // Initialize progress tracking
     setState(() {
       _importProgress = {
@@ -382,6 +385,7 @@ class _ProductManagementScreenState extends State<ProductManagementScreen> {
                     });
                   }
                 },
+                fileExtension: fileExtension,
               ).then((finalResult) {
                 if (mounted) {
                   setDialogState(() {

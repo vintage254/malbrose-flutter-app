@@ -9,6 +9,8 @@ import 'package:my_flutter_app/services/printer_service.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/services/config_service.dart';
+import 'dart:io';
 
 class OrderHistoryScreen extends StatefulWidget {
   const OrderHistoryScreen({super.key});
@@ -25,6 +27,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
   String _searchQuery = '';
   final _searchController = TextEditingController();
   Order? _selectedOrder;
+  final config = ConfigService.instance;
 
   @override
   void initState() {
@@ -698,16 +701,46 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               ),
               pw.SizedBox(height: 10),
               
+              // Company logo
+              if (config.showBusinessLogo && config.businessLogo != null && config.businessLogo!.isNotEmpty)
+                pw.Container(
+                  height: 60,
+                  width: 200,
+                  alignment: pw.Alignment.center,
+                  margin: const pw.EdgeInsets.only(bottom: 10),
+                  child: pw.Image(
+                    pw.MemoryImage(File(config.businessLogo!).readAsBytesSync()),
+                    fit: pw.BoxFit.contain,
+                  ),
+                ),
+              
               // Store info
               pw.Center(
                 child: pw.Text(
-                  'Malbrose Hardware Store',
+                  config.businessName,
                   style: pw.TextStyle(
                     fontSize: 14,
                     fontWeight: pw.FontWeight.bold,
                   ),
                 ),
               ),
+              pw.SizedBox(height: 5),
+              
+              // Add business address and phone
+              if (config.businessAddress.isNotEmpty)
+                pw.Center(
+                  child: pw.Text(
+                    config.businessAddress,
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
+              if (config.businessPhone.isNotEmpty)
+                pw.Center(
+                  child: pw.Text(
+                    config.businessPhone,
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
               pw.SizedBox(height: 5),
               
               // Order information
@@ -957,18 +990,25 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               pw.SizedBox(height: 20),
               pw.Center(
                 child: pw.Text(
-                  'Thank you for your business!',
-                  style: pw.TextStyle(fontStyle: pw.FontStyle.italic),
+                  config.receiptFooter,
+                  style: const pw.TextStyle(fontSize: 8),
                 ),
               ),
               pw.SizedBox(height: 5),
+              
+              // Add "Goods once sold are not returnable" disclaimer when enabled
+              if (config.showNoReturnsPolicy)
+                pw.Center(
+                  child: pw.Text(
+                    'Goods once sold are not returnable.',
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
+              
               pw.Center(
                 child: pw.Text(
                   'Powered by Malbrose POS System',
-                  style: pw.TextStyle(
-                    fontSize: 8,
-                    fontStyle: pw.FontStyle.italic,
-                  ),
+                  style: const pw.TextStyle(fontSize: 8),
                 ),
               ),
               pw.SizedBox(height: 10),
@@ -1069,16 +1109,46 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               ),
               pw.SizedBox(height: 10),
               
+              // Company logo
+              if (config.showBusinessLogo && config.businessLogo != null && config.businessLogo!.isNotEmpty)
+                pw.Container(
+                  height: 60,
+                  width: 200,
+                  alignment: pw.Alignment.center,
+                  margin: const pw.EdgeInsets.only(bottom: 10),
+                  child: pw.Image(
+                    pw.MemoryImage(File(config.businessLogo!).readAsBytesSync()),
+                    fit: pw.BoxFit.contain,
+                  ),
+                ),
+              
               // Store info
               pw.Center(
                 child: pw.Text(
-                  'Malbrose Hardware Store',
+                  config.businessName,
                   style: pw.TextStyle(
                     fontSize: 14,
                     fontWeight: pw.FontWeight.bold,
                   ),
                 ),
               ),
+              pw.SizedBox(height: 5),
+              
+              // Add business address and phone
+              if (config.businessAddress.isNotEmpty)
+                pw.Center(
+                  child: pw.Text(
+                    config.businessAddress,
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
+              if (config.businessPhone.isNotEmpty)
+                pw.Center(
+                  child: pw.Text(
+                    config.businessPhone,
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
               pw.SizedBox(height: 5),
               
               // Order information
@@ -1292,18 +1362,25 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               pw.SizedBox(height: 20),
               pw.Center(
                 child: pw.Text(
-                  'Thank you for your business!',
-                  style: pw.TextStyle(fontStyle: pw.FontStyle.italic),
+                  config.receiptFooter,
+                  style: const pw.TextStyle(fontSize: 8),
                 ),
               ),
               pw.SizedBox(height: 5),
+              
+              // Add "Goods once sold are not returnable" disclaimer when enabled
+              if (config.showNoReturnsPolicy)
+                pw.Center(
+                  child: pw.Text(
+                    'Goods once sold are not returnable.',
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
+              
               pw.Center(
                 child: pw.Text(
                   'Powered by Malbrose POS System',
-                  style: pw.TextStyle(
-                    fontSize: 8,
-                    fontStyle: pw.FontStyle.italic,
-                  ),
+                  style: const pw.TextStyle(fontSize: 8),
                 ),
               ),
               pw.SizedBox(height: 10),
@@ -1404,16 +1481,46 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               ),
               pw.SizedBox(height: 10),
               
+              // Company logo
+              if (config.showBusinessLogo && config.businessLogo != null && config.businessLogo!.isNotEmpty)
+                pw.Container(
+                  height: 60,
+                  width: 200,
+                  alignment: pw.Alignment.center,
+                  margin: const pw.EdgeInsets.only(bottom: 10),
+                  child: pw.Image(
+                    pw.MemoryImage(File(config.businessLogo!).readAsBytesSync()),
+                    fit: pw.BoxFit.contain,
+                  ),
+                ),
+              
               // Store info
               pw.Center(
                 child: pw.Text(
-                  'Malbrose Hardware Store',
+                  config.businessName,
                   style: pw.TextStyle(
                     fontSize: 14,
                     fontWeight: pw.FontWeight.bold,
                   ),
                 ),
               ),
+              pw.SizedBox(height: 5),
+              
+              // Add business address and phone
+              if (config.businessAddress.isNotEmpty)
+                pw.Center(
+                  child: pw.Text(
+                    config.businessAddress,
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
+              if (config.businessPhone.isNotEmpty)
+                pw.Center(
+                  child: pw.Text(
+                    config.businessPhone,
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
               pw.SizedBox(height: 5),
               
               // Order information
@@ -1627,18 +1734,25 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               pw.SizedBox(height: 20),
               pw.Center(
                 child: pw.Text(
-                  'Thank you for your business!',
-                  style: pw.TextStyle(fontStyle: pw.FontStyle.italic),
+                  config.receiptFooter,
+                  style: const pw.TextStyle(fontSize: 8),
                 ),
               ),
               pw.SizedBox(height: 5),
+              
+              // Add "Goods once sold are not returnable" disclaimer when enabled
+              if (config.showNoReturnsPolicy)
+                pw.Center(
+                  child: pw.Text(
+                    'Goods once sold are not returnable.',
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
+              
               pw.Center(
                 child: pw.Text(
                   'Powered by Malbrose POS System',
-                  style: pw.TextStyle(
-                    fontSize: 8,
-                    fontStyle: pw.FontStyle.italic,
-                  ),
+                  style: const pw.TextStyle(fontSize: 8),
                 ),
               ),
               pw.SizedBox(height: 10),

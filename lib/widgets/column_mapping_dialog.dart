@@ -4,11 +4,13 @@ import 'package:my_flutter_app/models/product_model.dart';
 class ColumnMappingDialog extends StatefulWidget {
   final List<String> excelHeaders;
   final Map<String, String> initialMapping;
+  final String fileType;
 
   const ColumnMappingDialog({
     Key? key,
     required this.excelHeaders,
     required this.initialMapping,
+    this.fileType = 'Excel',
   }) : super(key: key);
 
   @override
@@ -64,7 +66,7 @@ class _ColumnMappingDialogState extends State<ColumnMappingDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Column Mapping',
               style: TextStyle(
                 fontSize: 20,
@@ -72,8 +74,8 @@ class _ColumnMappingDialogState extends State<ColumnMappingDialog> {
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Map columns from your Excel file to product fields.',
+            Text(
+              'Map columns from your ${widget.fileType} file to product fields.',
               style: TextStyle(fontSize: 14),
             ),
             const SizedBox(height: 16),
@@ -88,7 +90,7 @@ class _ColumnMappingDialogState extends State<ColumnMappingDialog> {
                   Expanded(
                     flex: 2,
                     child: Text(
-                      'Excel Column',
+                      '${widget.fileType} Column',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 16,

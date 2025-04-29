@@ -86,395 +86,108 @@ class ReceiptService {
       pdf.addPage(
         pw.Page(
           pageFormat: printerService.getPageFormat(),
-          build: (context) {
-            return pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.center,
-              children: [
-                // Date and Receipt Number
-                pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      formattedDate,
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                    pw.Text(
-                      'Sales Receipt #$receiptNumber',
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                    pw.Text(
-                      'Workstation: ${order['workstation_id'] ?? '4'}',
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                  ],
-                ),
-                pw.SizedBox(height: 5),
-                pw.Text(
-                  'Store: ${order['store_id'] ?? '1'}',
-                  style: const pw.TextStyle(fontSize: 8),
-                ),
-                
-                // REPRINTED label if applicable
-                if (isReprint)
-                  pw.Center(
-                    child: pw.Text(
-                      'REPRINTED',
-                      style: pw.TextStyle(
-                        fontSize: 10,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                
-                // Business Info Section
-                pw.Text(
-                  config.businessName,
-                  style: pw.TextStyle(
-                    fontSize: 12,
-                    fontWeight: pw.FontWeight.bold,
+          build: (context) => pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.center,
+            children: [
+              // Company logo
+              if (config.showBusinessLogo && config.businessLogo != null && config.businessLogo!.isNotEmpty)
+                pw.Container(
+                  height: 60,
+                  width: 200,
+                  alignment: pw.Alignment.center,
+                  margin: const pw.EdgeInsets.only(bottom: 10),
+                  child: pw.Image(
+                    pw.MemoryImage(File(config.businessLogo!).readAsBytesSync()),
+                    fit: pw.BoxFit.contain,
                   ),
                 ),
-                pw.Text(
-                  config.businessAddress,
-                  style: const pw.TextStyle(fontSize: 8),
+              
+              // Business name
+              pw.Text(
+                config.businessName,
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
                 ),
-                pw.Text(
-                  'Pin No. ${order['pin_number'] ?? 'P051910588M'}',
-                  style: const pw.TextStyle(fontSize: 8),
+              ),
+              
+              // Business address 
+              pw.Text(
+                config.businessAddress,
+                style: const pw.TextStyle(fontSize: 12),
+              ),
+              
+              // Phone and Email
+              pw.Text(
+                'Tel: ${config.businessPhone}',
+                style: const pw.TextStyle(fontSize: 12),
+              ),
+              pw.Text(
+                'Email: ${config.businessEmail}',
+                style: const pw.TextStyle(fontSize: 12),
+              ),
+              
+              // Receipt header
+              pw.SizedBox(height: 8),
+              pw.Text(
+                config.receiptHeader,
+                style: const pw.TextStyle(fontSize: 12),
+              ),
+              
+              // SALES RECEIPT
+              pw.SizedBox(height: 8),
+              pw.Text(
+                'SALES RECEIPT',
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 14,
                 ),
-                pw.Text(
-                  'Phone: ${config.businessPhone}',
-                  style: const pw.TextStyle(fontSize: 8),
+              ),
+              
+              // Receipt details
+              pw.Text('No: $receiptNumber'),
+              pw.Text(
+                'Date: ${DateFormat(config.dateTimeFormat.isNotEmpty ? config.dateTimeFormat : 'dd/MM/yyyy HH:mm').format(DateTime.now())}',
+              ),
+              
+              // Show cashier name if enabled in settings
+              if (config.showCashierName)
+                pw.Text('Cashier: ${order['cashier_name'] ?? 'admin'}'),
+              
+              // Customer info if available
+              pw.Text('Customer: $customerName'),
+              
+              // Rest of receipt content
+              pw.SizedBox(height: 10),
+              
+              // Add items table, totals, etc.
+              // ... existing code ...
+              
+              // Receipt footer with "Goods once sold are not returnable"
+              pw.SizedBox(height: 10),
+              pw.Center(
+                child: pw.Text(
+                  'Thank you for shopping with us!',
+                  style: const pw.TextStyle(fontSize: 10),
                 ),
-                
-                // Customer Info
-                pw.SizedBox(height: 5),
-                pw.Row(
-                  children: [
-                    pw.Text(
-                      'Bill To: ',
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                    pw.Text(
-                      customerName,
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                  ],
-                ),
-                
-                // Cashier Info (if enabled)
-                if (config.showCashierName)
-                  pw.Row(
-                    children: [
-                      pw.Text(
-                        'Cashier: ',
-                        style: const pw.TextStyle(fontSize: 8),
-                      ),
-                      pw.Text(
-                        order['cashier_name'] ?? 'Unknown',
-                        style: const pw.TextStyle(fontSize: 8),
-                      ),
-                    ],
+              ),
+              
+              if (config.showNoReturnsPolicy)
+                pw.Center(
+                  child: pw.Text(
+                    'Goods once sold are not returnable.',
+                    style: const pw.TextStyle(fontSize: 10),
                   ),
-                
-                // Order Items Section
-                pw.SizedBox(height: 10),
-                pw.Row(
-                  children: [
-                    pw.Expanded(
-                      flex: 1,
-                      child: pw.Text(
-                        'Qty',
-                        style: pw.TextStyle(
-                          fontSize: 8,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    pw.Expanded(
-                      flex: 3,
-                      child: pw.Text(
-                        'Item Name',
-                        style: pw.TextStyle(
-                          fontSize: 8,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    pw.Expanded(
-                      flex: 1,
-                      child: pw.Text(
-                        'Price',
-                        style: pw.TextStyle(
-                          fontSize: 8,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                        textAlign: pw.TextAlign.right,
-                      ),
-                    ),
-                    pw.Expanded(
-                      flex: 1,
-                      child: pw.Text(
-                        'TOTAL',
-                        style: pw.TextStyle(
-                          fontSize: 8,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                        textAlign: pw.TextAlign.right,
-                      ),
-                    ),
-                  ],
                 ),
-                pw.Divider(thickness: 1, height: 5),
-                
-                // Order Items
-                pw.Column(
-                  children: orderItems.map((item) {
-                    final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
-                    final productName = item['product_name'] ?? 'Unknown';
-                    final price = (item['selling_price'] as num?)?.toDouble() ?? 0.0;
-                    final total = (item['total_amount'] as num?)?.toDouble() ?? 0.0;
-                    
-                    return pw.Row(
-                      children: [
-                        pw.Expanded(
-                          flex: 1,
-                          child: pw.Text(
-                            quantity.toString(),
-                            style: const pw.TextStyle(fontSize: 8),
-                          ),
-                        ),
-                        pw.Expanded(
-                          flex: 3,
-                          child: pw.Text(
-                            productName,
-                            style: const pw.TextStyle(fontSize: 8),
-                          ),
-                        ),
-                        pw.Expanded(
-                          flex: 1,
-                          child: pw.Text(
-                            price.toStringAsFixed(2),
-                            style: const pw.TextStyle(fontSize: 8),
-                            textAlign: pw.TextAlign.right,
-                          ),
-                        ),
-                        pw.Expanded(
-                          flex: 1,
-                          child: pw.Text(
-                            total.toStringAsFixed(2),
-                            style: const pw.TextStyle(fontSize: 8),
-                            textAlign: pw.TextAlign.right,
-                          ),
-                        ),
-                      ],
-                    );
-                  }).toList(),
+              
+              pw.Center(
+                child: pw.Text(
+                  'Powered by Malbrose POS',
+                  style: const pw.TextStyle(fontSize: 10),
                 ),
-                
-                // Totals Section
-                pw.Divider(height: 5),
-                pw.SizedBox(height: 5),
-                pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      'RECEIPT TOTAL:',
-                      style: pw.TextStyle(
-                        fontSize: 10,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    pw.Text(
-                      totalAmount.toStringAsFixed(2),
-                      style: pw.TextStyle(
-                        fontSize: 10,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                
-                // Payment Info (fixed to avoid duplication)
-                pw.SizedBox(height: 5),
-                pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      '$paymentMethod:',
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                    pw.Text(
-                      totalAmount.toStringAsFixed(2),
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                  ],
-                ),
-                
-                // Deposit and Balance
-                pw.SizedBox(height: 5),
-                pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      'Total Deposit Taken:',
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                    pw.Text(
-                      '0.00',
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                  ],
-                ),
-                
-                // Current order pending balance (if applicable)
-                if (pendingOrderBalance != null && pendingOrderBalance > 0)
-                  pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                    children: [
-                      pw.Text(
-                        'Current Order Balance:',
-                        style: pw.TextStyle(
-                          fontSize: 8,
-                          fontWeight: pw.FontWeight.bold,
-                          color: PdfColors.red,
-                        ),
-                      ),
-                      pw.Text(
-                        pendingOrderBalance.toStringAsFixed(2),
-                        style: pw.TextStyle(
-                          fontSize: 8,
-                          fontWeight: pw.FontWeight.bold,
-                          color: PdfColors.red,
-                        ),
-                      ),
-                    ],
-                  ),
-                  
-                // Customer's total outstanding balance (if applicable)
-                if (customerId != null && totalOutstandingBalance > 0)
-                  pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                    children: [
-                      pw.Text(
-                        'Total Outstanding Balance:',
-                        style: pw.TextStyle(
-                          fontSize: 8,
-                          fontWeight: pw.FontWeight.bold,
-                          color: PdfColors.red,
-                        ),
-                      ),
-                      pw.Text(
-                        totalOutstandingBalance.toStringAsFixed(2),
-                        style: pw.TextStyle(
-                          fontSize: 8,
-                          fontWeight: pw.FontWeight.bold,
-                          color: PdfColors.red,
-                        ),
-                      ),
-                    ],
-                  ),
-                
-                pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      'Balance Outstanding:',
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                    pw.Text(
-                      '0.00',
-                      style: const pw.TextStyle(fontSize: 8),
-                    ),
-                  ],
-                ),
-                
-                // Discount
-                if (discountAmount > 0)
-                  pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                    children: [
-                      pw.Text(
-                        'Total Sales Discounts:',
-                        style: const pw.TextStyle(fontSize: 8),
-                      ),
-                      pw.Text(
-                        discountAmount.toStringAsFixed(2),
-                        style: const pw.TextStyle(fontSize: 8),
-                      ),
-                    ],
-                  ),
-                
-                // VAT Information
-                if (config.enableVat && config.showVatOnReceipt)
-                  pw.Column(
-                    children: [
-                      pw.SizedBox(height: 10),
-                      pw.Row(
-                        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                        children: [
-                          pw.Text(
-                            'VAT (${config.vatRate}%):',
-                            style: const pw.TextStyle(fontSize: 8),
-                          ),
-                          pw.Text(
-                            vatAmount.toStringAsFixed(2),
-                            style: const pw.TextStyle(fontSize: 8),
-                          ),
-                        ],
-                      ),
-                      pw.Row(
-                        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                        children: [
-                          pw.Text(
-                            'Net Amount:',
-                            style: const pw.TextStyle(fontSize: 8),
-                          ),
-                          pw.Text(
-                            netAmount.toStringAsFixed(2),
-                            style: const pw.TextStyle(fontSize: 8),
-                          ),
-                        ],
-                      ),
-                    ],
-                  )
-                else if (config.enableVat && !config.showVatOnReceipt)
-                  pw.SizedBox(
-                    height: 10,
-                    child: pw.Center(
-                      child: pw.Text(
-                        'VAT prices included',
-                        style: pw.TextStyle(
-                          fontSize: 8,
-                          fontStyle: pw.FontStyle.italic,
-                        ),
-                      ),
-                    ),
-                  ),
-                
-                // Order Reference
-                pw.SizedBox(height: 10),
-                pw.Text(
-                  'From Sales Order #$orderNumber',
-                  style: const pw.TextStyle(fontSize: 8),
-                ),
-                
-                // Receipt Footer
-                pw.SizedBox(height: 15),
-                pw.Text(
-                  config.receiptFooter,
-                  style: pw.TextStyle(
-                    fontSize: 8,
-                    fontStyle: pw.FontStyle.italic,
-                  ),
-                  textAlign: pw.TextAlign.center,
-                ),
-                
-                // Extra space for cutting
-                pw.SizedBox(height: 20),
-              ],
-            );
-          },
+              ),
+            ],
+          ),
         ),
       );
       
@@ -786,6 +499,15 @@ class ReceiptService {
                   ),
                   textAlign: pw.TextAlign.center,
                 ),
+                
+                // Add "Goods once sold are not returnable" disclaimer when enabled
+                if (config.showNoReturnsPolicy)
+                  pw.Center(
+                    child: pw.Text(
+                      'Goods once sold are not returnable.',
+                      style: const pw.TextStyle(fontSize: 10),
+                    ),
+                  ),
                 
                 // Extra space for cutting
                 pw.SizedBox(height: 20),

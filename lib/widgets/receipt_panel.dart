@@ -811,7 +811,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
           build: (context) {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.center,
-            children: [
+              children: [
                 // Company logo
                 if (configService.showBusinessLogo && configService.businessLogo != null && configService.businessLogo!.isNotEmpty)
                   pw.Container(
@@ -822,8 +822,8 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                     child: pw.Image(
                       pw.MemoryImage(File(configService.businessLogo!).readAsBytesSync()),
                       fit: pw.BoxFit.contain,
-                ),
-              ),
+                    ),
+                  ),
                 
                 // Company name
                 pw.Text(
@@ -831,8 +831,8 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   style: pw.TextStyle(
                     fontSize: 16,
                     fontWeight: pw.FontWeight.bold,
+                  ),
                 ),
-              ),
                 
                 // Company address and contact info
                 if (configService.businessAddress.isNotEmpty)
@@ -845,28 +845,28 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                 if (configService.businessEmail.isNotEmpty)
                   pw.Text('Email: ${configService.businessEmail}'),
                 
-              pw.SizedBox(height: 10),
-              
+                pw.SizedBox(height: 10),
+                
                 // Receipt header text if configured
                 if (configService.receiptHeader.isNotEmpty)
-                        pw.Text(
+                  pw.Text(
                     configService.receiptHeader,
                     style: const pw.TextStyle(fontSize: 12),
-                        ),
+                  ),
                 
                 pw.SizedBox(height: 8),
                 
                 // Receipt details
-                        pw.Text(
+                pw.Text(
                   'SALES RECEIPT',
-                          style: pw.TextStyle(
-                            fontWeight: pw.FontWeight.bold,
-                          ),
-                        ),
+                  style: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
                 
                 pw.Text('No: $_salesReceiptNumber'),
                 
-                        pw.Text(
+                pw.Text(
                   'Date: ${DateFormat(configService.dateTimeFormat.isNotEmpty ? configService.dateTimeFormat : 'yyyy-MM-dd HH:mm').format(DateTime.now())}',
                 ),
                 
@@ -880,349 +880,359 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                 
                 pw.SizedBox(height: 10),
               
-              // Items Table Header
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Expanded(
-                    flex: 3,
-                    child: pw.Text(
-                      'Item Name',
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 9,
-                      ),
-                    ),
-                  ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Text(
-                      'Qty',
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 9,
-                      ),
-                      textAlign: pw.TextAlign.right,
-                    ),
-                  ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Text(
-                      'Price',
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 9,
-                      ),
-                      textAlign: pw.TextAlign.right,
-                    ),
-                  ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Text(
-                      'Total',
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 9,
-                      ),
-                      textAlign: pw.TextAlign.right,
-                    ),
-                  ),
-                ],
-              ),
-              pw.Divider(thickness: 0.5),
-              
-              // Order items
-              ...List.generate(_orderItems.length, (index) {
-                final item = _orderItems[index];
-                final isSubUnit = item['is_sub_unit'] == 1;
-                final subUnitName = item['sub_unit_name'] as String? ?? 'piece';
-                final sellingPrice = (item['selling_price'] as num).toDouble();
-                final adjustedPrice = item['adjusted_price'] != null ? (item['adjusted_price'] as num).toDouble() : null;
-                final effectivePrice = adjustedPrice ?? sellingPrice;
-                
-                return pw.Column(
-                  children: [
-                    pw.Row(
-                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Expanded(
-                          flex: 3,
-                          child: pw.Text(
-                            item['product_name'] ?? 'Unknown Product',
-                            style: const pw.TextStyle(fontSize: 9),
-                          ),
-                        ),
-                        pw.Expanded(
-                          flex: 1,
-                          child: pw.Text(
-                            '${item['quantity']}${isSubUnit ? " $subUnitName" : ""}',
-                            style: const pw.TextStyle(fontSize: 9),
-                            textAlign: pw.TextAlign.right,
-                          ),
-                        ),
-                        pw.Expanded(
-                          flex: 1,
-                          child: pw.Text(
-                            effectivePrice.toStringAsFixed(2),
-                            style: const pw.TextStyle(fontSize: 9),
-                            textAlign: pw.TextAlign.right,
-                          ),
-                        ),
-                        pw.Expanded(
-                          flex: 1,
-                          child: pw.Text(
-                            (item['total_amount'] as num).toStringAsFixed(2),
-                            style: const pw.TextStyle(fontSize: 9),
-                            textAlign: pw.TextAlign.right,
-                          ),
-                        ),
-                      ],
-                    ),
-                    pw.SizedBox(height: 2),
-                  ],
-                );
-              }),
-              
-              // Total Calculation with VAT
-              pw.Divider(),
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Expanded(
-                    flex: 3,
-                    child: pw.Text(
-                      'SUBTOTAL:',
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Text(
-                      'KSH ${totalAmount.toStringAsFixed(2)}',
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 10,
-                      ),
-                      textAlign: pw.TextAlign.right,
-                    ),
-                  ),
-                ],
-              ),
-              
-              // Show VAT breakdown if enabled and configured to show on receipt
-              if (enableVat && showVatOnReceipt) ...[
-                pw.SizedBox(height: 5),
+                // Items Table Header
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
                     pw.Expanded(
                       flex: 3,
                       child: pw.Text(
-                        'VAT (${vatRate.toStringAsFixed(1)}%):',
-                        style: const pw.TextStyle(fontSize: 9),
+                        'Item Name',
+                        style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 9,
+                        ),
                       ),
                     ),
                     pw.Expanded(
                       flex: 1,
                       child: pw.Text(
-                        'KSH ${vatAmount.toStringAsFixed(2)}',
-                        style: const pw.TextStyle(fontSize: 9),
+                        'Qty',
+                        style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 9,
+                        ),
                         textAlign: pw.TextAlign.right,
-                      ),
-                    ),
-                  ],
-                ),
-                pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Expanded(
-                      flex: 3,
-                      child: pw.Text(
-                        'Net Amount:',
-                        style: const pw.TextStyle(fontSize: 9),
                       ),
                     ),
                     pw.Expanded(
                       flex: 1,
                       child: pw.Text(
-                        'KSH ${netAmount.toStringAsFixed(2)}',
-                        style: const pw.TextStyle(fontSize: 9),
+                        'Price',
+                        style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 9,
+                        ),
+                        textAlign: pw.TextAlign.right,
+                      ),
+                    ),
+                    pw.Expanded(
+                      flex: 1,
+                      child: pw.Text(
+                        'Total',
+                        style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 9,
+                        ),
                         textAlign: pw.TextAlign.right,
                       ),
                     ),
                   ],
                 ),
-              ],
-              
-              pw.SizedBox(height: 5),
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Expanded(
-                    flex: 3,
-                    child: pw.Text(
-                      'TOTAL AMOUNT DUE:',
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Text(
-                      'KSH ${totalAmount.toStringAsFixed(2)}',
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        fontSize: 10,
-                      ),
-                      textAlign: pw.TextAlign.right,
-                    ),
-                  ),
-                ],
-              ),
-              
-              // Payment Details
-              pw.SizedBox(height: 10),
-              pw.Text(
-                'PAYMENT DETAILS:',
-                style: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold,
-                  fontSize: 10,
-                ),
-              ),
-              pw.SizedBox(height: 5),
-              pw.Row(
-                children: [
-                  pw.Text(
-                    'Payment Mode:',
-                    style: const pw.TextStyle(fontSize: 9),
-                  ),
-                  pw.SizedBox(width: 5),
-                  pw.Text(
-                    widget.order.paymentMethod ?? 'Cash',
-                    style: const pw.TextStyle(fontSize: 9),
-                  ),
-                ],
-              ),
-              pw.Row(
-                children: [
-                  pw.Text(
-                    'Paid By:',
-                    style: const pw.TextStyle(fontSize: 9),
-                  ),
-                  pw.SizedBox(width: 5),
-                  pw.Text(
-                    widget.order.customerName ?? 'Walk-in Customer',
-                    style: const pw.TextStyle(fontSize: 9),
-                  ),
-                ],
-              ),
-              
-              // Add who serviced the transaction
-              pw.Row(
-                children: [
-                  pw.Text(
-                    'Serviced by:',
-                    style: const pw.TextStyle(fontSize: 9),
-                  ),
-                  pw.SizedBox(width: 5),
-                  pw.Text(
-                    AuthService.instance.currentUser?.username ?? 'Admin',
-                    style: const pw.TextStyle(fontSize: 9),
-                  ),
-                ],
-              ),
-              
-              // Show pending balance for credit orders
-              if (widget.order.paymentMethod != null && widget.order.paymentMethod!.contains('Credit')) ...[
-                pw.SizedBox(height: 5),
-                pw.Row(
-                  children: [
-                    pw.Text(
-                      'Current Order Balance:',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
-                    ),
-                    pw.SizedBox(width: 5),
-                    pw.Text(
-                      'KSH ${pendingBalance.toStringAsFixed(2)}',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
-                    ),
-                  ],
-                ),
+                pw.Divider(thickness: 0.5),
                 
-                // Show total outstanding balance if applicable
-                if (widget.order.customerId != null && (totalOutstandingBalance > 0 || pendingBalance > 0)) ...[
-                  pw.SizedBox(height: 5),
-                  // First show previous outstanding balance if exists
-                  if (totalOutstandingBalance > 0) ...[
-                    pw.Row(
-                      children: [
-                        pw.Text(
-                          'Previous Outstanding Balance:',
-                          style: pw.TextStyle(fontSize: 9),
-                        ),
-                        pw.SizedBox(width: 5),
-                        pw.Text(
-                          'KSH ${totalOutstandingBalance.toStringAsFixed(2)}',
-                          style: pw.TextStyle(fontSize: 9),
-                        ),
-                      ],
-                    ),
-                  ],
-                  // Then show combined total 
-                  pw.Row(
+                // Order items
+                ...List.generate(_orderItems.length, (index) {
+                  final item = _orderItems[index];
+                  final isSubUnit = item['is_sub_unit'] == 1;
+                  final subUnitName = item['sub_unit_name'] as String? ?? 'piece';
+                  final sellingPrice = (item['selling_price'] as num).toDouble();
+                  final adjustedPrice = item['adjusted_price'] != null ? (item['adjusted_price'] as num).toDouble() : null;
+                  final effectivePrice = adjustedPrice ?? sellingPrice;
+                  
+                  return pw.Column(
                     children: [
-                      pw.Text(
-                        'Total Outstanding Balance:',
-                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9, color: const PdfColor.fromInt(0xffff0000)),
+                      pw.Row(
+                        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Expanded(
+                            flex: 3,
+                            child: pw.Text(
+                              item['product_name'] ?? 'Unknown Product',
+                              style: const pw.TextStyle(fontSize: 9),
+                            ),
+                          ),
+                          pw.Expanded(
+                            flex: 1,
+                            child: pw.Text(
+                              '${item['quantity']}${isSubUnit ? " $subUnitName" : ""}',
+                              style: const pw.TextStyle(fontSize: 9),
+                              textAlign: pw.TextAlign.right,
+                            ),
+                          ),
+                          pw.Expanded(
+                            flex: 1,
+                            child: pw.Text(
+                              effectivePrice.toStringAsFixed(2),
+                              style: const pw.TextStyle(fontSize: 9),
+                              textAlign: pw.TextAlign.right,
+                            ),
+                          ),
+                          pw.Expanded(
+                            flex: 1,
+                            child: pw.Text(
+                              (item['total_amount'] as num).toStringAsFixed(2),
+                              style: const pw.TextStyle(fontSize: 9),
+                              textAlign: pw.TextAlign.right,
+                            ),
+                          ),
+                        ],
                       ),
-                      pw.SizedBox(width: 5),
-                      pw.Text(
-                        'KSH ${(totalOutstandingBalance + pendingBalance).toStringAsFixed(2)}',
-                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9, color: const PdfColor.fromInt(0xffff0000)),
+                      pw.SizedBox(height: 2),
+                    ],
+                  );
+                }),
+                
+                // Total Calculation with VAT
+                pw.Divider(),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Expanded(
+                      flex: 3,
+                      child: pw.Text(
+                        'SUBTOTAL:',
+                        style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+                    pw.Expanded(
+                      flex: 1,
+                      child: pw.Text(
+                        'KSH ${totalAmount.toStringAsFixed(2)}',
+                        style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 10,
+                        ),
+                        textAlign: pw.TextAlign.right,
+                      ),
+                    ),
+                  ],
+                ),
+                
+                // Show VAT breakdown if enabled and configured to show on receipt
+                if (enableVat && showVatOnReceipt) ...[
+                  pw.SizedBox(height: 5),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Expanded(
+                        flex: 3,
+                        child: pw.Text(
+                          'VAT (${vatRate.toStringAsFixed(1)}%):',
+                          style: const pw.TextStyle(fontSize: 9),
+                        ),
+                      ),
+                      pw.Expanded(
+                        flex: 1,
+                        child: pw.Text(
+                          'KSH ${vatAmount.toStringAsFixed(2)}',
+                          style: const pw.TextStyle(fontSize: 9),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                    ],
+                  ),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Expanded(
+                        flex: 3,
+                        child: pw.Text(
+                          'Net Amount:',
+                          style: const pw.TextStyle(fontSize: 9),
+                        ),
+                      ),
+                      pw.Expanded(
+                        flex: 1,
+                        child: pw.Text(
+                          'KSH ${netAmount.toStringAsFixed(2)}',
+                          style: const pw.TextStyle(fontSize: 9),
+                          textAlign: pw.TextAlign.right,
+                        ),
                       ),
                     ],
                   ),
                 ],
-              ],
-              
-              // Footer Section
-              pw.SizedBox(height: 10),
-              pw.Center(
-                child: pw.Text(
-                  'Thank you for your business!',
+                
+                pw.SizedBox(height: 5),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Expanded(
+                      flex: 3,
+                      child: pw.Text(
+                        'TOTAL AMOUNT DUE:',
+                        style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+                    pw.Expanded(
+                      flex: 1,
+                      child: pw.Text(
+                        'KSH ${totalAmount.toStringAsFixed(2)}',
+                        style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 10,
+                        ),
+                        textAlign: pw.TextAlign.right,
+                      ),
+                    ),
+                  ],
+                ),
+                
+                // Payment Details
+                pw.SizedBox(height: 10),
+                pw.Text(
+                  'PAYMENT DETAILS:',
                   style: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
                     fontSize: 10,
-                    fontStyle: pw.FontStyle.italic,
                   ),
                 ),
-              ),
-              pw.Center(
-                child: pw.Text(
-                  'Please keep this receipt for your records',
-                  style: pw.TextStyle(
-                    fontSize: 8,
+                pw.SizedBox(height: 5),
+                pw.Row(
+                  children: [
+                    pw.Text(
+                      'Payment Mode:',
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                    pw.SizedBox(width: 5),
+                    pw.Text(
+                      widget.order.paymentMethod ?? 'Cash',
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                  ],
+                ),
+                pw.Row(
+                  children: [
+                    pw.Text(
+                      'Paid By:',
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                    pw.SizedBox(width: 5),
+                    pw.Text(
+                      widget.order.customerName ?? 'Walk-in Customer',
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                  ],
+                ),
+                
+                // Add who serviced the transaction
+                pw.Row(
+                  children: [
+                    pw.Text(
+                      'Serviced by:',
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                    pw.SizedBox(width: 5),
+                    pw.Text(
+                      AuthService.instance.currentUser?.username ?? 'Admin',
+                      style: const pw.TextStyle(fontSize: 9),
+                    ),
+                  ],
+                ),
+                
+                // Show pending balance for credit orders
+                if (widget.order.paymentMethod != null && widget.order.paymentMethod!.contains('Credit')) ...[
+                  pw.SizedBox(height: 5),
+                  pw.Row(
+                    children: [
+                      pw.Text(
+                        'Current Order Balance:',
+                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
+                      ),
+                      pw.SizedBox(width: 5),
+                      pw.Text(
+                        'KSH ${pendingBalance.toStringAsFixed(2)}',
+                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
+                      ),
+                    ],
+                  ),
+                  
+                  // Show total outstanding balance if applicable
+                  if (widget.order.customerId != null && (totalOutstandingBalance > 0 || pendingBalance > 0)) ...[
+                    pw.SizedBox(height: 5),
+                    // First show previous outstanding balance if exists
+                    if (totalOutstandingBalance > 0) ...[
+                      pw.Row(
+                        children: [
+                          pw.Text(
+                            'Previous Outstanding Balance:',
+                            style: pw.TextStyle(fontSize: 9),
+                          ),
+                          pw.SizedBox(width: 5),
+                          pw.Text(
+                            'KSH ${totalOutstandingBalance.toStringAsFixed(2)}',
+                            style: pw.TextStyle(fontSize: 9),
+                          ),
+                        ],
+                      ),
+                    ],
+                    // Then show combined total 
+                    pw.Row(
+                      children: [
+                        pw.Text(
+                          'Total Outstanding Balance:',
+                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9, color: const PdfColor.fromInt(0xffff0000)),
+                        ),
+                        pw.SizedBox(width: 5),
+                        pw.Text(
+                          'KSH ${(totalOutstandingBalance + pendingBalance).toStringAsFixed(2)}',
+                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9, color: const PdfColor.fromInt(0xffff0000)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+                
+                // Footer Section
+                pw.SizedBox(height: 10),
+                pw.Center(
+                  child: pw.Text(
+                    'Thank you for your business!',
+                    style: pw.TextStyle(
+                      fontSize: 10,
+                      fontStyle: pw.FontStyle.italic,
+                    ),
                   ),
                 ),
-              ),
-              pw.SizedBox(height: 5),
-              pw.Center(
-                child: pw.Text(
-                  'Powered by Malbrose POS',
-                  style: pw.TextStyle(
-                    fontSize: 8,
+                pw.Center(
+                  child: pw.Text(
+                    'Please keep this receipt for your records',
+                    style: pw.TextStyle(
+                      fontSize: 8,
+                    ),
                   ),
                 ),
-              ),
-              
-              // Extra space for thermal printer cutting
-              pw.SizedBox(height: 20),
-            ],
+                pw.SizedBox(height: 5),
+                
+                // Add "Goods once sold are not returnable" disclaimer when enabled
+                if (configService.showNoReturnsPolicy)
+                  pw.Center(
+                    child: pw.Text(
+                      'Goods once sold are not returnable.',
+                      style: const pw.TextStyle(fontSize: 10),
+                    ),
+                  ),
+                
+                pw.Center(
+                  child: pw.Text(
+                    'Powered by Malbrose POS',
+                    style: pw.TextStyle(
+                      fontSize: 8,
+                    ),
+                  ),
+                ),
+                
+                // Extra space for thermal printer cutting
+                pw.SizedBox(height: 20),
+              ],
             );
           }
         ),

@@ -15,13 +15,13 @@ class ConfigService {
   int _dbPort = 3306;
   String _dbUsername = 'root';
   String _dbPassword = '';
-  String _dbName = 'malbrose_pos';
+  String _dbName = 'pos_system';
   
   // Business information
-  String _businessName = 'Malbrose Hardware Store';
-  String _businessAddress = 'Eldoret';
-  String _businessPhone = '0720319340, 0721705613';
-  String _businessEmail = '';
+  String _businessName = 'Your Business Name';
+  String _businessAddress = 'Your Business Address';
+  String _businessPhone = '07xxxxxxxx';
+  String _businessEmail = 'business@example.com';
   String _businessLogo = '';
   
   // VAT settings
@@ -34,6 +34,7 @@ class ConfigService {
   String _receiptFooter = 'Goods once sold are not returnable.';
   bool _showBusinessLogo = true;
   bool _showCashierName = true;
+  bool _showNoReturnsPolicy = true;
   String _dateTimeFormat = 'dd/MM/yyyy HH:mm';
   
   // App configuration
@@ -65,6 +66,7 @@ class ConfigService {
   String get receiptFooter => _receiptFooter;
   bool get showBusinessLogo => _showBusinessLogo;
   bool get showCashierName => _showCashierName;
+  bool get showNoReturnsPolicy => _showNoReturnsPolicy;
   String get dateTimeFormat => _dateTimeFormat;
   
   // Setters
@@ -165,6 +167,11 @@ class ConfigService {
     _saveConfig();
   }
   
+  set showNoReturnsPolicy(bool value) {
+    _showNoReturnsPolicy = value;
+    _saveConfig();
+  }
+  
   set dateTimeFormat(String value) {
     _dateTimeFormat = value;
     _saveConfig();
@@ -186,13 +193,13 @@ class ConfigService {
       _dbPort = prefs.getInt('db_port') ?? 3306;
       _dbUsername = prefs.getString('db_username') ?? 'root';
       _dbPassword = prefs.getString('db_password') ?? '';
-      _dbName = prefs.getString('db_name') ?? 'malbrose_pos';
+      _dbName = prefs.getString('db_name') ?? 'pos_system';
       
       // Load business information
-      _businessName = prefs.getString('business_name') ?? 'Malbrose Hardware Store';
-      _businessAddress = prefs.getString('business_address') ?? 'Eldoret';
-      _businessPhone = prefs.getString('business_phone') ?? '0720319340, 0721705613';
-      _businessEmail = prefs.getString('business_email') ?? '';
+      _businessName = prefs.getString('business_name') ?? 'Your Business Name';
+      _businessAddress = prefs.getString('business_address') ?? 'Your Business Address';
+      _businessPhone = prefs.getString('business_phone') ?? '07xxxxxxxx';
+      _businessEmail = prefs.getString('business_email') ?? 'business@example.com';
       _businessLogo = prefs.getString('business_logo') ?? '';
       
       // Load VAT settings
@@ -205,6 +212,7 @@ class ConfigService {
       _receiptFooter = prefs.getString('receipt_footer') ?? 'Goods once sold are not returnable.';
       _showBusinessLogo = prefs.getBool('show_business_logo') ?? true;
       _showCashierName = prefs.getBool('show_cashier_name') ?? true;
+      _showNoReturnsPolicy = prefs.getBool('show_no_returns_policy') ?? true;
       _dateTimeFormat = prefs.getString('date_time_format') ?? 'dd/MM/yyyy HH:mm';
       
       // Load app configuration
@@ -246,6 +254,7 @@ class ConfigService {
       await prefs.setString('receipt_footer', _receiptFooter);
       await prefs.setBool('show_business_logo', _showBusinessLogo);
       await prefs.setBool('show_cashier_name', _showCashierName);
+      await prefs.setBool('show_no_returns_policy', _showNoReturnsPolicy);
       await prefs.setString('date_time_format', _dateTimeFormat);
       
       // Save app configuration
@@ -306,6 +315,7 @@ class ConfigService {
         'receipt_footer': _receiptFooter,
         'show_business_logo': _showBusinessLogo,
         'show_cashier_name': _showCashierName,
+        'show_no_returns_policy': _showNoReturnsPolicy,
         'date_time_format': _dateTimeFormat,
         'app_version': _appVersion,
         'setup_completed': _setupCompleted,
@@ -333,13 +343,13 @@ class ConfigService {
         _dbPort = configMap['db_port'] ?? 3306;
         _dbUsername = configMap['db_username'] ?? 'root';
         _dbPassword = configMap['db_password'] ?? '';
-        _dbName = configMap['db_name'] ?? 'malbrose_pos';
+        _dbName = configMap['db_name'] ?? 'pos_system';
         
         // Load business information
-        _businessName = configMap['business_name'] ?? 'Malbrose Hardware Store';
-        _businessAddress = configMap['business_address'] ?? 'Eldoret';
-        _businessPhone = configMap['business_phone'] ?? '0720319340, 0721705613';
-        _businessEmail = configMap['business_email'] ?? '';
+        _businessName = configMap['business_name'] ?? 'Your Business Name';
+        _businessAddress = configMap['business_address'] ?? 'Your Business Address';
+        _businessPhone = configMap['business_phone'] ?? '07xxxxxxxx';
+        _businessEmail = configMap['business_email'] ?? 'business@example.com';
         _businessLogo = configMap['business_logo'] ?? '';
         
         // Load VAT settings
@@ -352,6 +362,7 @@ class ConfigService {
         _receiptFooter = configMap['receipt_footer'] ?? 'Goods once sold are not returnable.';
         _showBusinessLogo = configMap['show_business_logo'] ?? true;
         _showCashierName = configMap['show_cashier_name'] ?? true;
+        _showNoReturnsPolicy = configMap['show_no_returns_policy'] ?? true;
         _dateTimeFormat = configMap['date_time_format'] ?? 'dd/MM/yyyy HH:mm';
         
         // Save the imported configuration
@@ -372,11 +383,11 @@ class ConfigService {
     _dbPort = 3306;
     _dbUsername = 'root';
     _dbPassword = '';
-    _dbName = 'malbrose_pos';
-    _businessName = 'Malbrose Hardware Store';
-    _businessAddress = 'Eldoret';
-    _businessPhone = '0720319340, 0721705613';
-    _businessEmail = '';
+    _dbName = 'pos_system';
+    _businessName = 'Your Business Name';
+    _businessAddress = 'Your Business Address';
+    _businessPhone = '07xxxxxxxx';
+    _businessEmail = 'business@example.com';
     _businessLogo = '';
     _vatRate = 16.0;
     _enableVat = true;
@@ -385,6 +396,7 @@ class ConfigService {
     _receiptFooter = 'Goods once sold are not returnable.';
     _showBusinessLogo = true;
     _showCashierName = true;
+    _showNoReturnsPolicy = true;
     _dateTimeFormat = 'dd/MM/yyyy HH:mm';
     _setupCompleted = false;
     
@@ -430,6 +442,45 @@ class ConfigService {
       return await prefs.setBool(key, value);
     } catch (e) {
       debugPrint('Error setting boolean value: $e');
+      return false;
+    }
+  }
+
+  // Load from import file
+  Future<bool> loadFromImport(Map<String, dynamic> configMap) async {
+    try {
+      // Load database configuration
+      _isMaster = configMap['is_master'] ?? false;
+      _masterIp = configMap['master_ip'] ?? 'localhost';
+      _dbPort = configMap['db_port'] ?? 3306;
+      _dbUsername = configMap['db_username'] ?? 'root';
+      _dbPassword = configMap['db_password'] ?? '';
+      _dbName = configMap['db_name'] ?? 'pos_system';
+      
+      // Load business information
+      _businessName = configMap['business_name'] ?? 'Your Business Name';
+      _businessAddress = configMap['business_address'] ?? 'Your Business Address';
+      _businessPhone = configMap['business_phone'] ?? '07xxxxxxxx';
+      _businessEmail = configMap['business_email'] ?? 'business@example.com';
+      _businessLogo = configMap['business_logo'] ?? '';
+      
+      // Load VAT settings
+      _vatRate = configMap['vat_rate'] ?? 16.0;
+      _enableVat = configMap['enable_vat'] ?? true;
+      _showVatOnReceipt = configMap['show_vat_on_receipt'] ?? true;
+      
+      // Load receipt settings
+      _receiptHeader = configMap['receipt_header'] ?? 'Thank you for shopping with us!';
+      _receiptFooter = configMap['receipt_footer'] ?? 'Goods once sold are not returnable.';
+      _showBusinessLogo = configMap['show_business_logo'] ?? true;
+      _showCashierName = configMap['show_cashier_name'] ?? true;
+      _showNoReturnsPolicy = configMap['show_no_returns_policy'] ?? true;
+      _dateTimeFormat = configMap['date_time_format'] ?? 'dd/MM/yyyy HH:mm';
+      
+      await _saveConfig();
+      return true;
+    } catch (e) {
+      debugPrint('Error loading configuration from import: $e');
       return false;
     }
   }

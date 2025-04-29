@@ -21,6 +21,7 @@ import 'package:flutter/foundation.dart'; // Add this at the top for debugPrint
 import 'package:my_flutter_app/services/encryption_service.dart';
 import 'package:flutter/services.dart';
 import 'package:my_flutter_app/services/config_service.dart';
+import 'package:path/path.dart' as path;
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._privateConstructor();
@@ -79,6 +80,7 @@ class DatabaseService {
   static const String actionDeleteProduct = 'delete_product';
   static const String actionUpdateCustomer = 'update_customer';
   static const String actionDeleteCustomer = 'delete_customer';
+  static const String actionConvertHeldOrder = 'convert_held_order';
 
   // Role and permission constants
   static const String ROLE_ADMIN = 'ADMIN';
@@ -4435,8 +4437,16 @@ class DatabaseService {
   }
 
   /// Reads the headers from an Excel file without importing
-  Future<Map<String, dynamic>> readExcelHeaders(String filePath) async {
+  Future<Map<String, dynamic>> readExcelHeaders(String filePath, {String? fileExtension}) async {
     try {
+      final extension = fileExtension?.toLowerCase() ?? p.extension(filePath).toLowerCase().replaceAll('.', '');
+      
+      // Check if this is a CSV file
+      if (extension == 'csv') {
+        return await _readCsvHeaders(filePath);
+      }
+      
+      // Handle Excel files (.xlsx, .xls)
       final bytes = await File(filePath).readAsBytes();
       final excel = Excel.decodeBytes(bytes);
       
@@ -4480,10 +4490,68 @@ class DatabaseService {
         'initialMapping': initialMapping,
       };
     } catch (e) {
-      print('Error reading Excel headers: $e');
+      print('Error reading file headers: $e');
       return {
         'success': false,
-        'message': 'Error reading Excel file: $e',
+        'message': 'Error reading file: $e',
+        'headers': <String>[],
+      };
+    }
+  }
+  
+  /// Reads headers from a CSV file
+  Future<Map<String, dynamic>> _readCsvHeaders(String filePath) async {
+    try {
+      final file = File(filePath);
+      final content = await file.readAsString();
+      
+      // Split by lines and get the first line
+      final lines = content.split('\n');
+      if (lines.isEmpty || lines.first.trim().isEmpty) {
+        return {
+          'success': false,
+          'message': 'No data found in CSV file',
+          'headers': <String>[],
+        };
+      }
+      
+      // Parse headers - support both comma and semicolon as delimiters
+      String delimiter = ',';
+      if (lines.first.contains(';')) {
+        delimiter = ';';
+      }
+      
+      final headers = lines.first.split(delimiter)
+          .map((header) => header.trim().replaceAll('"', '').replaceAll("'", ""))
+          .where((header) => header.isNotEmpty)
+          .toList();
+      
+      // Generate initial mapping
+      final headerMappings = Product.getHeaderMappings();
+      final alternateHeaderMappings = Product.getAlternateHeaderMappings();
+      final initialMapping = <String, String>{};
+      
+      for (var header in headers) {
+        String? mappedField = headerMappings[header];
+        if (mappedField == null) {
+          mappedField = alternateHeaderMappings[header.toLowerCase()];
+        }
+        if (mappedField != null) {
+          initialMapping[header] = mappedField;
+        }
+      }
+      
+      return {
+        'success': true,
+        'message': 'Found ${headers.length} columns in CSV file',
+        'headers': headers,
+        'initialMapping': initialMapping,
+      };
+    } catch (e) {
+      print('Error reading CSV headers: $e');
+      return {
+        'success': false,
+        'message': 'Error reading CSV file: $e',
         'headers': <String>[],
       };
     }
@@ -4494,8 +4562,9 @@ class DatabaseService {
     String filePath, 
     Map<String, String?> columnMapping,
     // Add a progress callback parameter
-    Function(Map<String, dynamic> progressData)? onProgress
-  ) async {
+    Function(Map<String, dynamic> progressData)? onProgress, {
+    String? fileExtension
+  }) async {
     final errors = <String>[];
     int imported = 0;
     int failed = 0;
@@ -4503,6 +4572,15 @@ class DatabaseService {
     int total = 0;
     
     try {
+      final extension = fileExtension?.toLowerCase() ?? path.extension(filePath).toLowerCase().replaceAll('.', '');
+      print('Starting import from file: $filePath with extension: $extension');
+      
+      // Handle CSV files differently from Excel
+      if (extension == 'csv') {
+        return await _importProductsFromCsv(filePath, columnMapping, onProgress);
+      }
+      
+      // Handle Excel files
       print('Starting Excel import from file: $filePath with custom mapping');
       final bytes = await File(filePath).readAsBytes();
       final excel = Excel.decodeBytes(bytes);
@@ -5351,6 +5429,319 @@ class DatabaseService {
     } catch (e) {
       print('Error getting configuration: $e');
       return null;
+    }
+  }
+
+  /// Imports products from a CSV file with custom column mapping
+  Future<Map<String, dynamic>> _importProductsFromCsv(
+    String filePath, 
+    Map<String, String?> columnMapping,
+    Function(Map<String, dynamic> progressData)? onProgress
+  ) async {
+    final errors = <String>[];
+    int imported = 0;
+    int failed = 0;
+    int current = 0;
+    int total = 0;
+    
+    try {
+      final file = File(filePath);
+      final content = await file.readAsString();
+      
+      // Split by lines
+      final lines = content.split('\n')
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .toList();
+      
+      if (lines.isEmpty) {
+        onProgress?.call({
+          'success': false,
+          'message': 'No data found in CSV file',
+          'current': 0,
+          'total': 0,
+          'percentage': 0.0,
+          'completed': true,
+        });
+        
+        return {
+          'success': false,
+          'message': 'No data found in CSV file',
+          'imported': 0,
+          'failed': 0,
+          'errors': errors,
+          'current': 0,
+          'total': 0,
+          'percentage': 0.0,
+          'completed': true,
+        };
+      }
+      
+      // Determine the delimiter (comma or semicolon)
+      String delimiter = ',';
+      if (lines.first.contains(';')) {
+        delimiter = ';';
+      }
+      
+      // Get headers from first row
+      final headers = lines.first.split(delimiter)
+          .map((header) => header.trim().replaceAll('"', '').replaceAll("'", ""))
+          .where((header) => header.isNotEmpty)
+          .toList();
+      
+      // Calculate total rows
+      total = lines.length - 1; // Subtract header row
+      
+      // Initial progress update
+      onProgress?.call({
+        'current': 0,
+        'total': total,
+        'percentage': 0.0,
+        'message': 'Reading CSV data...',
+        'completed': false,
+      });
+      
+      // Create a mapping from column index to database field
+      final headerMap = <int, String>{};
+      for (int i = 0; i < headers.length; i++) {
+        final header = headers[i];
+        final dbField = columnMapping[header];
+        if (dbField != null) {
+          headerMap[i] = dbField;
+        }
+      }
+      
+      // Skip the header row (index 0)
+      for (var i = 1; i < lines.length; i++) {
+        current = i;
+        
+        // Update progress every 5 rows or on the first/last row
+        if (current % 5 == 0 || current == 1 || current == total) {
+          double percentage = total > 0 ? (current / total * 100) : 0.0;
+          onProgress?.call({
+            'current': current,
+            'total': total,
+            'percentage': percentage,
+            'message': 'Processing row $current of $total...',
+            'completed': false,
+          });
+          
+          // Small delay to allow UI to update
+          await Future.delayed(Duration(milliseconds: 5));
+        }
+        
+        try {
+          final line = lines[i];
+          
+          // Skip empty lines
+          if (line.isEmpty) {
+            continue;
+          }
+          
+          // Split the line into values
+          List<String> values = [];
+          
+          // Handle quotes in CSV properly
+          if (line.contains('"')) {
+            // More complex CSV parsing for quoted values
+            bool inQuotes = false;
+            StringBuffer currentValue = StringBuffer();
+            
+            for (int c = 0; c < line.length; c++) {
+              final char = line[c];
+              
+              if (char == '"') {
+                // Toggle quote state
+                inQuotes = !inQuotes;
+              } else if (char == delimiter && !inQuotes) {
+                // End of value
+                values.add(currentValue.toString().trim());
+                currentValue = StringBuffer();
+              } else {
+                // Add to current value
+                currentValue.write(char);
+              }
+            }
+            
+            // Add the last value
+            values.add(currentValue.toString().trim());
+          } else {
+            // Simple split for non-quoted values
+            values = line.split(delimiter)
+                .map((value) => value.trim())
+                .toList();
+          }
+          
+          final productData = <String, dynamic>{};
+          
+          // Map cell values to product fields using our custom mapping
+          for (var j = 0; j < values.length && j < headers.length; j++) {
+            if (headerMap.containsKey(j)) {
+              final fieldName = headerMap[j]!;
+              final cellValue = values[j].replaceAll('"', '').trim();
+              
+              // Process based on field type
+              if (['buying_price', 'selling_price', 'sub_unit_price', 'price_per_sub_unit', 'sub_unit_buying_price'].contains(fieldName)) {
+                // Convert to double
+                final numValue = _parseDouble(cellValue);
+                if (numValue != null) {
+                  productData[fieldName] = numValue;
+                } else {
+                  print('Warning: Could not parse "$cellValue" as double for field $fieldName');
+                  // Set a default value to prevent errors
+                  productData[fieldName] = 0.0;
+                }
+              } else if (['quantity', 'sub_unit_quantity', 'number_of_sub_units'].contains(fieldName)) {
+                // Convert to int
+                final numValue = _parseInt(cellValue);
+                if (numValue != null) {
+                  productData[fieldName] = numValue;
+                } else {
+                  print('Warning: Could not parse "$cellValue" as int for field $fieldName. Using default 0.');
+                  // Set a safe default for quantity
+                  productData[fieldName] = 0;
+                }
+              } else if (fieldName == 'has_sub_units') {
+                // Convert Yes/No to 1/0
+                final strValue = cellValue.toLowerCase();
+                productData[fieldName] = (strValue == 'yes' || strValue == 'true' || strValue == '1') ? 1 : 0;
+              } else if (fieldName == 'received_date') {
+                // Parse date
+                try {
+                  final dateStr = cellValue;
+                  DateTime dateValue;
+                  
+                  if (dateStr.contains('T')) {
+                    // ISO format
+                    dateValue = DateTime.parse(dateStr);
+                  } else {
+                    // Attempt to parse MM/DD/YYYY or similar formats
+                    final parts = dateStr.split(RegExp(r'[/\-]'));
+                    if (parts.length == 3) {
+                      // Assume month/day/year format
+                      dateValue = DateTime(int.parse(parts[2]), int.parse(parts[0]), int.parse(parts[1]));
+                    } else {
+                      // Default to current date if format is unrecognized
+                      dateValue = DateTime.now();
+                    }
+                  }
+                  
+                  productData[fieldName] = dateValue.toIso8601String();
+                } catch (e) {
+                  // Default to current date if parsing fails
+                  productData[fieldName] = DateTime.now().toIso8601String();
+                }
+              } else if (fieldName == 'department') {
+                // Use the department value from the CSV or default if empty
+                if (cellValue.isEmpty) {
+                  productData[fieldName] = Product.deptLubricants;
+                } else {
+                  productData[fieldName] = Product.normalizeDepartment(cellValue);
+                }
+              } else if (fieldName == 'supplier' && cellValue.isEmpty) {
+                // Ensure supplier is not empty
+                productData[fieldName] = 'Unknown Supplier';
+              } else {
+                // For all other fields, just use the string value
+                productData[fieldName] = cellValue.isEmpty ? null : cellValue;
+              }
+            }
+          }
+          
+          // Set default values for required fields
+          if (!productData.containsKey('received_date') || productData['received_date'] == null) {
+            productData['received_date'] = DateTime.now().toIso8601String();
+          }
+          
+          if (!productData.containsKey('department') || productData['department'] == null) {
+            productData['department'] = Product.deptLubricants;
+          }
+          
+          // Set has_sub_units based on whether sub_unit fields are provided
+          if (productData.containsKey('sub_unit_name') && productData['sub_unit_name'] != null && productData['sub_unit_name'].toString().isNotEmpty) {
+            productData['has_sub_units'] = 1;
+          } else {
+            productData['has_sub_units'] = 0;
+          }
+          
+          // Fill in default values for required numeric fields
+          if (!productData.containsKey('buying_price') || productData['buying_price'] == null) 
+            productData['buying_price'] = 0.0;
+          if (!productData.containsKey('selling_price') || productData['selling_price'] == null) 
+            productData['selling_price'] = 0.0;
+          if (!productData.containsKey('quantity') || productData['quantity'] == null) 
+            productData['quantity'] = 0;
+          
+          // Make sure product_name is not empty
+          if (!productData.containsKey('product_name') || productData['product_name'] == null || 
+              productData['product_name'].toString().trim().isEmpty) {
+            // For product name, we need some value - use a generated name
+            productData['product_name'] = 'Product_${DateTime.now().millisecondsSinceEpoch}';
+            print('Warning: Generated placeholder name for product at row ${i+1}');
+          }
+          
+          // Ensure supplier has a value
+          if (!productData.containsKey('supplier') || productData['supplier'] == null || 
+              productData['supplier'].toString().trim().isEmpty) {
+            productData['supplier'] = 'Unknown Supplier';
+          }
+          
+          // Print product data for debugging
+          print('CSV Row ${i+1} data: ${productData.toString()}');
+          
+          // Create the product
+          try {
+            final result = await createProduct(productData);
+            if (result > 0) {
+              imported++;
+            } else {
+              failed++;
+              errors.add('Row ${i+1}: Failed to import product "${productData['product_name']}"');
+            }
+          } catch (e) {
+            failed++;
+            errors.add('Row ${i+1}: Error creating product: $e');
+            print('Error creating product at row ${i+1}: $e');
+          }
+        } catch (e) {
+          errors.add('Row ${i+1}: Error processing row: $e');
+          failed++;
+        }
+      }
+      
+      // Final progress update
+      final finalResult = {
+        'success': failed == 0,
+        'message': 'Imported $imported products. Failed: $failed',
+        'imported': imported,
+        'failed': failed,
+        'errors': errors,
+        'current': total,
+        'total': total,
+        'percentage': 100.0,
+        'completed': true,
+      };
+      
+      onProgress?.call(finalResult);
+      return finalResult;
+    } catch (e) {
+      print('❌ Error importing products from CSV: $e');
+      
+      // Error progress update
+      final errorResult = {
+        'success': false,
+        'message': 'Error importing products from CSV: $e',
+        'imported': imported,
+        'failed': failed + (total - current),
+        'errors': [...errors, 'Global error: $e'],
+        'current': current,
+        'total': total > 0 ? total : 1,
+        'percentage': total > 0 ? (current / total * 100) : 0.0,
+        'completed': true,
+      };
+      
+      onProgress?.call(errorResult);
+      return errorResult;
     }
   }
 }

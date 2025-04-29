@@ -23,13 +23,13 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   final _dbPortController = TextEditingController(text: '3306');
   final _dbUsernameController = TextEditingController(text: 'root');
   final _dbPasswordController = TextEditingController();
-  final _dbNameController = TextEditingController(text: 'malbrose_pos');
+  final _dbNameController = TextEditingController(text: 'pos_system');
   
   // Business information
-  final _businessNameController = TextEditingController(text: 'Malbrose Hardware Store');
-  final _businessAddressController = TextEditingController(text: 'Eldoret');
-  final _businessPhoneController = TextEditingController(text: '0720319340, 0721705613');
-  final _businessEmailController = TextEditingController();
+  final _businessNameController = TextEditingController(text: 'Your Business Name');
+  final _businessAddressController = TextEditingController(text: 'Your Business Address');
+  final _businessPhoneController = TextEditingController(text: '07xxxxxxxx');
+  final _businessEmailController = TextEditingController(text: 'business@example.com');
   
   // Admin user information
   final _adminUsernameController = TextEditingController(text: 'admin');
@@ -80,10 +80,23 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
         _dbUsernameController.text = configService.dbUsername;
         _dbPasswordController.text = configService.dbPassword;
         _dbNameController.text = configService.dbName;
-        _businessNameController.text = configService.businessName;
-        _businessAddressController.text = configService.businessAddress;
-        _businessPhoneController.text = configService.businessPhone;
-        _businessEmailController.text = configService.businessEmail;
+        
+        // Don't overwrite placeholders with hardcoded values if the fields are empty
+        if (configService.businessName != 'Malbrose Hardware Store') {
+          _businessNameController.text = configService.businessName;
+        }
+        
+        if (configService.businessAddress != 'Eldoret') {
+          _businessAddressController.text = configService.businessAddress;
+        }
+        
+        if (configService.businessPhone != '0720319340, 0721705613') {
+          _businessPhoneController.text = configService.businessPhone;
+        }
+        
+        if (configService.businessEmail.isNotEmpty) {
+          _businessEmailController.text = configService.businessEmail;
+        }
       });
       
       if (configService.setupCompleted) {
@@ -512,7 +525,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
             controller: _dbNameController,
             decoration: const InputDecoration(
               labelText: 'Database Name',
-              hintText: 'Default: malbrose_pos',
+              hintText: 'Default: pos_system',
               border: OutlineInputBorder(),
             ),
             validator: (value) {

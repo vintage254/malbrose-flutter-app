@@ -25,29 +25,41 @@ class _SideMenuWidgetState extends State<SideMenuWidget> {
       return true;
     }());
 
+    // Create list following the proposed structure
     final List<Map<String, dynamic>> items = [
+      // Core navigation
       {'title': 'Home', 'icon': Icons.home, 'route': '/home'},
       {'title': 'Dashboard', 'icon': Icons.dashboard, 'route': '/main'},
+      
+      // Order workflow (basic)
       {'title': 'Create Orders', 'icon': Icons.shopping_cart, 'route': '/orders'},
       {'title': 'Held Orders', 'icon': Icons.pause_circle_filled, 'route': '/held-orders'},
+      {'title': 'Complete Sales', 'icon': Icons.point_of_sale, 'route': '/sales'},
+      
+      // Order history (admin only)
+      if (isAdmin)
+        {'title': 'Order History', 'icon': Icons.history, 'route': '/order-history'},
+      
+      // Product and finance management
       {'title': 'Product Management', 'icon': Icons.inventory, 'route': '/products'},
       {'title': 'Creditors', 'icon': Icons.account_balance_wallet, 'route': '/creditors'},
       {'title': 'Debtors', 'icon': Icons.money_off, 'route': '/debtors'},
+      
+      // Reports
       {'title': 'Customer Reports', 'icon': Icons.receipt_long, 'route': '/customer-reports'},
-      {'title': 'Complete Sales', 'icon': Icons.point_of_sale, 'route': '/sales'},
-    ];
-
-    // Add admin-only menu items
-    if (isAdmin) {
-      items.addAll([
-        {'title': 'Order History', 'icon': Icons.history, 'route': '/order-history'},
-        {'title': 'Settings', 'icon': Icons.settings, 'route': '/settings'},
-        {'title': 'Activity Log', 'icon': Icons.history, 'route': '/activity'},
+      if (isAdmin)
         {'title': 'Sales Reports', 'icon': Icons.bar_chart, 'route': '/sales-report'},
+      
+      // Settings and system (admin only)
+      if (isAdmin)
+        {'title': 'Settings', 'icon': Icons.settings, 'route': '/settings'},
+      if (isAdmin)
         {'title': 'Printer Settings', 'icon': Icons.print, 'route': '/printer-settings'},
+      if (isAdmin)
         {'title': 'Backup & Restore', 'icon': Icons.backup, 'route': '/backup'},
-      ]);
-    }
+      if (isAdmin)
+        {'title': 'Activity Log', 'icon': Icons.history, 'route': '/activity'},
+    ];
 
     return items;
   }

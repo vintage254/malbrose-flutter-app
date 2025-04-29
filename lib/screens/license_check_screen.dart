@@ -207,28 +207,19 @@ class _LicenseCheckScreenState extends State<LicenseCheckScreen> {
                       ),
                       const SizedBox(height: defaultPadding),
                       const Text(
-                        'Need a license? Contact support at:',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                      const SizedBox(height: defaultPadding / 2),
-                      const Text(
-                        'support@malbrosehardware.com',
+                        'For license inquiries, please contact:',
                         style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          fontStyle: FontStyle.italic,
                         ),
                       ),
-                      const SizedBox(height: defaultPadding),
+                      const SizedBox(height: 5),
                       const Text(
-                        'or call:',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                      const SizedBox(height: defaultPadding / 2),
-                      const Text(
-                        '+254 720 319340',
+                        'support@example.com',
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: 14,
                           fontWeight: FontWeight.bold,
+                          color: Colors.blue,
                         ),
                       ),
                     ],

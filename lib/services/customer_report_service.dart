@@ -12,10 +12,12 @@ import 'package:my_flutter_app/services/database.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:my_flutter_app/services/printer_service.dart';
 import 'package:flutter/material.dart';
+import 'package:my_flutter_app/services/config_service.dart';
 
 class CustomerReportService {
   static final CustomerReportService instance = CustomerReportService._internal();
   CustomerReportService._internal();
+  final config = ConfigService.instance;
 
   Future<void> generateAndPrintCustomerReport(CustomerReport report, Customer customer, [BuildContext? context]) async {
     try {
@@ -196,16 +198,16 @@ class CustomerReportService {
             if (logo != null) pw.Image(logo, width: 120),
             pw.SizedBox(height: 10),
             pw.Text(
-              companyName,
+              config.businessName,
               style: pw.TextStyle(
                 font: boldFont,
                 fontSize: 24,
                 color: PdfColors.blue900,
               ),
             ),
-            _buildText('Phone: $companyPhone', font),
-            _buildText('Email: $companyEmail', font),
-            _buildText('Address: $companyAddress', font),
+            _buildText(config.businessAddress, font),
+            _buildText(config.businessPhone, font),
+            if (config.businessEmail.isNotEmpty) _buildText(config.businessEmail, font),
           ],
         ),
         pw.Column(

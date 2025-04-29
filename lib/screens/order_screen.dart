@@ -56,6 +56,8 @@ class _OrderScreenState extends State<OrderScreen> {
       _customerNameController.text = widget.editingOrder!.customerName ?? '';
       
       print('OrderScreen - Editing order #${widget.editingOrder!.orderNumber}');
+      print('OrderScreen - Order status: ${widget.editingOrder!.orderStatus}');
+      print('OrderScreen - isHeld: ${widget.editingOrder!.orderStatus == 'ON_HOLD' || widget.editingOrder!.orderNumber.startsWith('HLD-')}');
       
       if (widget.editingOrder!.items.isNotEmpty) {
         // Convert order items to cart items
@@ -238,7 +240,9 @@ class _OrderScreenState extends State<OrderScreen> {
             // Always show Place Order button (for both new and held orders)
             IconButton(
               icon: const Icon(Icons.check_circle_outline),
-              tooltip: 'Place Order',
+              tooltip: widget.isEditing && widget.editingOrder != null && widget.editingOrder!.orderStatus == 'ON_HOLD' 
+                  ? 'Place Order' 
+                  : (widget.isEditing ? 'Save Changes' : 'Place Order'),
               onPressed: _handlePlaceOrder,
             ),
           ],
@@ -413,7 +417,9 @@ class _OrderScreenState extends State<OrderScreen> {
               orderId: widget.editingOrder?.id, // Forward the order ID
               preserveOrderNumber: widget.preserveOrderNumber, // Preserve order number flag
               preventDuplicateCreation: widget.preventDuplicateCreation, // Prevent duplication flag
-              orderButtonText: widget.isEditing ? 'Update Order' : 'Place Order',
+              orderButtonText: widget.isEditing && widget.editingOrder?.orderStatus == 'ON_HOLD' 
+                  ? 'Place Order' // For held orders
+                  : (widget.isEditing ? 'Save Changes' : 'Place Order'), // For regular orders
               onHoldOrderPressed: widget.isEditing ? null : _holdOrder,
             ),
           ),
@@ -740,14 +746,25 @@ class _OrderScreenState extends State<OrderScreen> {
       
       // Handle editing of existing orders or when using the preventDuplicateCreation flag
       if ((widget.isEditing || widget.preventDuplicateCreation) && widget.editingOrder != null) {
+        
+        // Determine if this is converting a held order to a regular order
+        final isConvertingHeldOrder = widget.editingOrder!.orderStatus == 'ON_HOLD' || 
+                                     widget.editingOrder!.orderNumber.startsWith('HLD-');
+        
+        // Generate order number - if converting from held, change HLD- to ORD-
+        String orderNumber = widget.editingOrder!.orderNumber;
+        if (isConvertingHeldOrder && orderNumber.startsWith('HLD-')) {
+          orderNumber = 'ORD-' + orderNumber.substring(4);
+        }
+        
         // Update existing order
         final updatedOrder = Order(
           id: widget.editingOrder!.id,
-          orderNumber: widget.editingOrder!.orderNumber,
+          orderNumber: orderNumber,
           customerId: null, // Let createOrder handle it
           customerName: customerName,
           totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
-          orderStatus: widget.editingOrder!.orderStatus,
+          orderStatus: 'PENDING', // Always set to PENDING when using Place Order
           paymentStatus: widget.editingOrder!.paymentStatus,
           paymentMethod: widget.editingOrder!.paymentMethod,
           createdBy: widget.editingOrder!.createdBy,
@@ -779,15 +796,19 @@ class _OrderScreenState extends State<OrderScreen> {
         await DatabaseService.instance.logActivity(
           1, // Default admin user ID
           'admin',
-          DatabaseService.actionUpdateOrder,
-          'Order Updated',
-          'Order #${updatedOrder.orderNumber} was updated',
+          isConvertingHeldOrder ? DatabaseService.actionConvertHeldOrder : DatabaseService.actionUpdateOrder,
+          isConvertingHeldOrder ? 'Held Order Converted' : 'Order Updated',
+          isConvertingHeldOrder 
+              ? 'Held Order #${widget.editingOrder!.orderNumber} was converted to Order #$orderNumber' 
+              : 'Order #$orderNumber was updated',
         );
         
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Order updated successfully'),
+          SnackBar(
+            content: Text(isConvertingHeldOrder 
+                ? 'Held order converted to pending order successfully' 
+                : 'Order updated successfully'),
             backgroundColor: Colors.green,
           ),
         );

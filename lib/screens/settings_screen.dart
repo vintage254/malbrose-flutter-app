@@ -48,6 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   final _receiptFooterController = TextEditingController();
   bool _showBusinessLogo = true;
   bool _showCashierName = true;
+  bool _showNoReturnsPolicy = true;
   final _dateTimeFormatController = TextEditingController();
   
   // License info state
@@ -102,6 +103,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
       _receiptFooterController.text = config.receiptFooter;
       _showBusinessLogo = config.showBusinessLogo;
       _showCashierName = config.showCashierName;
+      _showNoReturnsPolicy = config.showNoReturnsPolicy;
       _dateTimeFormatController.text = config.dateTimeFormat;
     });
   }
@@ -187,6 +189,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
     config.receiptFooter = _receiptFooterController.text;
     config.showBusinessLogo = _showBusinessLogo;
     config.showCashierName = _showCashierName;
+    config.showNoReturnsPolicy = _showNoReturnsPolicy;
     config.dateTimeFormat = _dateTimeFormatController.text;
     
     ScaffoldMessenger.of(context).showSnackBar(
@@ -926,6 +929,18 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
             },
           ),
           
+          // Add No Returns Policy toggle
+          SwitchListTile(
+            title: const Text('No Returns Policy'),
+            subtitle: const Text('Include "Goods once sold are not returnable" on receipts'),
+            value: _showNoReturnsPolicy,
+            onChanged: (value) {
+              setState(() {
+                _showNoReturnsPolicy = value;
+              });
+            },
+          ),
+          
           const SizedBox(height: defaultPadding * 2),
           
           // Save button
@@ -1077,12 +1092,12 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
                 ),
                 const SizedBox(height: defaultPadding / 2),
                 const Text(
-                  'Email: support@malbrosehardware.com',
+                  'Email: support@example.com',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Phone: +254 720 319340',
+                  'Phone: +254 7xxxxxxxx',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ],

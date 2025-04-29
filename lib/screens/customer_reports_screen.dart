@@ -23,12 +23,14 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
   List<Customer> _customers = [];
   List<Map<String, dynamic>> _orders = [];
   List<Map<String, dynamic>> _orderItems = [];
+  List<Map<String, dynamic>> _creditRecords = [];
   Timer? _debounceTimer;
   String _searchQuery = '';
   bool _reportGenerated = false;
   double _completedAmount = 0.0;
   double _pendingAmount = 0.0;
   double _totalAmount = 0.0;
+  double _outstandingCreditAmount = 0.0;
 
   @override
   void initState() {
@@ -88,6 +90,8 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
       _reportGenerated = false;
       _orders = [];
       _orderItems = [];
+      _creditRecords = [];
+      _outstandingCreditAmount = 0.0;
     });
     
     try {
@@ -112,6 +116,12 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
       final orders = result['orders'] as List<Map<String, dynamic>>;
       final orderItems = result['orderItems'] as List<Map<String, dynamic>>;
       
+      // Get customer's credit information
+      final outstandingCredit = await DatabaseService.instance.getCustomerTotalOutstandingBalance(_selectedCustomer!.id!);
+      
+      // Get detailed credit records
+      final creditRecords = await DatabaseService.instance.getCreditOrdersByCustomer(_selectedCustomer!.name);
+      
       double completedAmount = 0.0;
       double pendingAmount = 0.0;
       
@@ -135,9 +145,11 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
         setState(() {
           _orders = orders;
           _orderItems = orderItems;
+          _creditRecords = creditRecords;
           _completedAmount = completedAmount;
           _pendingAmount = pendingAmount;
           _totalAmount = completedAmount + pendingAmount;
+          _outstandingCreditAmount = outstandingCredit;
           _reportGenerated = true;
           _isLoading = false;
         });
@@ -332,11 +344,13 @@ class _CustomerReportsScreenState extends State<CustomerReportsScreen> {
                                               customer: _selectedCustomer!,
                                               orders: _orders,
                                               orderItems: _orderItems,
+                                              creditRecords: _creditRecords,
                                               startDate: _startDate,
                                               endDate: _endDate,
                                               completedAmount: _completedAmount,
                                               pendingAmount: _pendingAmount,
                                               totalAmount: _totalAmount,
+                                              outstandingCreditAmount: _outstandingCreditAmount,
                                             ),
                         ),
                       ],

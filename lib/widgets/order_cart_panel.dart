@@ -411,6 +411,38 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
       _customerNameController.text = widget.customerName!;
     }
     
+    // Debug logging for held order detection
+    if (widget.isEditing && widget.order != null) {
+      print('DEBUG ORDER PANEL: Editing order #${widget.order!.orderNumber} | Status: ${widget.order!.orderStatus}');
+      print('DEBUG ORDER PANEL: isHeld by status: ${widget.order!.orderStatus == 'ON_HOLD'}');
+      print('DEBUG ORDER PANEL: isHeld by number prefix: ${widget.order!.orderNumber.startsWith('HLD-')}');
+      print('DEBUG ORDER PANEL: preserveOrderNumber: ${widget.preserveOrderNumber}, preventDuplicateCreation: ${widget.preventDuplicateCreation}');
+      
+      // IMPORTANT: We consider it a held order being edited if:
+      // 1. It's currently in ON_HOLD status, OR
+      // 2. Its order number starts with HLD-, OR
+      // 3. Both preserveOrderNumber AND preventDuplicateCreation flags are true (indicates restored held order)
+      // 4. If the order number was previously a held order (check for ORD- with the same number pattern as HLD-)
+      final bool wasHeldOrder = widget.order!.orderNumber.startsWith('ORD-') && 
+                              widget.preserveOrderNumber && 
+                              widget.preventDuplicateCreation;
+      
+      final isHeldOrder = ((widget.order!.orderStatus == 'ON_HOLD' || 
+                         widget.order!.orderNumber.startsWith('HLD-')) || 
+                         wasHeldOrder);
+      
+      print('DEBUG ORDER PANEL: wasHeldOrder: $wasHeldOrder');
+      print('DEBUG ORDER PANEL: Final isHeldOrder evaluation: $isHeldOrder');
+    }
+    
+    // NEW: Determine if this is a restored held order being edited
+    final bool isRestoredHeldOrder = widget.isEditing && 
+                                 widget.order != null &&
+                                 widget.order!.orderStatus == 'PENDING' &&
+                                 widget.order!.orderNumber.startsWith('ORD-') &&
+                                 widget.preserveOrderNumber && 
+                                 widget.preventDuplicateCreation;
+    
     return Material(
       type: MaterialType.transparency,
       child: Container(
@@ -619,30 +651,30 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                       ],
                     ),
                     const SizedBox(height: defaultPadding),
+                    // FIXED: Modified row of buttons for held orders to always include all three buttons
                     Row(
                       children: [
-                        // FIXED CONDITIONS: More explicit check for held orders
+                        // HELD ORDER WORKFLOW: Show these buttons when editing a held order
                         if (widget.isEditing && widget.order != null && 
-                            (widget.order!.orderStatus == 'ON_HOLD' || 
-                             widget.order!.orderNumber.startsWith('HLD-'))) ...[
-                          // For held orders, show both "Save Order" and "Place Order" buttons
+                            ((widget.order!.orderStatus == 'ON_HOLD' || 
+                              widget.order!.orderNumber.startsWith('HLD-')) || 
+                             (widget.preserveOrderNumber && widget.preventDuplicateCreation))) ...[
+                          // Save button - preserves held status
                           Expanded(
                             child: ElevatedButton.icon(
-                              // FIXED: Call a separate method to save without changing status
                               onPressed: widget.initialItems.isEmpty ? null : () => _saveHeldOrder(context),
                               icon: const Icon(Icons.save),
-                              label: const Text('Save Order'),
+                              label: const Text('Save Changes'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.blue,
                               ),
                             ),
                           ),
-                          const SizedBox(width: defaultPadding),
+                          const SizedBox(width: 8),
+                          // Place Order button - converts to pending
                           Expanded(
                             child: ElevatedButton.icon(
-                              onPressed: widget.initialItems.isEmpty 
-                                  ? null 
-                                  : () => _convertHeldToPendingOrder(context),
+                              onPressed: widget.initialItems.isEmpty ? null : () => _convertHeldToPendingOrder(context),
                               icon: const Icon(Icons.receipt_long),
                               label: const Text('Place Order'),
                               style: ElevatedButton.styleFrom(
@@ -650,8 +682,20 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                               ),
                             ),
                           ),
+                          const SizedBox(width: 8),
+                          // Print button - always available
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: widget.initialItems.isEmpty ? null : () => _printCurrentOrder(context),
+                              icon: const Icon(Icons.print),
+                              label: const Text('Print'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.orange,
+                              ),
+                            ),
+                          ),
                         ] else if (widget.isEditing) ...[
-                          // For regular editing (not held orders), show just Save Changes
+                          // Regular editing (not held orders) - show just Save Changes
                           Expanded(
                             child: ElevatedButton.icon(
                               onPressed: () => _placeOrder(context),
@@ -659,6 +703,18 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                               label: const Text('Save Changes'),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.blue,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // Print button
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: widget.initialItems.isEmpty ? null : () => _printCurrentOrder(context),
+                              icon: const Icon(Icons.print),
+                              label: const Text('Print'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.orange,
                               ),
                             ),
                           ),
@@ -680,27 +736,24 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
                               child: ElevatedButton.icon(
                                 onPressed: widget.initialItems.isEmpty ? null : () => _holdOrder(context),
                                 icon: const Icon(Icons.pause_circle_outline),
-                                label: const Text('Hold Order'),
+                                label: const Text('Hold'),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.orange,
                                 ),
                               ),
                             ),
-                        ],
                         const SizedBox(width: 8),
                         Expanded(
                           child: ElevatedButton.icon(
-                            onPressed: widget.initialItems.isNotEmpty 
-                              ? () => _printCurrentOrder(context)
-                              : null,
+                              onPressed: widget.initialItems.isNotEmpty ? () => _printCurrentOrder(context) : null,
                             icon: const Icon(Icons.print),
-                            label: const Text('Print Receipt'),
+                              label: const Text('Print'),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.orange,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
+                                backgroundColor: Colors.amber,
                             ),
                           ),
                         ),
+                        ],
                       ],
                     ),
                   ],
@@ -969,25 +1022,134 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
     );
   }
 
-  // Add this new method to convert a held order to a pending order
-  Future<void> _convertHeldToPendingOrder(BuildContext context) async {
+  // Fixed _saveHeldOrder implementation to ensure it correctly preserves status
+  Future<void> _saveHeldOrder(BuildContext context) async {
     if (widget.initialItems.isEmpty || _customerNameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please add items and enter a customer name before processing this order'),
+          content: Text('Please add items and enter a customer name before saving the order'),
           backgroundColor: Colors.red,
         ),
       );
       return;
     }
 
-    // Double check this is actually a held order
-    if (!(widget.isEditing && widget.order != null && 
-        (widget.order!.orderStatus == 'ON_HOLD' || widget.order!.orderNumber.startsWith('HLD-')))) {
-      debugPrint('OrderCartPanel: Not a held order, cannot convert');
+    try {
+      // Show loading dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Saving held order...'),
+            ],
+          ),
+        ),
+      );
+
+      final customerName = _customerNameController.text.trim();
+      final now = DateTime.now();
+
+      // Get the order ID - this is crucial for updating
+      final int orderId = widget.orderId ?? widget.order?.id ?? 0;
+      
+      if (orderId <= 0) {
+        throw Exception('Cannot update order: Missing valid order ID');
+      }
+      
+      // Get the existing order number
+      String orderNumber = widget.order?.orderNumber ?? '';
+      if (orderNumber.isEmpty) {
+        throw Exception('Cannot update order: Missing order number');
+      }
+      
+      // If the order number starts with ORD-, change it to HLD-
+      // This ensures that when saving changes, it always becomes a held order
+      if (orderNumber.startsWith('ORD-')) {
+        orderNumber = 'HLD-' + orderNumber.substring(4);
+        debugPrint('OrderCartPanel: Converting order number to held format: $orderNumber');
+      }
+      
+      debugPrint('OrderCartPanel: Saving order #$orderNumber with ID $orderId');
+
+      // Get current user with null safety
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser == null) throw Exception('User not logged in');
+      
+      // Extract user ID with proper null safety
+      final int createdBy = currentUser.id != null 
+          ? (currentUser.id is String 
+              ? int.tryParse(currentUser.id as String) ?? 0 
+              : (currentUser.id as int? ?? 0))
+          : 0;
+
+      // Create order map with customer information
+      // ALWAYS set status to ON_HOLD when saving changes
+      final orderMap = {
+        'id': orderId,
+        'order_number': orderNumber,
+        'customer_id': customerId > 0 ? customerId : null,
+        'customer_name': customerName,
+        'total_amount': widget.initialItems.fold<double>(0, (sum, item) => sum + item.total),
+        'order_status': 'ON_HOLD',  // Always ON_HOLD when using Save Changes
+        'status': 'ON_HOLD',        // Also set status field
+        'payment_status': 'PENDING',
+        'updated_at': now.toIso8601String(),
+        'created_by': createdBy, // Make sure created_by is included
+      };
+
+      // Convert cart items to order items
+      final orderItems = widget.initialItems.map(_createOrderItem).toList();
+
+      // Update the order using DatabaseService
+      final success = await DatabaseService.instance.updateOrder(orderId, orderMap, orderItems);
+
+      // Close loading dialog
+      Navigator.of(context, rootNavigator: true).pop();
+
+      if (success) {
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Order saved as held order #$orderNumber'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        // Always navigate to held orders screen since we're making it a held order
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const HeldOrdersScreen(),
+          ),
+        );
+      } else {
+        throw Exception('Failed to update order');
+      }
+    } catch (e) {
+      // Close loading dialog
+        Navigator.of(context, rootNavigator: true).pop();
+
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error saving held order: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  // Fixed convert method implementation to ensure it reliably changes status to PENDING
+  Future<void> _convertHeldToPendingOrder(BuildContext context) async {
+    if (widget.initialItems.isEmpty || _customerNameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Error: This is not a held order'),
+          content: Text('Please add items and enter a customer name before processing this order'),
           backgroundColor: Colors.red,
         ),
       );
@@ -1034,22 +1196,27 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
           ),
         ),
       );
-
+      
       final customerName = _customerNameController.text.trim();
       final now = DateTime.now();
-
-      // Get the order ID
-      final int? orderId = widget.orderId ?? widget.order?.id;
-      if (orderId == null) {
-        throw Exception('Cannot convert order: No order ID found');
+      
+      // Get the order ID - this is crucial for updating
+      final int orderId = widget.orderId ?? widget.order?.id ?? 0;
+      
+      if (orderId <= 0) {
+        throw Exception('Cannot convert order: Missing valid order ID');
       }
 
       // Generate a new order number by replacing HLD- with ORD-
-      String orderNumber = widget.order!.orderNumber;
+      String orderNumber = widget.order?.orderNumber ?? '';
+      if (orderNumber.isEmpty) {
+        throw Exception('Cannot convert order: Missing order number');
+      }
+      
       if (orderNumber.startsWith('HLD-')) {
         orderNumber = 'ORD-' + orderNumber.substring(4);
       }
-
+      
       // Get current user with null safety
       final currentUser = AuthService.instance.currentUser;
       if (currentUser == null) throw Exception('User not logged in');
@@ -1060,7 +1227,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
               ? int.tryParse(currentUser.id as String) ?? 0 
               : (currentUser.id as int? ?? 0))
           : 0;
-
+      
       // Create order map with customer information
       final orderMap = {
         'id': orderId,
@@ -1076,22 +1243,17 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
         'order_date': now.toIso8601String(),
         'updated_at': now.toIso8601String(),
       };
-
+      
       // Generate orderItems list from cartItems
       final orderItems = widget.initialItems.map(_createOrderItem).toList();
 
-      // Update the order using OrderService - use createOrder to make it a regular order 
-      final success = await _orderService.createOrder(orderMap, orderItems);
-
+      // Update the order by converting it to a pending order
+      final success = await DatabaseService.instance.updateOrder(orderId, orderMap, orderItems);
+      
       // Close loading dialog
       Navigator.of(context, rootNavigator: true).pop();
-
+      
       if (success) {
-        // Clear the cart after processing the order
-        if (widget.onClearCart != null) {
-          widget.onClearCart!();
-        }
-
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1099,7 +1261,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
             backgroundColor: Colors.green,
           ),
         );
-
+        
         // Navigate to sales screen (where pending orders are shown)
         Navigator.pushReplacement(
           context,
@@ -1113,121 +1275,13 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
     } catch (e) {
       // Close loading dialog if it's open
       if (Navigator.of(context, rootNavigator: true).canPop()) {
-        Navigator.of(context, rootNavigator: true).pop();
+      Navigator.of(context, rootNavigator: true).pop();
       }
-
+      
       // Show error message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error converting order: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  // Add new method specifically for saving held orders without changing status
-  Future<void> _saveHeldOrder(BuildContext context) async {
-    if (widget.initialItems.isEmpty || _customerNameController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please add items and enter a customer name before saving the order'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    try {
-      // Show loading dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Saving held order...'),
-            ],
-          ),
-        ),
-      );
-      
-      final customerName = _customerNameController.text.trim();
-      final now = DateTime.now();
-      
-      // Ensure we have an order ID to update
-      if (widget.order?.id == null && widget.orderId == null) {
-        throw Exception('Cannot update order: Missing order ID');
-      }
-      
-      // We're definitely editing a held order here, so get the order number
-      final String orderNumber = widget.order?.orderNumber ?? '';
-      
-      debugPrint('OrderCartPanel: Saving held order #$orderNumber without status change');
-      
-      // Get current user with null safety
-      final currentUser = AuthService.instance.currentUser;
-      if (currentUser == null) throw Exception('User not logged in');
-      
-      // Extract user ID with proper null safety
-      final int createdBy = currentUser.id != null 
-          ? (currentUser.id is String 
-              ? int.tryParse(currentUser.id as String) ?? 0 
-              : (currentUser.id as int? ?? 0))
-          : 0;
-      
-      // Create order map with customer information - EXPLICITLY KEEP ON_HOLD STATUS
-      final orderMap = {
-        'id': widget.order?.id ?? widget.orderId,
-        'order_number': orderNumber,
-        'customer_id': customerId > 0 ? customerId : null,
-        'customer_name': customerName,
-        'total_amount': widget.initialItems.fold<double>(0, (sum, item) => sum + item.total),
-        'order_status': 'ON_HOLD', // CRITICAL: Keep as held order
-        'status': 'ON_HOLD',       // Also set status field for backward compatibility
-        'payment_status': 'PENDING',
-        'updated_at': now.toIso8601String(),
-      };
-      
-      // Convert cart items to order items
-      final orderItems = widget.initialItems.map(_createOrderItem).toList();
-
-      // Update the held order using OrderService
-      final success = await _orderService.createHeldOrder(orderMap, orderItems);
-      
-      // Close loading dialog
-      Navigator.of(context, rootNavigator: true).pop();
-      
-      if (success) {
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Held order #$orderNumber updated successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        
-        // Navigate to held orders screen
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const HeldOrdersScreen(),
-          ),
-        );
-      } else {
-        throw Exception('Failed to update held order');
-      }
-    } catch (e) {
-      // Close loading dialog
-      Navigator.of(context, rootNavigator: true).pop();
-      
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error saving held order: $e'),
           backgroundColor: Colors.red,
         ),
       );

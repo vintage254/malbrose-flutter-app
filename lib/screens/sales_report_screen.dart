@@ -665,6 +665,29 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
         );
       }
       
+      // Check if data is available
+      if (_salesData.isEmpty) {
+        // Close progress dialog
+        if (mounted) {
+          Navigator.of(context, rootNavigator: true).pop();
+        }
+        
+        setState(() => _isExporting = false);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No sales data available to export'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+      
+      // Log the amount of data for debugging
+      print('Exporting ${_salesData.length} sales records to Excel');
+      
       // Create Excel file
       final excel = xl.Excel.createExcel();
       final sheet = excel['Sales Report'];
@@ -697,6 +720,10 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
       final totalOrders = (_summary['total_orders'] as num?)?.toInt() ?? 0;
       final totalQuantity = (_summary['total_quantity'] as num?)?.toInt() ?? 0;
       final uniqueCustomers = (_summary['unique_customers'] as num?)?.toInt() ?? 0;
+      
+      // Log summary data for debugging
+      print('Summary - Total Sales: $totalSales, Total Cost: $totalCost, Total Profit: $totalProfit');
+      print('Summary - Orders: $totalOrders, Quantity: $totalQuantity, Customers: $uniqueCustomers');
       
       sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: 3)).value = xl.TextCellValue('Total Sales:');
       sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: 3)).value = xl.TextCellValue('KSH ${totalSales.toStringAsFixed(2)}');
@@ -742,6 +769,9 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
         }
         salesByOrder[orderNumber]!.add(sale);
       }
+      
+      // Log the number of orders being processed
+      print('Processing ${salesByOrder.length} unique orders for Excel export');
       
       // Add sales data
       var rowIndex = 8;
@@ -825,10 +855,21 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
       
       // Save the Excel file
       final fileBytes = excel.save();
-      if (fileBytes != null) {
+      if (fileBytes == null || fileBytes.isEmpty) {
+        throw Exception('Failed to generate Excel file - no data was produced');
+      }
+      
+      print('Excel file generated with ${fileBytes.length} bytes');
+      
         final file = File(tempFilePath);
         await file.writeAsBytes(fileBytes);
+      
+      // Verify file was created successfully
+      if (!await file.exists() || await file.length() == 0) {
+        throw Exception('Failed to write Excel file to temporary location');
       }
+      
+      print('Excel file successfully written to temporary location: $tempFilePath');
       
       // Close progress dialog
       if (mounted) {
@@ -861,6 +902,14 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
       final tempFile = File(tempFilePath);
       await tempFile.copy(outputPath);
       
+      // Verify final file was created successfully
+      final finalFile = File(outputPath);
+      if (!await finalFile.exists() || await finalFile.length() == 0) {
+        throw Exception('Failed to write Excel file to final location');
+      }
+      
+      print('Excel file successfully written to final location: $outputPath');
+      
       // Clean up temp directory
       await tempDir.delete(recursive: true);
       
@@ -883,15 +932,19 @@ class _SalesReportScreenState extends State<SalesReportScreen> {
       
       setState(() => _isExporting = false);
       
-      // Show error message
+      // Show detailed error message
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error exporting sales report: $e'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 10), // Show longer for debugging
           ),
         );
       }
+      
+      // Log the error for debugging
+      print('Excel export error: $e');
     }
   }
 } 

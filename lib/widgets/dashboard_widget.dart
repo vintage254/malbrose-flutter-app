@@ -67,7 +67,7 @@ class DashboardWidgetState extends State<DashboardWidget> {
                   SizedBox(
                     width: cardWidth,
                     child: _StatCard(
-                      title: 'Today\'s Orders',
+                      title: 'Today\'s Completed Orders',
                       value: orderService.todayOrders.toString(),
                       icon: Icons.shopping_cart,
                       color: Colors.blue,
@@ -97,11 +97,12 @@ class DashboardWidgetState extends State<DashboardWidget> {
             
             const SizedBox(height: defaultPadding * 2),
             
-            // Action Cards
+            // Action Cards - Reorganized to match workflow
             Wrap(
               spacing: defaultPadding,
               runSpacing: defaultPadding,
               children: [
+                // Order workflow
                 SizedBox(
                   width: cardWidth,
                   child: _ActionCard(
@@ -114,7 +115,6 @@ class DashboardWidgetState extends State<DashboardWidget> {
                     ),
                   ),
                 ),
-                
                 SizedBox(
                   width: cardWidth,
                   child: _ActionCard(
@@ -124,7 +124,6 @@ class DashboardWidgetState extends State<DashboardWidget> {
                     onPressed: () => Navigator.pushNamed(context, '/held-orders'),
                   ),
                 ),
-                
                 SizedBox(
                   width: cardWidth,
                   child: _ActionCard(
@@ -134,22 +133,24 @@ class DashboardWidgetState extends State<DashboardWidget> {
                     onPressed: () => Navigator.pushNamed(context, '/sales'),
                   ),
                 ),
+                
+                // Product & Finance Management
                 SizedBox(
                   width: cardWidth,
                   child: _ActionCard(
-                    title: 'Create Debtor',
-                    icon: Icons.person_add,
-                    color: Colors.orange,
+                    title: 'Product Management',
+                    icon: Icons.inventory,
+                    color: Colors.teal,
                     onPressed: () => Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => const DebtorsScreen()),
+                      MaterialPageRoute(builder: (_) => const ProductManagementScreen()),
                     ),
                   ),
                 ),
                 SizedBox(
                   width: cardWidth,
                   child: _ActionCard(
-                    title: 'Create Creditor',
+                    title: 'Creditors',
                     icon: Icons.account_balance_wallet,
                     color: Colors.green,
                     onPressed: () => Navigator.push(
@@ -158,6 +159,20 @@ class DashboardWidgetState extends State<DashboardWidget> {
                     ),
                   ),
                 ),
+                SizedBox(
+                  width: cardWidth,
+                  child: _ActionCard(
+                    title: 'Debtors',
+                    icon: Icons.person_add,
+                    color: Colors.orange,
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const DebtorsScreen()),
+                    ),
+                  ),
+                ),
+                
+                // Reports
                 SizedBox(
                   width: cardWidth,
                   child: _ActionCard(
@@ -183,23 +198,12 @@ class DashboardWidgetState extends State<DashboardWidget> {
               ),
               const SizedBox(height: defaultPadding),
               
-              // Admin Action Cards
+              // Admin Action Cards - Reorganized to match workflow
               Wrap(
                 spacing: defaultPadding,
                 runSpacing: defaultPadding,
                 children: [
-                  SizedBox(
-                    width: cardWidth,
-                    child: _ActionCard(
-                      title: 'Add/Edit Products',
-                      icon: Icons.inventory,
-                      color: Colors.teal,
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ProductManagementScreen()),
-                      ),
-                    ),
-                  ),
+                  // Order History (admin only)
                   SizedBox(
                     width: cardWidth,
                     child: _ActionCard(
@@ -209,16 +213,50 @@ class DashboardWidgetState extends State<DashboardWidget> {
                       onPressed: () => Navigator.pushNamed(context, '/order-history'),
                     ),
                   ),
+                  
+                  // Reports (admin only)
                   SizedBox(
                     width: cardWidth,
                     child: _ActionCard(
-                      title: 'Manage Users',
-                      icon: Icons.people,
+                      title: 'Sales Reports',
+                      icon: Icons.bar_chart,
+                      color: Colors.blue,
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const SalesReportScreen()),
+                      ),
+                    ),
+                  ),
+                  
+                  // Settings & System (admin only)
+                  SizedBox(
+                    width: cardWidth,
+                    child: _ActionCard(
+                      title: 'Settings',
+                      icon: Icons.settings,
                       color: Colors.indigo,
                       onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const SettingsScreen()),
                       ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: cardWidth,
+                    child: _ActionCard(
+                      title: 'Printer Settings',
+                      icon: Icons.print,
+                      color: Colors.indigo,
+                      onPressed: () => Navigator.pushNamed(context, '/printer-settings'),
+                    ),
+                  ),
+                  SizedBox(
+                    width: cardWidth,
+                    child: _ActionCard(
+                      title: 'Backup & Restore',
+                      icon: Icons.backup,
+                      color: Colors.indigo,
+                      onPressed: () => Navigator.pushNamed(context, '/backup'),
                     ),
                   ),
                   SizedBox(
@@ -230,18 +268,6 @@ class DashboardWidgetState extends State<DashboardWidget> {
                       onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const ActivityLogScreen()),
-                      ),
-                    ),
-                  ),
-                  SizedBox(
-                    width: cardWidth,
-                    child: _ActionCard(
-                      title: 'Sales Reports',
-                      icon: Icons.bar_chart,
-                      color: Colors.blue,
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SalesReportScreen()),
                       ),
                     ),
                   ),

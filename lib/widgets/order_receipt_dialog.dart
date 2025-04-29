@@ -6,6 +6,8 @@ import 'package:pdf/pdf.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/services/printer_service.dart';
 import 'package:my_flutter_app/services/config_service.dart';
+import 'package:provider/provider.dart';
+import 'dart:io';
 
 class OrderReceiptDialog extends StatefulWidget {
   final List<CartItem> items;
@@ -36,6 +38,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
   final TextEditingController _cashAmountController = TextEditingController();
   final TextEditingController _creditAmountController = TextEditingController();
   bool _isSplitPayment = false;
+  final config = ConfigService.instance;
 
   @override
   void initState() {
@@ -90,7 +93,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Malbrose Hardware Store',
+            Text(config.businessName,
                 style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: defaultPadding),
             Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())}'),
@@ -185,100 +188,101 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
   
   Future<void> _printReceipt() async {
     try {
-      print('Printing receipt with ${widget.items.length} items');
-      
-      // Get the printer service
+      // Use ConfigService singleton instance directly instead of Provider
+      final config = ConfigService.instance;
       final printerService = PrinterService.instance;
       
-      // Get config service for tax settings
-      final config = ConfigService.instance;
-      final enableVat = config.enableVat;
-      final vatRate = config.vatRate;
-      final showVatOnReceipt = config.showVatOnReceipt;
-      
-      // Calculate total amount
+      // Calculate totals
       final totalAmount = _orderItems.fold<double>(
         0,
         (sum, item) => sum + item.total,
       );
+      final vatAmount = 0.0; // Assuming vatAmount is not provided in the original code
+      final subTotal = totalAmount - vatAmount;
+      final netAmount = subTotal;
       
-      // Calculate VAT if enabled
-      double vatAmount = 0.0;
-      double netAmount = totalAmount;
-      
-      if (enableVat) {
-        // Use the same VAT formula as in settings screen
-        vatAmount = totalAmount * (vatRate / (100 + vatRate));
-        netAmount = totalAmount - vatAmount;
-      }
-      
-      // Generate a unique order number if not available
-      final orderNumber = 'ORD-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
-      
-      // Current timestamp
-      final now = DateTime.now();
-      
-      // Create the PDF document
+      // Create PDF document
       final pdf = pw.Document();
       
-      // Add a page to the PDF
+      // Add page
       pdf.addPage(
         pw.Page(
-          // Use the printer service to get the appropriate page format
           pageFormat: printerService.getPageFormat(),
+          margin: const pw.EdgeInsets.all(10),
           build: (context) {
             return pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
               children: [
-                // Header Section
-                pw.Center(
-                  child: pw.Text(
-                    'MALBROSE HARDWARE AND STORE',
-                    style: pw.TextStyle(
-                      fontSize: 12,
-                      fontWeight: pw.FontWeight.bold,
-                    ),
-                    textAlign: pw.TextAlign.center,
-                  ),
-                ),
-                pw.Center(
-                  child: pw.Text(
-                    'Eldoret',
-                    style: pw.TextStyle(
-                      fontSize: 10,
+                // Company logo
+                if (config.showBusinessLogo && config.businessLogo != null && config.businessLogo!.isNotEmpty)
+                  pw.Container(
+                    height: 60,
+                    width: 200,
+                    alignment: pw.Alignment.center,
+                    margin: const pw.EdgeInsets.only(bottom: 10),
+                    child: pw.Image(
+                      pw.MemoryImage(File(config.businessLogo!).readAsBytesSync()),
+                      fit: pw.BoxFit.contain,
                     ),
                   ),
-                ),
-                pw.Center(
-                  child: pw.Text(
-                    '0720319340, 0721705613',
-                    style: pw.TextStyle(
-                      fontSize: 10,
-                    ),
-                  ),
-                ),
-                pw.SizedBox(height: 10),
                 
-                // Transaction Details
-                pw.Divider(),
+                // Business name
                 pw.Text(
-                  'ORDER #: $orderNumber',
+                  config.businessName,
+                  style: pw.TextStyle(
+                    fontSize: 16,
+                    fontWeight: pw.FontWeight.bold,
+                  ),
+                ),
+                
+                // Business address
+                pw.Text(
+                  config.businessAddress,
+                  style: const pw.TextStyle(fontSize: 12),
+                ),
+                
+                // Phone and Email
+                pw.Text(
+                  'Tel: ${config.businessPhone}',
+                  style: const pw.TextStyle(fontSize: 12),
+                ),
+                pw.Text(
+                  'Email: ${config.businessEmail}',
+                  style: const pw.TextStyle(fontSize: 12),
+                ),
+                
+                // Receipt header
+                pw.SizedBox(height: 8),
+                pw.Text(
+                  config.receiptHeader,
+                  style: const pw.TextStyle(fontSize: 12),
+                ),
+                
+                // SALES RECEIPT
+                pw.SizedBox(height: 8),
+                pw.Text(
+                  'SALES RECEIPT',
                   style: pw.TextStyle(
                     fontWeight: pw.FontWeight.bold,
-                    fontSize: 10,
+                    fontSize: 14,
                   ),
                 ),
+                
+                // Receipt details
+                pw.Text('No: ${DateTime.now().millisecondsSinceEpoch}'),
                 pw.Text(
-                  'Date: ${DateFormat('yyyy-MM-dd HH:mm').format(now)}',
-                  style: const pw.TextStyle(fontSize: 10),
+                  'Date: ${DateFormat(config.dateTimeFormat.isNotEmpty ? config.dateTimeFormat : 'dd/MM/yyyy HH:mm').format(DateTime.now())}',
                 ),
-                pw.Text(
-                  'Customer: ${widget.customerName ?? "Walk-in"}',
-                  style: const pw.TextStyle(fontSize: 10),
-                ),
-                pw.Divider(),
+                
+                // Show cashier name if enabled in settings
+                if (config.showCashierName)
+                  pw.Text('Cashier: admin'),
+                
+                // Customer info if available
+                pw.Text('Customer: ${widget.customerName}'),
                 
                 // Items Table Header
+                pw.SizedBox(height: 8),
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
@@ -421,7 +425,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                 ),
                 
                 // Show VAT breakdown if enabled and configured to show on receipt
-                if (enableVat && showVatOnReceipt) ...[
+                if (config.enableVat && config.showVatOnReceipt) ...[
                   pw.SizedBox(height: 5),
                   pw.Row(
                     mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -429,7 +433,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                       pw.Expanded(
                         flex: 3,
                         child: pw.Text(
-                          'VAT (${vatRate.toStringAsFixed(1)}%):',
+                          'VAT (${config.vatRate.toStringAsFixed(1)}%):',
                           style: const pw.TextStyle(fontSize: 9),
                         ),
                       ),
@@ -586,7 +590,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                 pw.SizedBox(height: 10),
                 pw.Center(
                   child: pw.Text(
-                    'Thank you for your business!',
+                    config.receiptHeader,
                     style: pw.TextStyle(
                       fontSize: 10,
                       fontStyle: pw.FontStyle.italic,
@@ -595,13 +599,23 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                 ),
                 pw.Center(
                   child: pw.Text(
-                    'Please keep this receipt for your records',
+                    config.receiptFooter,
                     style: pw.TextStyle(
                       fontSize: 8,
                     ),
                   ),
                 ),
                 pw.SizedBox(height: 5),
+                
+                // Add "Goods once sold are not returnable" disclaimer when enabled
+                if (config.showNoReturnsPolicy)
+                  pw.Center(
+                    child: pw.Text(
+                      'Goods once sold are not returnable.',
+                      style: const pw.TextStyle(fontSize: 10),
+                    ),
+                  ),
+                
                 pw.Center(
                   child: pw.Text(
                     'Powered by Malbrose POS',

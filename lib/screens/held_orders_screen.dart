@@ -131,9 +131,13 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
     );
 
     try {
+      print('HELD RESTORE: Starting to restore order #${order.orderNumber} with status ${order.orderStatus}');
+      
       // Use atomic backend logic
       final bool restored = await _orderService.restoreHeldOrder(order);
       Navigator.of(context, rootNavigator: true).pop();
+
+      print('HELD RESTORE: OrderService.restoreHeldOrder result: $restored');
 
       if (!restored) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -148,6 +152,8 @@ class _HeldOrdersScreenState extends State<HeldOrdersScreen> {
 
       // Re-check the order's new status
       final updatedOrder = await DatabaseService.instance.getOrderById(order.id!);
+      print('HELD RESTORE: First check of updated order after restore: $updatedOrder');
+      
       if (updatedOrder == null || updatedOrder['order_status'] != 'PENDING') {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
