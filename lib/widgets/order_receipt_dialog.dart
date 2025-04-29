@@ -2,24 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:my_flutter_app/const/constant.dart';
 import 'package:my_flutter_app/models/cart_item_model.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf/pdf.dart';
 import 'package:intl/intl.dart';
 import 'package:my_flutter_app/services/printer_service.dart';
+import 'package:my_flutter_app/services/config_service.dart';
 
 class OrderReceiptDialog extends StatefulWidget {
   final List<CartItem> items;
-  final String? customerName;
-  final String paymentMethod;
-  final String? orderNumber;
-  final Function(String paymentMethod)? onCompleteSale;
+  final String customerName;
+  final String? paymentMethod;
+  final bool showPrintButton;
+  final double? outstandingBalance;
+  final double? creditAmount;
 
   const OrderReceiptDialog({
-    super.key,
+    Key? key,
     required this.items,
-    this.customerName,
-    this.paymentMethod = 'Cash',
-    this.orderNumber,
-    this.onCompleteSale,
-  });
+    required this.customerName,
+    this.paymentMethod,
+    this.showPrintButton = true,
+    this.outstandingBalance,
+    this.creditAmount,
+  }) : super(key: key);
 
   @override
   State<OrderReceiptDialog> createState() => _OrderReceiptDialogState();
@@ -37,7 +41,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
   void initState() {
     super.initState();
     _orderItems = widget.items;
-    _selectedPaymentMethod = widget.paymentMethod;
+    _selectedPaymentMethod = widget.paymentMethod ?? 'Cash';
     print('OrderReceiptDialog - Items count: ${_orderItems.length}');
     if (_orderItems.isNotEmpty) {
       final firstItem = _orderItems.first;
@@ -92,8 +96,8 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
             Text('Date: ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())}'),
             if (widget.customerName != null && widget.customerName!.isNotEmpty)
               Text('Customer: ${widget.customerName}'),
-            if (widget.orderNumber != null)
-              Text('Order #: ${widget.orderNumber}'),
+            if (widget.outstandingBalance != null)
+              Text('Outstanding Balance: ${widget.outstandingBalance?.toStringAsFixed(2) ?? "0.00"}'),
             const Divider(),
             // Table header
             Row(
@@ -151,89 +155,16 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
             const SizedBox(height: 16),
             
             // Payment method section
-            if (widget.onCompleteSale != null) ...[
-              const Text('Payment Method:', style: TextStyle(fontWeight: FontWeight.bold)),
+            if (widget.creditAmount != null && widget.creditAmount! > 0) ...[
+              const Text('Current Order Balance:', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              
-              // Payment method selection
-              Row(
-                children: [
-                  Expanded(
-                    child: RadioListTile<String>(
-                      title: const Text('Cash'),
-                      value: 'Cash',
-                      groupValue: _selectedPaymentMethod,
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedPaymentMethod = value!;
-                          _isSplitPayment = false;
-                          _calculateInitialAmounts();
-                        });
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    child: RadioListTile<String>(
-                      title: const Text('Credit'),
-                      value: 'Credit',
-                      groupValue: _selectedPaymentMethod,
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedPaymentMethod = value!;
-                          _isSplitPayment = false;
-                          _cashAmountController.text = "0.00";
-                          _creditAmountController.text = totalAmount.toStringAsFixed(2);
-                        });
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              
-              // Split payment option
-              CheckboxListTile(
-                title: const Text('Split Payment'),
-                value: _isSplitPayment,
-                onChanged: (value) {
-                  setState(() {
-                    _isSplitPayment = value!;
-                    if (_isSplitPayment) {
-                      _selectedPaymentMethod = 'Split';
-                      _cashAmountController.text = (totalAmount / 2).toStringAsFixed(2);
-                      _creditAmountController.text = (totalAmount / 2).toStringAsFixed(2);
-                    } else {
-                      _selectedPaymentMethod = 'Cash';
-                      _calculateInitialAmounts();
-                    }
-                  });
-                },
-              ),
-              
-              // Split payment fields
-              if (_isSplitPayment) ...[
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _cashAmountController,
-                  decoration: const InputDecoration(
-                    labelText: 'Cash Amount',
-                    prefixText: 'KSH ',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  onChanged: (_) => _updateSplitPayment(totalAmount),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _creditAmountController,
-                  decoration: const InputDecoration(
-                    labelText: 'Credit Amount',
-                    prefixText: 'KSH ',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  onChanged: (_) => _updateSplitPayment(totalAmount),
-                ),
-              ],
+              Text('KSH ${widget.creditAmount!.toStringAsFixed(2)}'),
+            ],
+            
+            // Outstanding balance
+            if (widget.outstandingBalance != null && widget.outstandingBalance! > 0) ...[
+              const SizedBox(height: 8),
+              Text('KSH ${widget.outstandingBalance!.toStringAsFixed(2)}'),
             ],
           ],
         ),
@@ -243,46 +174,15 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Close'),
         ),
-        if (widget.onCompleteSale != null)
+        if (widget.showPrintButton)
           ElevatedButton(
-            onPressed: () {
-              String paymentMethodString;
-              if (_isSplitPayment) {
-                final cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
-                final creditAmount = double.tryParse(_creditAmountController.text) ?? 0;
-                paymentMethodString = 'Cash: KSH ${cashAmount.toStringAsFixed(2)}, Credit: KSH ${creditAmount.toStringAsFixed(2)}';
-              } else {
-                paymentMethodString = _selectedPaymentMethod;
-              }
-              
-              widget.onCompleteSale!(paymentMethodString);
-              Navigator.pop(context);
-            },
-            child: const Text('Complete Sale'),
+            onPressed: () => _printReceipt(),
+            child: const Text('Print Receipt'),
           ),
-        ElevatedButton(
-          onPressed: () => _printReceipt(),
-          child: const Text('Print Receipt'),
-        ),
       ],
     );
   }
   
-  void _updateSplitPayment(double totalAmount) {
-    double cashAmount = double.tryParse(_cashAmountController.text) ?? 0;
-    double creditAmount = double.tryParse(_creditAmountController.text) ?? 0;
-    
-    // Ensure total matches the order total
-    if (cashAmount + creditAmount != totalAmount) {
-      creditAmount = totalAmount - cashAmount;
-      if (creditAmount < 0) {
-        cashAmount = totalAmount;
-        creditAmount = 0;
-      }
-      _creditAmountController.text = creditAmount.toStringAsFixed(2);
-    }
-  }
-
   Future<void> _printReceipt() async {
     try {
       print('Printing receipt with ${widget.items.length} items');
@@ -290,14 +190,30 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
       // Get the printer service
       final printerService = PrinterService.instance;
       
+      // Get config service for tax settings
+      final config = ConfigService.instance;
+      final enableVat = config.enableVat;
+      final vatRate = config.vatRate;
+      final showVatOnReceipt = config.showVatOnReceipt;
+      
       // Calculate total amount
       final totalAmount = _orderItems.fold<double>(
         0,
         (sum, item) => sum + item.total,
       );
       
+      // Calculate VAT if enabled
+      double vatAmount = 0.0;
+      double netAmount = totalAmount;
+      
+      if (enableVat) {
+        // Use the same VAT formula as in settings screen
+        vatAmount = totalAmount * (vatRate / (100 + vatRate));
+        netAmount = totalAmount - vatAmount;
+      }
+      
       // Generate a unique order number if not available
-      final orderNumber = widget.orderNumber ?? 'ORD-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
+      final orderNumber = 'ORD-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
       
       // Current timestamp
       final now = DateTime.now();
@@ -469,7 +385,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                     pw.Expanded(
                       flex: 3,
                       child: pw.Text(
-                        'TOTAL:',
+                        'SUBTOTAL:',
                         style: pw.TextStyle(
                           fontWeight: pw.FontWeight.bold,
                           fontSize: 10,
@@ -504,42 +420,167 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                   ],
                 ),
                 
-                // Payment Details
-                pw.SizedBox(height: 10),
-                pw.Text(
-                  'PAYMENT DETAILS:',
-                  style: pw.TextStyle(
-                    fontWeight: pw.FontWeight.bold,
-                    fontSize: 10,
+                // Show VAT breakdown if enabled and configured to show on receipt
+                if (enableVat && showVatOnReceipt) ...[
+                  pw.SizedBox(height: 5),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Expanded(
+                        flex: 3,
+                        child: pw.Text(
+                          'VAT (${vatRate.toStringAsFixed(1)}%):',
+                          style: const pw.TextStyle(fontSize: 9),
+                        ),
+                      ),
+                      pw.Expanded(
+                        flex: 1,
+                        child: pw.Text(
+                          '',
+                          style: const pw.TextStyle(fontSize: 9),
+                        ),
+                      ),
+                      pw.Expanded(
+                        flex: 1,
+                        child: pw.Text(
+                          '',
+                          style: const pw.TextStyle(fontSize: 9),
+                        ),
+                      ),
+                      pw.Expanded(
+                        flex: 1,
+                        child: pw.Text(
+                          'KSH ${vatAmount.toStringAsFixed(2)}',
+                          style: const pw.TextStyle(fontSize: 9),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Expanded(
+                        flex: 3,
+                        child: pw.Text(
+                          'Net Amount:',
+                          style: const pw.TextStyle(fontSize: 9),
+                        ),
+                      ),
+                      pw.Expanded(
+                        flex: 1,
+                        child: pw.Text(
+                          '',
+                          style: const pw.TextStyle(fontSize: 9),
+                        ),
+                      ),
+                      pw.Expanded(
+                        flex: 1,
+                        child: pw.Text(
+                          '',
+                          style: const pw.TextStyle(fontSize: 9),
+                        ),
+                      ),
+                      pw.Expanded(
+                        flex: 1,
+                        child: pw.Text(
+                          'KSH ${netAmount.toStringAsFixed(2)}',
+                          style: const pw.TextStyle(fontSize: 9),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                
                 pw.SizedBox(height: 5),
                 pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    pw.Text(
-                      'Payment Mode:',
-                      style: const pw.TextStyle(fontSize: 9),
+                    pw.Expanded(
+                      flex: 3,
+                      child: pw.Text(
+                        'TOTAL AMOUNT DUE:',
+                        style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 10,
+                        ),
+                      ),
                     ),
-                    pw.SizedBox(width: 5),
-                    pw.Text(
-                      widget.paymentMethod,
-                      style: const pw.TextStyle(fontSize: 9),
+                    pw.Expanded(
+                      flex: 1,
+                      child: pw.Text(
+                        '',
+                        style: const pw.TextStyle(fontSize: 9),
+                      ),
+                    ),
+                    pw.Expanded(
+                      flex: 1,
+                      child: pw.Text(
+                        '',
+                        style: const pw.TextStyle(fontSize: 9),
+                      ),
+                    ),
+                    pw.Expanded(
+                      flex: 1,
+                      child: pw.Text(
+                        'KSH ${totalAmount.toStringAsFixed(2)}',
+                        style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 10,
+                        ),
+                        textAlign: pw.TextAlign.right,
+                      ),
                     ),
                   ],
                 ),
+                
+                // Payment information
+                pw.SizedBox(height: 8),
+                pw.Text('PAYMENT DETAILS:', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
                 pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    pw.Text(
-                      'Paid By:',
-                      style: const pw.TextStyle(fontSize: 9),
-                    ),
-                    pw.SizedBox(width: 5),
-                    pw.Text(
-                      widget.customerName ?? 'Walk-in Customer',
-                      style: const pw.TextStyle(fontSize: 9),
-                    ),
+                    pw.Text('Payment Mode:', style: const pw.TextStyle(fontSize: 9)),
+                    pw.Text(widget.paymentMethod ?? _selectedPaymentMethod, style: const pw.TextStyle(fontSize: 9)),
                   ],
                 ),
+                pw.SizedBox(height: 4),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('Paid By:', style: const pw.TextStyle(fontSize: 9)),
+                    pw.Text(widget.customerName, style: const pw.TextStyle(fontSize: 9)),
+                  ],
+                ),
+                
+                // Add credit amount if available
+                if (widget.creditAmount != null && widget.creditAmount! > 0) ...[
+                  pw.SizedBox(height: 4),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text('Current Order Balance:', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9)),
+                      pw.Text('KSH ${widget.creditAmount!.toStringAsFixed(2)}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9)),
+                    ],
+                  ),
+                ],
+                
+                // Add outstanding balance if available
+                if (widget.outstandingBalance != null && widget.outstandingBalance! > 0) ...[
+                  pw.SizedBox(height: 4),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text('Total Outstanding Balance:', 
+                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9, color: PdfColors.red),
+                      ),
+                      pw.Text('KSH ${widget.outstandingBalance!.toStringAsFixed(2)}', 
+                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9, color: PdfColors.red),
+                      ),
+                    ],
+                  ),
+                ],
                 
                 // Footer Section
                 pw.SizedBox(height: 10),

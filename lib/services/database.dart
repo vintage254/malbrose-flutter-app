@@ -18,6 +18,9 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:flutter/foundation.dart'; // Add this at the top for debugPrint
+import 'package:my_flutter_app/services/encryption_service.dart';
+import 'package:flutter/services.dart';
+import 'package:my_flutter_app/services/config_service.dart';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._privateConstructor();
@@ -44,6 +47,16 @@ class DatabaseService {
   static const String tableCustomerReports = 'customer_reports';
   static const String tableReportItems = 'report_items';
   static const String tableCreditTransactions = 'credit_transactions';
+  
+  // Define sensitive fields for each table
+  final Map<String, List<String>> _sensitiveFields = {
+    tableUsers: ['email', 'phone', 'address', 'security_question', 'security_answer'],
+    tableCreditors: ['notes', 'contact_info', 'address', 'phone', 'email'],
+    tableDebtors: ['notes', 'contact_info', 'address', 'phone', 'email'],
+    tableCustomers: ['address', 'phone', 'email', 'notes', 'tax_id'],
+    tableOrders: ['customer_notes', 'payment_details'],
+    tableCreditTransactions: ['notes', 'payment_details', 'card_info'],
+  };
 
   // Action constants
   static const String actionCreateOrder = 'create_order';
@@ -90,6 +103,11 @@ class DatabaseService {
 
   DatabaseService._privateConstructor();
 
+  /// Initialize the database service and ensure encryption is ready
+  Future<void> initialize() async {
+    return _initialize();
+  }
+
   // Completely rewritten database getter to be more reliable
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -107,9 +125,9 @@ class DatabaseService {
     if (_database != null) {
       try {
         await _database!.close();
-        print('Database closed successfully');
+        debugPrint('Database closed successfully');
       } catch (e) {
-        print('Error closing database: $e');
+        debugPrint('Error closing database: $e');
       }
       _database = null;
       _initialized = false;
@@ -130,9 +148,9 @@ class DatabaseService {
         if (await lockFile.exists()) {
           try {
             await lockFile.delete();
-            print('Deleted database lock file: $dbPath-shm');
+            debugPrint('Deleted database lock file: $dbPath-shm');
           } catch (e) {
-            print('Warning: Could not delete lock file: $dbPath-shm - $e');
+            debugPrint('Warning: Could not delete lock file: $dbPath-shm - $e');
             // Continue even if we can't delete the file
           }
         }
@@ -141,9 +159,9 @@ class DatabaseService {
         if (await journalFile.exists()) {
           try {
             await journalFile.delete();
-            print('Deleted database journal file: $dbPath-wal');
+            debugPrint('Deleted database journal file: $dbPath-wal');
           } catch (e) {
-            print('Warning: Could not delete journal file: $dbPath-wal - $e');
+            debugPrint('Warning: Could not delete journal file: $dbPath-wal - $e');
             // Continue even if we can't delete the file
           }
         }
@@ -152,15 +170,15 @@ class DatabaseService {
         if (await journalFile2.exists()) {
           try {
             await journalFile2.delete();
-            print('Deleted database journal file: $dbPath-journal');
+            debugPrint('Deleted database journal file: $dbPath-journal');
           } catch (e) {
-            print('Warning: Could not delete journal file: $dbPath-journal - $e');
+            debugPrint('Warning: Could not delete journal file: $dbPath-journal - $e');
             // Continue even if we can't delete the file
           }
         }
       }
     } catch (e) {
-      print('Warning: Error forcing database unlock: $e');
+      debugPrint('Warning: Error forcing database unlock: $e');
       // Don't throw the error to avoid crashing the app
     }
   }
@@ -190,7 +208,7 @@ class DatabaseService {
                             errorMsg.contains('busy') || 
                             errorMsg.contains('timeout');
         
-          print('Transaction error (attempt ${retryCount + 1}): $e');
+          debugPrint('Transaction error (attempt ${retryCount + 1}): $e');
           
           // If we've reached max retries or it's not a locking error, rethrow
         if (retryCount >= maxRetries || !isLockError) {
@@ -203,11 +221,160 @@ class DatabaseService {
           
         // Aggressive exponential backoff for retries
         final delay = 500 * (1 << retryCount);
-          print('Retrying transaction in $delay ms...');
+          debugPrint('Retrying transaction in $delay ms...');
           await Future.delayed(Duration(milliseconds: delay));
           retryCount++;
         }
       }
+  }
+
+  // New methods for encryption/decryption of database data
+  
+  /// Encrypt sensitive fields in a map based on table name
+  Future<Map<String, dynamic>> encryptSensitiveData(
+    String tableName, 
+    Map<String, dynamic> data
+  ) async {
+    // Get the list of sensitive fields for this table
+    final sensitiveFields = _sensitiveFields[tableName] ?? [];
+    if (sensitiveFields.isEmpty) {
+      return data; // No sensitive fields for this table
+    }
+    
+    // Create a copy of the data
+    final encryptedData = Map<String, dynamic>.from(data);
+    
+    // Encrypt sensitive fields
+    for (final field in sensitiveFields) {
+      if (encryptedData.containsKey(field) && 
+          encryptedData[field] != null && 
+          encryptedData[field] is String) {
+        // Encrypt the field
+        encryptedData[field] = await EncryptionService.instance.encryptString(
+          encryptedData[field] as String
+        );
+      }
+    }
+    
+    return encryptedData;
+  }
+  
+  /// Decrypt sensitive fields in a map based on table name
+  Future<Map<String, dynamic>> decryptSensitiveData(
+    String tableName, 
+    Map<String, dynamic> data
+  ) async {
+    // Get the list of sensitive fields for this table
+    final sensitiveFields = _sensitiveFields[tableName] ?? [];
+    if (sensitiveFields.isEmpty) {
+      return data; // No sensitive fields for this table
+    }
+    
+    // Create a copy of the data
+    final decryptedData = Map<String, dynamic>.from(data);
+    
+    // Decrypt sensitive fields
+    for (final field in sensitiveFields) {
+      if (decryptedData.containsKey(field) && 
+          decryptedData[field] != null && 
+          decryptedData[field] is String) {
+        // Decrypt the field
+        decryptedData[field] = await EncryptionService.instance.decryptString(
+          decryptedData[field] as String
+        );
+      }
+    }
+    
+    return decryptedData;
+  }
+  
+  /// Decrypt a list of maps (for query results)
+  Future<List<Map<String, dynamic>>> decryptQueryResults(
+    String tableName, 
+    List<Map<String, dynamic>> results
+  ) async {
+    final decryptedResults = <Map<String, dynamic>>[];
+    
+    for (final item in results) {
+      decryptedResults.add(await decryptSensitiveData(tableName, item));
+    }
+    
+    return decryptedResults;
+  }
+  
+  /// Insert a record with encrypted sensitive data
+  Future<int> secureInsert(
+    String table, 
+    Map<String, dynamic> values, 
+    {String? nullColumnHack, ConflictAlgorithm? conflictAlgorithm}
+  ) async {
+    final encryptedValues = await encryptSensitiveData(table, values);
+    final db = await database;
+    return db.insert(
+      table, 
+      encryptedValues,
+      nullColumnHack: nullColumnHack,
+      conflictAlgorithm: conflictAlgorithm
+    );
+  }
+  
+  /// Update a record with encrypted sensitive data
+  Future<int> secureUpdate(
+    String table, 
+    Map<String, dynamic> values, 
+    {String? where, List<Object?>? whereArgs, ConflictAlgorithm? conflictAlgorithm}
+  ) async {
+    final encryptedValues = await encryptSensitiveData(table, values);
+    final db = await database;
+    return db.update(
+      table, 
+      encryptedValues,
+      where: where,
+      whereArgs: whereArgs,
+      conflictAlgorithm: conflictAlgorithm
+    );
+  }
+  
+  /// Query records and decrypt sensitive data
+  Future<List<Map<String, dynamic>>> secureQuery(
+    String table, 
+    {bool? distinct, 
+    List<String>? columns, 
+    String? where, 
+    List<Object?>? whereArgs, 
+    String? groupBy, 
+    String? having, 
+    String? orderBy, 
+    int? limit, 
+    int? offset}
+  ) async {
+    final db = await database;
+    final results = await db.query(
+      table,
+      distinct: distinct,
+      columns: columns,
+      where: where,
+      whereArgs: whereArgs,
+      groupBy: groupBy,
+      having: having,
+      orderBy: orderBy,
+      limit: limit,
+      offset: offset
+    );
+    
+    return decryptQueryResults(table, results);
+  }
+  
+  /// Execute a raw query and decrypt sensitive data for the specified table
+  Future<List<Map<String, dynamic>>> secureRawQuery(
+    String sql, 
+    List<Object?>? arguments, 
+    String resultTable
+  ) async {
+    final db = await database;
+    final results = await db.rawQuery(sql, arguments);
+    
+    return decryptQueryResults(resultTable, results);
   }
 
   // Completely rewritten _initDatabase method
@@ -906,30 +1073,33 @@ class DatabaseService {
           // Update product quantities
           for (var item in orderItems) {
             final productId = item['product_id'] as int;
-            final quantity = (item['quantity'] as num).toInt();
-            final isSubUnit = (item['is_sub_unit'] as num?) == 1;
-            final subUnitQuantity = (item['sub_unit_quantity'] as num?)?.toDouble();
+            final quantity = item['quantity'] as int;
             final currentQuantity = (item['current_quantity'] as num).toDouble();
             
-            // Calculate quantity to add back
-            double quantityToAdd;
-            if (isSubUnit && subUnitQuantity != null && subUnitQuantity > 0) {
-              quantityToAdd = quantity / subUnitQuantity;
+            // Handle sub-units if applicable
+            final isSubUnit = item['is_sub_unit'] == 1;
+            double quantityToRestore;
+            
+            if (isSubUnit && item['sub_unit_quantity'] != null) {
+              final subUnitQuantity = (item['sub_unit_quantity'] as num).toDouble();
+              quantityToRestore = quantity / subUnitQuantity;
             } else {
-              quantityToAdd = quantity.toDouble();
+              quantityToRestore = quantity.toDouble();
             }
             
-            final newQuantity = currentQuantity + quantityToAdd;
-            
+            // Update the product quantity
             await txn.update(
               tableProducts,
-              {'quantity': newQuantity},
+              {
+                'quantity': currentQuantity + quantityToRestore,
+                'updated_at': DateTime.now().toIso8601String(),
+              },
               where: 'id = ?',
               whereArgs: [productId],
             );
           }
           
-          // Update customer statistics if customer_id exists
+          // Update customer order count and total amount if applicable
           if (order.customerId != null) {
             final customerStats = await txn.query(
               tableCustomers,
@@ -962,12 +1132,12 @@ class DatabaseService {
             }
           }
           
-          // Update order status to REVERTED
+          // Update order status to CANCELLED
           await txn.update(
             tableOrders,
             {
-              'status': 'REVERTED',
-              'order_status': 'REVERTED', // Also update order_status for consistency
+              'status': 'CANCELLED',
+              'order_status': 'CANCELLED',
               'payment_status': 'REVERTED',
               'updated_at': DateTime.now().toIso8601String(),
             },
@@ -975,56 +1145,80 @@ class DatabaseService {
             whereArgs: [order.id],
           );
           
+          // Check for and update any associated credit records
+          final creditorRecords = await txn.query(
+            tableCreditors,
+            where: 'order_number = ? OR order_id = ?',
+            whereArgs: [order.orderNumber, order.id],
+          );
+          
+          if (creditorRecords.isNotEmpty) {
+            for (final creditor in creditorRecords) {
+              await txn.update(
+                tableCreditors,
+                {
+                  'status': 'CANCELED',
+                  'details': 'Credit canceled - Order was reverted/cancelled',
+                  'updated_at': DateTime.now().toIso8601String(),
+                  'balance': 0.0, // Set balance to zero since the order is cancelled
+                },
+                where: 'id = ?',
+                whereArgs: [creditor['id']],
+              );
+            }
+          }
+          
           // Log the activity
           final currentUser = AuthService.instance.currentUser;
           if (currentUser != null) {
-            await txn.insert(tableActivityLogs, {
+            await txn.insert(
+              tableActivityLogs,
+              {
               'user_id': currentUser.id ?? 0,
               'username': currentUser.username,
               'action': actionRevertReceipt,
-              'action_type': 'Revert Receipt',
-              'details': 'Reverted receipt for order #${order.orderNumber}, customer: ${order.customerName}, amount: ${order.totalAmount}',
+                'details': 'Reverted order #${order.orderNumber}, set status to CANCELLED',
               'timestamp': DateTime.now().toIso8601String(),
-            });
+              },
+            );
           }
         });
         
-        // If the transaction was successful, return
-        return;
+        // Successfully processed the revert, so exit the retry loop
+        break;
       } catch (e) {
-        print('Error reverting order (attempt ${retryCount + 1}): $e');
-        
-        if (e is DatabaseException && 
-            (e.toString().contains('database is locked') || 
-             e.toString().contains('database locked')) && 
-            retryCount < maxRetries) {
+        print('Error reverting order: $e');
           retryCount++;
-          // Exponential backoff with jitter
-          final delay = baseDelay * (1 << retryCount) + (Random().nextInt(100));
-          print('Database locked. Retrying in $delay ms...');
-          await Future.delayed(Duration(milliseconds: delay));
-          continue;
+        
+        if (retryCount >= maxRetries) {
+          // Rethrow the exception after reaching maximum retries
+        rethrow;
         }
         
-        // If we've reached max retries or it's not a locking issue, rethrow
-        rethrow;
+        // Add exponential backoff for retries
+        final delay = baseDelay * (1 << retryCount);
+        await Future.delayed(Duration(milliseconds: delay));
       }
     }
   }
 
+  // Get customer by ID with decrypted sensitive data
   Future<Customer?> getCustomerById(int id) async {
     try {
-      final db = await database;
-      final results = await db.query(
+      final results = await secureQuery(
         tableCustomers,
         where: 'id = ?',
         whereArgs: [id],
-        limit: 1,
+        limit: 1
       );
       
-      return results.isNotEmpty ? Customer.fromMap(results.first) : null;
+      if (results.isEmpty) {
+        return null;
+      }
+      
+      return Customer.fromMap(results.first);
     } catch (e) {
-      print('Error fetching customer by ID: $e');
+      debugPrint('Error getting customer by ID: $e');
       return null;
     }
   }
@@ -2719,36 +2913,12 @@ class DatabaseService {
 
   // Get user by ID - used for session restoration
   Future<Map<String, dynamic>?> getUserById(int id) async {
-    try {
-      final db = await database;
-      final result = await db.query(
-        tableUsers,
-        where: 'id = ?',
-        whereArgs: [id],
-        limit: 1,
-      );
-      
-      return result.isNotEmpty ? result.first : null;
-    } catch (e) {
-      print('Error getting user by ID: $e');
-      return null;
-    }
+    return _getUserById(id);
   }
 
   // Update user information
   Future<int> updateUser(User user) async {
-    try {
-      final db = await database;
-      return await db.update(
-        tableUsers,
-        user.toMap(),
-        where: 'id = ?',
-        whereArgs: [user.id],
-      );
-    } catch (e) {
-      print('Error updating user: $e');
-      rethrow;
-    }
+    return _updateUser(user);
   }
 
   // Get all creditors
@@ -2770,6 +2940,7 @@ class DatabaseService {
   Future<int> addCreditor(Map<String, dynamic> creditor) async {
     try {
       final db = await database;
+      final timestamp = DateTime.now().toIso8601String();
       
       // Check for existing creditor with same order number if order_number is provided
       if (creditor.containsKey('order_number') && creditor['order_number'] != null) {
@@ -2792,7 +2963,21 @@ class DatabaseService {
           final customerData = await getCustomerByName(creditor['name']);
           if (customerData != null && customerData.containsKey('id')) {
             creditor['customer_id'] = customerData['id'];
+            // Also set customer_name to ensure consistency
+            creditor['customer_name'] = creditor['name'];
           }
+        }
+      }
+      
+      // Generate a credit receipt number if not provided
+      if (!creditor.containsKey('receipt_number') || creditor['receipt_number'] == null) {
+        try {
+          // Import the ReceiptNumberGenerator locally to avoid circular dependencies
+          creditor['receipt_number'] = await _generateUniqueReceiptNumber();
+        } catch (e) {
+          print('Warning: Failed to generate receipt number: $e');
+          // Use a fallback receipt number format
+          creditor['receipt_number'] = 'CRD-${DateTime.now().millisecondsSinceEpoch}';
         }
       }
       
@@ -2801,8 +2986,14 @@ class DatabaseService {
         'name': creditor['name'] ?? 'Unknown Customer',
         'balance': creditor['balance'] ?? 0.0,
         'status': creditor['status'] ?? 'PENDING',
-        'created_at': creditor['created_at'] ?? DateTime.now().toIso8601String(),
+        'created_at': creditor['created_at'] ?? timestamp,
+        'updated_at': creditor['updated_at'] ?? timestamp,
         'details': creditor['details'] ?? 'Credit payment',
+        'receipt_number': creditor['receipt_number'],
+        'order_number': creditor['order_number'] ?? 'MANUAL-${DateTime.now().millisecondsSinceEpoch}',
+        'order_details': creditor['order_details'] ?? 'Manually added credit',
+        'original_amount': creditor['original_amount'] ?? creditor['balance'] ?? 0.0,
+        'customer_name': creditor['customer_name'] ?? creditor['name'] ?? 'Unknown Customer',
       };
       
       // Copy all other fields
@@ -2826,7 +3017,7 @@ class DatabaseService {
           currentUser.username,
           actionCreateCreditor,
           'Create creditor',
-          'Added credit record for: ${safeCreditor['name']}, amount: ${safeCreditor['balance']}'
+          'Added credit record for: ${safeCreditor['name']}, amount: ${safeCreditor['balance']}, receipt: ${safeCreditor['receipt_number']}'
         );
       }
       
@@ -2846,6 +3037,32 @@ class DatabaseService {
         }
       }
       rethrow;
+    }
+  }
+  
+  // Helper method to generate a unique receipt number for credits
+  Future<String> _generateUniqueReceiptNumber() async {
+    final db = await database;
+    final now = DateTime.now();
+    final datePrefix = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+    final timeComponent = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}';
+    final randomComponent = (now.millisecond * 1000 + now.microsecond ~/ 1000).toString().padLeft(4, '0');
+    
+    final receiptNumber = 'CRD-$datePrefix-$timeComponent$randomComponent';
+    
+    // Check if this receipt number already exists
+    final existingReceipts = await db.query(
+      tableCreditors,
+      where: 'receipt_number = ?',
+      whereArgs: [receiptNumber],
+      limit: 1,
+    );
+    
+    if (existingReceipts.isEmpty) {
+      return receiptNumber;
+    } else {
+      // In the unlikely case of a collision, add an incrementing number
+      return '${receiptNumber}-${DateTime.now().millisecondsSinceEpoch % 1000}';
     }
   }
 
@@ -3182,7 +3399,7 @@ class DatabaseService {
   }
 
   /// Initialize the database
-  Future<void> initialize() async {
+  Future<void> _initialize() async {
     try {
       print('Initializing database service...');
       final db = await database;
@@ -3457,6 +3674,24 @@ class DatabaseService {
           orderMap = orderData;
           orderItems = items ?? [];
         }
+      } else if (orderId is Map<String, dynamic> && orderId.containsKey('id')) {
+        // This handles the map-based input case which we need to fix
+        if (orderId['id'] is int) {
+          orderIdValue = orderId['id'] as int;
+        } else if (orderId['id'] != null) {
+          // Try to parse as int if it's another type (like String)
+          final parsedId = int.tryParse(orderId['id'].toString());
+          if (parsedId != null) {
+            orderIdValue = parsedId;
+          } else {
+            throw ArgumentError('Invalid order ID: ${orderId['id']}');
+          }
+        } else {
+          throw ArgumentError('Missing order ID');
+        }
+        
+        orderMap = orderId;
+        orderItems = orderData as List<Map<String, dynamic>>? ?? [];
       } else {
         throw ArgumentError('Invalid order ID or data type');
       }
@@ -3464,6 +3699,11 @@ class DatabaseService {
       return await withTransaction((txn) async {
         // Update timestamp
         orderMap['updated_at'] = DateTime.now().toIso8601String();
+        
+        // Remove id from orderMap to prevent SQL errors, as we use it in the WHERE clause
+        orderMap.remove('id');
+        
+        print('Updating order ${orderIdValue} with status ${orderMap['order_status']}');
         
         // Update order
         await txn.update(
@@ -4748,23 +4988,7 @@ class DatabaseService {
 
   /// Get user by username
   Future<Map<String, dynamic>?> getUserByUsername(String username) async {
-    try {
-      final db = await database;
-      final users = await db.query(
-        tableUsers,
-        where: 'username = ?',
-        whereArgs: [username],
-        limit: 1,
-      );
-      
-      if (users.isNotEmpty) {
-        return users.first;
-      }
-      return null;
-    } catch (e) {
-      print('Error getting user by username: $e');
-      return null;
-    }
+    return _getUserByUsername(username);
   }
 
   /// Check if admin user exists and create one if it doesn't
@@ -4988,5 +5212,145 @@ class DatabaseService {
     );
     
     _initialized = true;
+  }
+
+  // Get user by ID with decrypted sensitive data
+  Future<Map<String, dynamic>?> _getUserById(int id) async {
+    try {
+      final db = await database;
+      final results = await db.query(
+        tableUsers,
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1
+      );
+      
+      if (results.isEmpty) {
+        return null;
+      }
+      
+      // Decrypt sensitive data
+      final decryptedResults = await decryptQueryResults(tableUsers, results);
+      return decryptedResults.first;
+    } catch (e) {
+      debugPrint('Error getting user by ID: $e');
+      return null;
+    }
+  }
+  
+  // Update user with encrypted sensitive data
+  Future<int> _updateUser(User user) async {
+    try {
+      // Ensure we have an ID to update
+      if (user.id == null) {
+        throw Exception('Cannot update user without ID');
+      }
+      
+      return await secureUpdate(
+        tableUsers,
+        user.toMap(),
+        where: 'id = ?',
+        whereArgs: [user.id]
+      );
+    } catch (e) {
+      debugPrint('Error updating user: $e');
+      rethrow;
+    }
+  }
+  
+  // Create user with encrypted sensitive data
+  Future<Map<String, dynamic>?> _createUser(Map<String, dynamic> userData) async {
+    try {
+      // Check if we need to hash the password
+      if (userData['password'] != null && 
+          userData['password'] is String && 
+          !userData['password'].toString().startsWith('\$2a\$') && 
+          !userData['password'].toString().startsWith('\$2b\$')) {
+        // Plain password, need to hash it
+        debugPrint("createUser: Hashing plain password");
+        userData['password'] = AuthService.instance.hashPassword(userData['password']);
+      } else {
+        debugPrint("createUser: Password already hashed, using as-is");
+      }
+      
+      // Insert user with encrypted sensitive data
+      final userId = await secureInsert(tableUsers, userData);
+      
+      if (userId > 0) {
+        return getUserById(userId);
+      } else {
+        return null;
+      }
+    } catch (e) {
+      debugPrint('Error creating user: $e');
+      rethrow;
+    }
+  }
+  
+  // Get user by username with decrypted sensitive data
+  Future<Map<String, dynamic>?> _getUserByUsername(String username) async {
+    try {
+      final db = await database;
+      final results = await db.query(
+        tableUsers,
+        where: 'username = ?',
+        whereArgs: [username],
+        limit: 1
+      );
+      
+      if (results.isEmpty) {
+        return null;
+      }
+      
+      // Decrypt sensitive data
+      final decryptedResults = await decryptQueryResults(tableUsers, results);
+      return decryptedResults.first;
+    } catch (e) {
+      debugPrint('Error getting user by username: $e');
+      return null;
+    }
+  }
+
+  // Get total outstanding balance for a customer across all orders
+  Future<double> getCustomerTotalOutstandingBalance(int customerId) async {
+    try {
+      final db = await database;
+      
+      // Query all pending credit records for this customer
+      final result = await db.rawQuery('''
+        SELECT SUM(balance) as total_balance
+        FROM $tableCreditors
+        WHERE customer_id = ? AND status = ? AND balance > 0
+      ''', [customerId, 'PENDING']);
+      
+      // Return the sum of balances or 0 if null
+      return result.isNotEmpty ? (result.first['total_balance'] as num?)?.toDouble() ?? 0.0 : 0.0;
+    } catch (e) {
+      print('Error getting customer total outstanding balance: $e');
+      return 0.0;
+    }
+  }
+
+  // Get application configuration
+  Future<Map<String, dynamic>?> getConfiguration() async {
+    try {
+      // Import ConfigService locally to prevent circular dependencies
+      final configService = ConfigService.instance;
+      
+      return {
+        'enable_vat': configService.enableVat ? 1 : 0,
+        'vat_rate': configService.vatRate,
+        'show_vat_on_receipt': configService.showVatOnReceipt ? 1 : 0,
+        'business_name': configService.businessName,
+        'business_address': configService.businessAddress,
+        'business_phone': configService.businessPhone,
+        'business_email': configService.businessEmail,
+        'receipt_header': configService.receiptHeader,
+        'receipt_footer': configService.receiptFooter,
+      };
+    } catch (e) {
+      print('Error getting configuration: $e');
+      return null;
+    }
   }
 }

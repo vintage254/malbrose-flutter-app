@@ -218,6 +218,32 @@ class _OrderScreenState extends State<OrderScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.isEditing ? 'Edit Order' : 'New Order'),
+        actions: [
+          if (!widget.viewOnly && _cartItems.isNotEmpty) ...[
+            // Show Save Changes button when editing a held order
+            if (widget.isEditing && widget.editingOrder != null && widget.editingOrder!.orderStatus == 'ON_HOLD')
+              IconButton(
+                icon: const Icon(Icons.save),
+                tooltip: 'Save Changes',
+                onPressed: _saveHeldOrderChanges,
+              ),
+            // Always show Hold button
+            IconButton(
+              icon: const Icon(Icons.pause_circle_outline),
+              tooltip: 'Hold Order',
+              onPressed: _holdOrder,
+            ),
+            // Always show Place Order button (for both new and held orders)
+            IconButton(
+              icon: const Icon(Icons.check_circle_outline),
+              tooltip: 'Place Order',
+              onPressed: _handlePlaceOrder,
+            ),
+          ],
+        ],
+      ),
       body: Row(
         children: [
           const Expanded(
@@ -897,6 +923,103 @@ class _OrderScreenState extends State<OrderScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error ${widget.isEditing ? "updating" : "placing"} order: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  // Add this new method to save changes to a held order without changing status
+  Future<void> _saveHeldOrderChanges() async {
+    if (_cartItems.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot save an empty order'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    try {
+      setState(() => _isLoading = true);
+      
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser == null) throw Exception('User not logged in');
+
+      final customerName = _customerNameController.text.trim();
+      
+      if (customerName.isEmpty) {
+        throw Exception('Customer name is required');
+      }
+      
+      if (widget.editingOrder == null) {
+        throw Exception('No order to update');
+      }
+      
+      // Update existing order but keep the held status
+      final updatedOrder = Order(
+        id: widget.editingOrder!.id,
+        orderNumber: widget.editingOrder!.orderNumber,
+        customerId: customerId > 0 ? customerId : widget.editingOrder!.customerId,
+        customerName: customerName,
+        totalAmount: _cartItems.fold<double>(0, (sum, item) => sum + item.total),
+        orderStatus: 'ON_HOLD', // Keep as held order
+        paymentStatus: widget.editingOrder!.paymentStatus,
+        paymentMethod: widget.editingOrder!.paymentMethod,
+        createdBy: widget.editingOrder!.createdBy,
+        createdAt: widget.editingOrder!.createdAt,
+        orderDate: widget.editingOrder!.orderDate,
+        items: _cartItems.map((item) => OrderItem(
+          orderId: widget.editingOrder!.id ?? 0,
+          productId: item.product.id ?? 0,
+          quantity: item.quantity,
+          unitPrice: item.product.buyingPrice,
+          sellingPrice: item.product.sellingPrice,
+          totalAmount: item.total,
+          productName: item.product.productName,
+          isSubUnit: item.isSubUnit,
+          subUnitName: item.subUnitName,
+          subUnitQuantity: item.subUnitQuantity?.toDouble(),
+          adjustedPrice: item.adjustedPrice,
+        )).toList(),
+      );
+      
+      // Convert to map for database update
+      final orderMap = updatedOrder.toMap();
+      final orderItems = updatedOrder.items?.map((item) => item.toMap()).toList() ?? [];
+      
+      // Update the order in the database
+      await DatabaseService.instance.updateOrder(updatedOrder.id!, orderMap, orderItems);
+      
+      // Log the update
+      await DatabaseService.instance.logActivity(
+        currentUser.id is String ? int.tryParse(currentUser.id as String) ?? 0 : (currentUser.id as int? ?? 0),
+        currentUser.username,
+        'update_held_order',
+        'Held Order Updated',
+        'Held Order #${updatedOrder.orderNumber} was updated',
+      );
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Held order saved successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      
+      // Navigate back to the held orders screen
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error saving held order: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     } finally {
       if (mounted) {

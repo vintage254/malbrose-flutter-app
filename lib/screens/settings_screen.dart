@@ -6,12 +6,14 @@ import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/services/config_service.dart';
 import 'package:my_flutter_app/services/license_service.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
+import 'package:my_flutter_app/widgets/side_menu.dart';
 import 'package:my_flutter_app/widgets/add_user_dialog.dart';
 import 'package:my_flutter_app/widgets/edit_user_dialog.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:intl/intl.dart';
+import 'package:my_flutter_app/services/ssl_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -58,7 +60,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _loadUsers();
     _loadSettings();
     _checkLicense();
@@ -433,184 +435,135 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Row(
+      appBar: AppBar(
+        title: const Text('Settings'),
+        backgroundColor: Colors.blue,
+        foregroundColor: Colors.white,
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(text: 'Business Info'),
+            Tab(text: 'Users'),
+            Tab(text: 'Tax Settings'),
+            Tab(text: 'Receipt Settings'),
+            Tab(text: 'Security'),
+          ],
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          indicatorColor: Colors.white,
+        ),
+      ),
+      drawer: const SideMenu(),
+      body: TabBarView(
+        controller: _tabController,
         children: [
-          const Expanded(
-            flex: 1,
-            child: SideMenuWidget(),
-          ),
-          Expanded(
-            flex: 5,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.green.shade300.withOpacity(0.7),
-                    Colors.green.shade700,
-                  ],
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(defaultPadding),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Settings',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: defaultPadding),
-                    TabBar(
-                      controller: _tabController,
-                      tabs: const [
-                        Tab(
-                          icon: Icon(Icons.people),
-                          text: 'User Management',
-                        ),
-                        Tab(
-                          icon: Icon(Icons.business),
-                          text: 'Business Info',
-                        ),
-                        Tab(
-                          icon: Icon(Icons.receipt_long),
-                          text: 'Receipt & Tax',
-                        ),
-                        Tab(
-                          icon: Icon(Icons.vpn_key),
-                          text: 'License',
-                        ),
-                      ],
-                      labelColor: Colors.white,
-                      unselectedLabelColor: Colors.white70,
-                      indicatorColor: Colors.white,
-                    ),
-                    const SizedBox(height: defaultPadding),
-                    Expanded(
-                      child: Card(
-                        child: TabBarView(
-                          controller: _tabController,
-                          children: [
-                            _buildUserManagementTab(),
-                            _buildBusinessInfoTab(),
-                            _buildReceiptAndTaxTab(),
-                            _buildLicenseTab(),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+          _buildBusinessInfoTab(),
+          _buildUsersTab(),
+          _buildTaxSettingsTab(),
+          _buildReceiptSettingsTab(),
+          _buildSecurityTab(),
         ],
       ),
     );
   }
 
-  Widget _buildUserManagementTab() {
+  Widget _buildUsersTab() {
     return Padding(
-                padding: const EdgeInsets.all(defaultPadding),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'User Management',
-                          style: TextStyle(
+      padding: const EdgeInsets.all(defaultPadding),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'User Management',
+                style: TextStyle(
                   fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Row(
+                children: [
+                  if (currentUser?.isAdmin ?? false)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: ElevatedButton.icon(
+                        onPressed: _verifyAdminPrivileges,
+                        icon: const Icon(Icons.security),
+                        label: const Text('Verify Privileges'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue,
                         ),
-                        Row(
-                          children: [
-                            if (currentUser?.isAdmin ?? false)
-                              Padding(
-                                padding: const EdgeInsets.only(right: 8.0),
-                                child: ElevatedButton.icon(
-                                  onPressed: _verifyAdminPrivileges,
-                                  icon: const Icon(Icons.security),
-                                  label: const Text('Verify Privileges'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blue,
-                                  ),
-                                ),
-                              ),
-                            if (currentUser?.isAdmin ?? false)
-                              ElevatedButton.icon(
-                                onPressed: _handleAddUser,
-                                icon: const Icon(Icons.add),
-                                label: const Text('Add User'),
-                              ),
-                          ],
-                        ),
-                      ],
+                      ),
                     ),
-                    const SizedBox(height: defaultPadding),
-                    Expanded(
-                      child: _isLoading
-                          ? const Center(child: CircularProgressIndicator())
-                : SingleChildScrollView(
-                                scrollDirection: Axis.horizontal,
-                                child: DataTable(
-                                  columns: const [
-                                    DataColumn(label: Text('Username')),
-                                    DataColumn(label: Text('Full Name')),
-                                    DataColumn(label: Text('Email')),
-                                    DataColumn(label: Text('Admin')),
-                                    DataColumn(label: Text('Last Login')),
-                                    DataColumn(label: Text('Actions')),
-                                  ],
-                                  rows: _users.map((user) {
-                                    return DataRow(
-                                      cells: [
-                                        DataCell(Text(user.username)),
-                                        DataCell(Text(user.fullName)),
-                                        DataCell(Text(user.email)),
-                                        DataCell(
-                                          Switch(
-                                            value: user.isAdmin,
-                                            onChanged: currentUser?.isAdmin ?? false
-                                                ? (_) => _toggleAdminStatus(user)
-                                                : null,
-                                          ),
-                                        ),
-                                        DataCell(Text(user.lastLogin?.toString() ?? 'Never')),
-                                        DataCell(
-                                          Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              IconButton(
-                                                icon: const Icon(Icons.edit),
-                                                onPressed: currentUser?.isAdmin ?? false
-                                                    ? () => _handleEditUser(user)
-                                                    : null,
-                                                tooltip: 'Edit User',
-                                              ),
-                                              IconButton(
-                                                icon: const Icon(Icons.delete),
-                                                onPressed: currentUser?.isAdmin ?? false
-                                                    ? () => _handleDeleteUser(user)
-                                                    : null,
-                                                tooltip: 'Delete User',
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    );
-                                  }).toList(),
-                                ),
-                              ),
+                  if (currentUser?.isAdmin ?? false)
+                    ElevatedButton.icon(
+                      onPressed: _handleAddUser,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add User'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: defaultPadding),
+          Expanded(
+            child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('Username')),
+                      DataColumn(label: Text('Full Name')),
+                      DataColumn(label: Text('Email')),
+                      DataColumn(label: Text('Admin')),
+                      DataColumn(label: Text('Last Login')),
+                      DataColumn(label: Text('Actions')),
+                    ],
+                    rows: _users.map((user) {
+                      return DataRow(
+                        cells: [
+                          DataCell(Text(user.username)),
+                          DataCell(Text(user.fullName)),
+                          DataCell(Text(user.email)),
+                          DataCell(
+                            Switch(
+                              value: user.isAdmin,
+                              onChanged: currentUser?.isAdmin ?? false
+                                ? (value) => _toggleAdminStatus(user)
+                                : null,
                             ),
+                          ),
+                          DataCell(Text(user.lastLogin?.toString() ?? 'Never')),
+                          DataCell(
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit),
+                                  onPressed: currentUser?.isAdmin ?? false
+                                    ? () => _handleEditUser(user)
+                                    : null,
+                                  tooltip: 'Edit User',
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete),
+                                  onPressed: currentUser?.isAdmin ?? false
+                                    ? () => _handleDeleteUser(user)
+                                    : null,
+                                  tooltip: 'Delete User',
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+          ),
         ],
       ),
     );
@@ -1137,5 +1090,192 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
         ],
       ),
     );
+  }
+
+  // Security tab
+  Widget _buildSecurityTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Security Settings',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 16),
+          
+          // SSL/TLS Settings
+          Card(
+            elevation: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'SSL/TLS Configuration',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Import certificate option
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.security),
+                    label: const Text('Import SSL Certificate'),
+                    onPressed: _importSSLCertificate,
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Development mode toggle for testing
+                  FutureBuilder<bool?>(
+                    future: ConfigService.instance.getBoolean('dev_mode'),
+                    builder: (context, snapshot) {
+                      final devMode = snapshot.data ?? false;
+                      return SwitchListTile(
+                        title: const Text('Development Mode'),
+                        subtitle: const Text('Allows self-signed certificates (not secure for production)'),
+                        value: devMode,
+                        onChanged: (value) async {
+                          await ConfigService.instance.setBoolean('dev_mode', value);
+                          await _restartSSLService(value);
+                          setState(() {});
+                        },
+                      );
+                    },
+                  ),
+                  
+                  const SizedBox(height: 8),
+                  
+                  // Information about the current configuration
+                  FutureBuilder<bool?>(
+                    future: ConfigService.instance.getBoolean('dev_mode'),
+                    builder: (context, snapshot) {
+                      final devMode = snapshot.data ?? false;
+                      return Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: devMode ? Colors.amber.shade100 : Colors.green.shade100,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              devMode ? Icons.warning : Icons.check_circle,
+                              color: devMode ? Colors.orange : Colors.green,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                devMode 
+                                  ? 'Your app is in development mode with reduced security. Not recommended for production.'
+                                  : 'Your app is using secure SSL/TLS configuration for network communications.',
+                                style: TextStyle(
+                                  color: devMode ? Colors.orange.shade800 : Colors.green.shade800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // Data Encryption Settings
+          Card(
+            elevation: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Data Encryption',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Implement encryption features later
+                  const Text('Enhanced data encryption features will be available in a future update.'),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Future<void> _importSSLCertificate() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pem', 'crt', 'cer'],
+        allowMultiple: false,
+      );
+      
+      if (result != null && result.files.isNotEmpty) {
+        final file = File(result.files.first.path!);
+        final certData = await file.readAsString();
+        
+        // Import the certificate using SSLService
+        final success = await SSLService.instance.addTrustedCertificate(certData);
+        
+        if (success) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('SSL certificate imported successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        } else {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to import SSL certificate'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error importing certificate: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+  
+  Future<void> _restartSSLService(bool devMode) async {
+    try {
+      await SSLService.instance.initialize(developmentMode: devMode);
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('SSL service restarted in ${devMode ? "development" : "production"} mode'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error restarting SSL service: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 } 

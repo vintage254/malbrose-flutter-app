@@ -342,35 +342,48 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                         // Date Filter
                         SizedBox(
                           width: 200,
-                          child: ElevatedButton.icon(
-                            onPressed: () async {
-                              final picked = await showDatePicker(
+                          child: InkWell(
+                            onTap: () async {
+                              final date = await showDatePicker(
                                 context: context,
-                                initialDate: _selectedDate ?? DateTime.now(),
-                                firstDate: DateTime(2000),
-                                lastDate: DateTime(2101),
+                                initialDate: DateTime.now(),
+                                firstDate: DateTime(2020),
+                                lastDate: DateTime.now().add(const Duration(days: 365)),
                               );
-                              if (picked != null) {
-                                setState(() => _selectedDate = picked);
+                              if (date != null) {
+                                setState(() => _selectedDate = date);
                                 _loadLogs();
                               }
                             },
-                            icon: const Icon(Icons.calendar_today),
-                            label: Text(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: Colors.grey.shade300),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.calendar_today, size: 18),
+                                  const SizedBox(width: 8),
+                                  Text(
                               _selectedDate == null
                                   ? 'Select Date'
-                                  : DateFormat('dd/MM/yyyy').format(_selectedDate!),
+                                        : DateFormat('yyyy-MM-dd').format(_selectedDate!),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
                         const SizedBox(width: defaultPadding),
                         // User Filter
                         SizedBox(
-                          width: 200,
-                          child: FutureBuilder<List<String>>(
-                            future: DatabaseService.instance.getAllUsernames(),
-                            builder: (context, snapshot) {
-                              return DropdownButtonFormField<String>(
+                          width: 180,
+                          child: DropdownButtonFormField<String>(
                                 isExpanded: true,
                                 decoration: const InputDecoration(
                                   labelText: 'Filter by User',
@@ -384,8 +397,10 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                                     value: null,
                                     child: Text('All Users'),
                                   ),
-                                  if (snapshot.hasData)
-                                    ...snapshot.data!.map((username) {
+                              ..._logs
+                                  .map((log) => log.username)
+                                  .toSet()
+                                  .map((username) {
                                       return DropdownMenuItem(
                                         value: username,
                                         child: Text(username),
@@ -395,15 +410,13 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                                 onChanged: (value) {
                                   setState(() => _selectedUser = value);
                                   _loadLogs();
-                                },
-                              );
                             },
                           ),
                         ),
                         const SizedBox(width: defaultPadding),
                         // Event Type Filter
                         SizedBox(
-                          width: 200,
+                          width: 180,
                           child: DropdownButtonFormField<String>(
                             isExpanded: true,
                             decoration: const InputDecoration(
@@ -434,7 +447,7 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                         const SizedBox(width: defaultPadding),
                         // Action Filter
                         SizedBox(
-                          width: 200,
+                          width: 180,
                           child: DropdownButtonFormField<String>(
                             isExpanded: true,
                             decoration: const InputDecoration(
@@ -463,37 +476,43 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                           ),
                         ),
                         const SizedBox(width: defaultPadding),
+                        // Add responsive filter bar
+                        Wrap(
+                          spacing: 16,
+                          runSpacing: 16,
+                          alignment: WrapAlignment.start,
+                          children: [
                         // Export Button
                         SizedBox(
-                          width: 120,
+                              height: 48,
                           child: ElevatedButton.icon(
                             onPressed: _exportToPDF,
-                            icon: const Icon(Icons.file_download),
+                                icon: const Icon(Icons.file_download, size: 18),
                             label: const Text('Export'),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.green,
                               foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                             ),
                           ),
                         ),
-                        const SizedBox(width: defaultPadding),
                         // Print Button
                         SizedBox(
-                          width: 120,
+                              height: 48,
                           child: ElevatedButton.icon(
                             onPressed: _printActivityLogs,
-                            icon: const Icon(Icons.print),
+                                icon: const Icon(Icons.print, size: 18),
                             label: const Text('Print'),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.blue,
                               foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                             ),
                           ),
                         ),
-                        const SizedBox(width: defaultPadding),
                         // Clear Filters Button
                         SizedBox(
-                          width: 150,
+                              height: 48,
                           child: ElevatedButton.icon(
                             onPressed: () {
                               setState(() {
@@ -506,13 +525,16 @@ class _ActivityLogScreenState extends State<ActivityLogScreen> {
                               });
                               _loadLogs();
                             },
-                            icon: const Icon(Icons.clear),
-                            label: const Text('Clear Filters'),
+                                icon: const Icon(Icons.clear, size: 18),
+                                label: const Text('Clear'),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.red,
                               foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                ),
+                              ),
                             ),
-                          ),
+                          ],
                         ),
                       ],
                     ),

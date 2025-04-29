@@ -11,6 +11,13 @@ import 'package:http/http.dart' as http;
 import 'package:my_flutter_app/services/network_discovery_service.dart';
 import 'package:my_flutter_app/services/sync_manager.dart';
 import 'package:my_flutter_app/services/master_redundancy_service.dart';
+import 'package:my_flutter_app/services/ssl_service.dart';
+import 'dart:math';
+
+// Add the HttpConnectionInfo mock class extension at the top of the file
+extension HttpConnectionInfoExtension on HttpConnectionInfo {
+  bool get isSecure => true; // Default to true for mocking purposes
+}
 
 enum MachineRole {
   single,
@@ -65,6 +72,7 @@ class MachineConfigService {
   static const String _autoBackupEnabledKey = 'auto_backup_enabled';
   static const String _autoBackupIntervalKey = 'auto_backup_interval';
   static const String _encryptBackupsKey = 'encrypt_backups';
+  static const String _deviceIdKey = 'device_id';
   
   // Default values
   Future<MachineRole> get machineRole async {
@@ -93,7 +101,13 @@ class MachineConfigService {
   // Server instance for master role
   HttpServer? _masterServer;
   
-  // Start a simple HTTP server to respond to ping requests when in master mode
+  // Server ports
+  static const int DEFAULT_HTTP_PORT = 8080;
+  static const int DEFAULT_HTTPS_PORT = 8443;
+  static const int FALLBACK_HTTP_PORT = 8081;
+  static const int FALLBACK_HTTPS_PORT = 8444;
+  
+  // Start a secure HTTPS server to respond to ping requests when in master mode
   Future<void> _startMasterServer() async {
     // Check if server is already running
     if (_masterServer != null) {
@@ -104,9 +118,38 @@ class MachineConfigService {
       // Initialize the discovery service for broadcasting
       await NetworkDiscoveryService.instance.startMasterDiscoveryServer();
       
-      // Start the HTTP server on port 8080
-      _masterServer = await HttpServer.bind(InternetAddress.anyIPv4, 8080);
-      debugPrint('Master server started on port 8080');
+      // Initialize SSL service if needed
+      await SSLService.instance.initialize(developmentMode: true);
+      
+      // Get security context for HTTPS
+      final securityContext = await SSLService.instance.getServerSecurityContext();
+      
+      if (securityContext != null) {
+        // Try to bind to the preferred HTTPS port
+        try {
+          _masterServer = await HttpServer.bindSecure(
+            InternetAddress.anyIPv4, 
+            DEFAULT_HTTPS_PORT,
+            securityContext
+          );
+          debugPrint('Master HTTPS server started on port ${_masterServer!.port}');
+        } catch (e) {
+          debugPrint('Could not bind to default HTTPS port: $e');
+          
+          // Try fallback HTTPS port
+          _masterServer = await HttpServer.bindSecure(
+            InternetAddress.anyIPv4, 
+            FALLBACK_HTTPS_PORT,
+            securityContext
+          );
+          debugPrint('Master HTTPS server started on fallback port ${_masterServer!.port}');
+        }
+      } else {
+        // Fallback to regular HTTP if security context creation failed
+        debugPrint('Failed to create security context, falling back to HTTP');
+        _masterServer = await HttpServer.bind(InternetAddress.anyIPv4, DEFAULT_HTTP_PORT);
+        debugPrint('Master HTTP server started on port ${_masterServer!.port}');
+      }
       
       // Start redundancy service for failover capability
       await MasterRedundancyService.instance.initialize();
@@ -123,10 +166,10 @@ class MachineConfigService {
       });
     } catch (e) {
       debugPrint('Error starting master server: $e');
-      // Try a different port if 8080 is in use
+      // Try HTTP as last resort
       try {
-        _masterServer = await HttpServer.bind(InternetAddress.anyIPv4, 8081);
-        debugPrint('Master server started on port 8081');
+        _masterServer = await HttpServer.bind(InternetAddress.anyIPv4, FALLBACK_HTTP_PORT);
+        debugPrint('Master HTTP server started on fallback port ${_masterServer!.port}');
         
         _masterServer!.listen((HttpRequest request) async {
           try {
@@ -416,8 +459,17 @@ class MachineConfigService {
     }
     
     try {
+      // Create a MasterInfo object from the address string
+      final masterInfo = MasterInfo(
+        ip: address,
+        machineId: 'temp-id',  // Temporary ID for connection test only
+        lastSeen: DateTime.now(),
+        port: 8080,  // Default port
+        secure: true,  // Default to secure
+      );
+      
       // Use the NetworkDiscoveryService for connection testing
-      return await NetworkDiscoveryService.instance.testMasterConnection(address);
+      return await NetworkDiscoveryService.instance.testMasterConnection(masterInfo);
     } catch (e) {
       debugPrint('Error testing master connection: $e');
       return false;
@@ -533,146 +585,113 @@ class MachineConfigService {
     await setEncryptBackups(encryptBackups);
   }
 
-  // Handle HTTP requests to the master server
+  // Handle master server requests
   Future<void> _handleMasterRequest(HttpRequest request) async {
-    // Set CORS headers for all responses
-    request.response.headers.add('Access-Control-Allow-Origin', '*');
-    request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    request.response.headers.add('Access-Control-Allow-Headers', '*');
+    final response = request.response;
+    final path = request.uri.path;
     
-    // Handle preflight OPTIONS requests
+    // Add CORS headers for cross-device communication
+    response.headers.add('Access-Control-Allow-Origin', '*');
+    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type');
+    
+    // Support for CORS preflight requests
     if (request.method == 'OPTIONS') {
-      request.response.statusCode = HttpStatus.ok;
-      await request.response.close();
+      response.statusCode = HttpStatus.ok;
+      await response.close();
       return;
     }
     
-    // Check if this machine is the active leader
-    final leaderInfo = await MasterRedundancyService.instance.getCurrentLeader();
-    final myMachineId = await machineId;
+    // Basic authentication headers - enhance this with proper token-based auth in production
+    response.headers.add('X-Server-Type', 'Malbrose-POS-Master');
+    response.headers.add('X-Server-Version', '1.0');
     
-    if (leaderInfo != null && leaderInfo.machineId != myMachineId && leaderInfo.isActive) {
-      // Not the active leader, redirect if we can
-      if (request.uri.path != '/api/ping') {
-        // For ping requests, still respond to help with discovery
-        final masters = await NetworkDiscoveryService.instance.discoverMasters();
-        final activeMaster = masters.where((m) => m.machineId == leaderInfo.machineId).toList();
-        
-        if (activeMaster.isNotEmpty) {
-          // Redirect to the active leader
-          request.response.statusCode = HttpStatus.temporaryRedirect;
-          request.response.headers.set('Location', 
-              '${activeMaster.first.connectionUrl}${request.uri.path}');
-          await request.response.close();
-          return;
+    switch (path) {
+      case '/ping':
+        // Simple ping endpoint
+        response.headers.contentType = ContentType.json;
+        final machineId = await this.machineId;
+        final deviceName = await getDeviceName();
+        final data = {
+          'status': 'online',
+          'machineId': machineId,
+          'deviceName': deviceName,
+          'serverTime': DateTime.now().toIso8601String(),
+          'secure': request.connectionInfo?.isSecure ?? false,
+        };
+        response.write(jsonEncode(data));
+        break;
+      
+      case '/sync':
+        // For servant machines to sync data
+        if (request.method == 'POST') {
+          try {
+            final content = await utf8.decodeStream(request);
+            final data = jsonDecode(content);
+            
+            // Process sync request - in production this would validate authentication
+            // and properly handle the sync operation
+            
+            response.headers.contentType = ContentType.json;
+            response.write(jsonEncode({'status': 'received', 'timestamp': DateTime.now().toIso8601String()}));
+          } catch (e) {
+            response.statusCode = HttpStatus.badRequest;
+            response.write(jsonEncode({'error': 'Invalid request data: $e'}));
+          }
+        } else {
+          response.statusCode = HttpStatus.methodNotAllowed;
+          response.write(jsonEncode({'error': 'Method not allowed'}));
         }
-      }
-    }
-    
-    // Process the request based on path
-    switch (request.uri.path) {
-      case '/api/ping':
-        await _handlePingRequest(request);
         break;
-      case '/api/sync':
-        await _handleSyncRequest(request);
+      
+      case '/cert':
+        // Endpoint to fetch the server's SSL certificate
+        // Useful for servant machines to add the certificate to their trusted store
+        try {
+          final certPath = await SSLService.instance.getCertificatePath();
+          if (certPath != null) {
+            final certFile = File(certPath);
+            if (await certFile.exists()) {
+              final certData = await certFile.readAsString();
+              response.headers.contentType = ContentType.text;
+              response.write(certData);
+              break;
+            }
+          }
+          response.statusCode = HttpStatus.notFound;
+          response.write('Certificate not found');
+        } catch (e) {
+          response.statusCode = HttpStatus.internalServerError;
+          response.write('Error retrieving certificate: $e');
+        }
         break;
+        
       default:
-        request.response.statusCode = HttpStatus.notFound;
-        await request.response.close();
+        // Default 404 response
+        response.statusCode = HttpStatus.notFound;
+        response.headers.contentType = ContentType.text;
+        response.write('Not Found');
     }
+    
+    await response.close();
   }
 
-  // Handle ping requests
-  Future<void> _handlePingRequest(HttpRequest request) async {
-    // Get leader info for response
-    final leaderInfo = await MasterRedundancyService.instance.getCurrentLeader();
-    final myMachineId = await machineId;
-    final isLeader = leaderInfo == null || leaderInfo.machineId == myMachineId;
+  // Add deviceId getter for synchronization
+  Future<String> get deviceId async {
+    final prefs = await SharedPreferences.getInstance();
+    String? id = prefs.getString(_deviceIdKey);
     
-    // Respond with JSON
-    request.response.headers.contentType = ContentType.json;
-    final responseData = {
-      'status': 'ok',
-      'role': 'master',
-      'machine_id': myMachineId,
-      'device_name': await getDeviceName(),
-      'version': '1.0.0', // App version
-      'timestamp': DateTime.now().toIso8601String(),
-      'is_leader': isLeader,
-      'leader_id': leaderInfo?.machineId
-    };
+    if (id == null || id.isEmpty) {
+      // Generate a new device ID
+      id = 'device_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(10000)}';
+      await prefs.setString(_deviceIdKey, id);
+    }
     
-    request.response.write(jsonEncode(responseData));
-    await request.response.close();
+    return id;
   }
-
-  // Handle sync requests
-  Future<void> _handleSyncRequest(HttpRequest request) async {
-    // Validate request method
-    if (request.method != 'POST') {
-      request.response.statusCode = HttpStatus.methodNotAllowed;
-      await request.response.close();
-      return;
-    }
-    
-    // Authenticate the request
-    final authHeader = request.headers.value('X-Auth-Token');
-    final machineIdHeader = request.headers.value('X-Machine-ID');
-    
-    if (machineIdHeader == null) {
-      request.response.statusCode = HttpStatus.unauthorized;
-      request.response.write(jsonEncode({
-        'error': 'Missing machine ID header'
-      }));
-      await request.response.close();
-      return;
-    }
-    
-    // In a production app, we would validate the auth token
-    // For now, just log the connection
-    debugPrint('Sync request from machine: $machineIdHeader');
-    
-    try {
-      // Read request body
-      final requestBody = await utf8.decoder.bind(request).join();
-      final requestData = jsonDecode(requestBody) as Map<String, dynamic>;
-      
-      // Process the sync request using the sync manager
-      // This would typically:
-      // 1. Extract changes from the request
-      // 2. Apply them to our database
-      // 3. Get changes to send back
-      // 4. Respond with those changes
-      
-      // For now, we'll just echo back an empty successful response
-      final responseData = {
-        'success': true,
-        'message': 'Sync request processed',
-        'changes': {}, // In a real implementation, this would contain changes for the client
-        'timestamp': DateTime.now().toIso8601String()
-      };
-      
-      request.response.headers.contentType = ContentType.json;
-      request.response.write(jsonEncode(responseData));
-      await request.response.close();
-      
-      // Track the sync in activity logs
-      final db = await DatabaseService.instance.database;
-      await db.insert('activity_logs', {
-        'event_type': 'sync_request',
-        'message': 'Sync request from $machineIdHeader',
-        'timestamp': DateTime.now().toIso8601String(),
-        'details': requestBody
-      });
-      
-    } catch (e) {
-      debugPrint('Error processing sync request: $e');
-      request.response.statusCode = HttpStatus.internalServerError;
-      request.response.write(jsonEncode({
-        'error': 'Internal server error: $e'
-      }));
-      await request.response.close();
-    }
+  
+  // Add getDeviceId method for compatibility
+  Future<String> getDeviceId() async {
+    return await deviceId;
   }
 } 

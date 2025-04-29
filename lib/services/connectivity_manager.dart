@@ -274,7 +274,7 @@ class ConnectivityManager {
   Future<void> _attemptInitialSync() async {
     try {
       // Wait a bit to ensure network is stable
-      await Future.delayed(Duration(seconds: 2));
+      await Future.delayed(const Duration(seconds: 2));
       
       // Check if master address is configured
       final masterAddress = await MachineConfigService.instance.masterAddress;
@@ -370,8 +370,8 @@ class ConnectivityManager {
   }
   
   /// Get a list of discovered masters
-  Future<List<MasterInfo>> discoverMasters({bool useCache = false}) {
-    return _discoveryService.discoverMasters(useCache: useCache);
+  Future<List<MasterInfo>> discoverMasters() {
+    return _discoveryService.discoverMasters();
   }
   
   /// Dispose resources

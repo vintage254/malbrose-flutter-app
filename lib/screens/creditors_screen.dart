@@ -5,6 +5,8 @@ import 'package:my_flutter_app/models/creditor_model.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:my_flutter_app/utils/ui_helpers.dart';
+import 'package:my_flutter_app/services/auth_service.dart';
+import 'package:my_flutter_app/utils/receipt_number_generator.dart';
 
 class CreditorsScreen extends StatefulWidget {
   const CreditorsScreen({super.key});
@@ -67,16 +69,43 @@ class _CreditorsScreenState extends State<CreditorsScreen> {
   Future<void> _addCreditor() async {
     if (_formKey.currentState!.validate()) {
       try {
+        // Get current date and time
+        final now = DateTime.now();
+        
+        // Auto-generate a credit receipt number for manually added creditors
+        final creditReceiptNumber = ReceiptNumberGenerator.generateCreditReceiptNumber();
+        
+        // Create a complete creditor record with all the necessary fields
         final creditor = {
           'name': _nameController.text.trim(),
           'balance': double.parse(_balanceController.text),
           'details': _detailsController.text.trim(),
           'status': 'PENDING',
-          'created_at': DateTime.now().toIso8601String(),
+          'created_at': now.toIso8601String(),
+          'updated_at': now.toIso8601String(),
           'original_amount': double.parse(_balanceController.text),
+          
+          // Add fields that would normally be populated through payment method
+          'receipt_number': creditReceiptNumber,
+          'order_number': 'MANUAL-${now.millisecondsSinceEpoch}', // Unique identifier for manual entries
+          'order_details': 'Manually added credit entry',
+          'customer_name': _nameController.text.trim(), // Ensure customer name is also set
         };
 
-        await DatabaseService.instance.addCreditor(creditor);
+        final creditorId = await DatabaseService.instance.addCreditor(creditor);
+        
+        // Additionally log this manual creation in the activity log
+        final currentUser = AuthService.instance.currentUser;
+        if (currentUser != null) {
+          await DatabaseService.instance.logActivity(
+            currentUser.id,
+            currentUser.username,
+            'create_credit_manual',
+            'Manual Credit Creation',
+            'Manually created credit of KSH ${double.parse(_balanceController.text).toStringAsFixed(2)} for ${_nameController.text.trim()} (Receipt #$creditReceiptNumber)',
+          );
+        }
+        
         _nameController.clear();
         _balanceController.clear();
         _detailsController.clear();

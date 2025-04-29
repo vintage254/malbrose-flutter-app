@@ -210,18 +210,84 @@ class OrderService extends ChangeNotifier {
   static const String STATUS_ON_HOLD = 'ON_HOLD';
   static const String STATUS_REPORTED = 'REPORTED';
   
+  // Log order creation activity
+  Future<void> logOrderCreation(Order order) async {
+    try {
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null) {
+        await DatabaseService.instance.logActivity(
+          currentUser.id!,
+          currentUser.username,
+          'create_order',
+          'Order Creation',
+          'Created order #${order.orderNumber} with ${order.items.length} items, total: KSH ${order.totalAmount?.toStringAsFixed(2)}',
+        );
+      }
+    } catch (e) {
+      debugPrint('Error logging order creation: $e');
+    }
+  }
+  
+  // Log order update activity
+  Future<void> logOrderUpdate(Order order, {String? updateDetails}) async {
+    try {
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null) {
+        await DatabaseService.instance.logActivity(
+          currentUser.id!,
+          currentUser.username,
+          'update_order',
+          'Order Update',
+          'Updated order #${order.orderNumber}: ${updateDetails ?? "Modified order details"}',
+        );
+      }
+    } catch (e) {
+      debugPrint('Error logging order update: $e');
+    }
+  }
+  
+  // Log order deletion activity
+  Future<void> logOrderDeletion(String orderNumber, {String? reason}) async {
+    try {
+      final currentUser = AuthService.instance.currentUser;
+      if (currentUser != null) {
+        await DatabaseService.instance.logActivity(
+          currentUser.id!,
+          currentUser.username,
+          'delete_order',
+          'Order Deletion',
+          'Deleted order #$orderNumber${reason != null ? ". Reason: $reason" : ""}',
+        );
+      }
+    } catch (e) {
+      debugPrint('Error logging order deletion: $e');
+    }
+  }
+
   // Create a new order with validation of product IDs
   Future<bool> createOrder(Map<String, dynamic> orderMap, List<Map<String, dynamic>> orderItems) async {
     try {
       final String orderNumber = orderMap['order_number'] as String;
-      debugPrint('ORDER WORKFLOW: Processing order #$orderNumber');
+      debugPrint('ORDER WORKFLOW: Processing order #$orderNumber with status ${orderMap['order_status']}');
 
       // Enhanced detection for edit mode
       final bool isEdit = orderMap.containsKey('id') && orderMap['id'] != null;
-      final int? orderId = isEdit ? orderMap['id'] as int : null;
+      
+      // Fix ID handling to ensure consistent type
+      final int? orderId = isEdit ? (orderMap['id'] is int 
+          ? orderMap['id'] as int 
+          : int.tryParse(orderMap['id'].toString())) : null;
 
       if (isEdit) {
         debugPrint('ORDER WORKFLOW: Edit mode detected with ID: $orderId');
+        
+        // Ensure ID is correctly set for database update
+        if (orderId != null) {
+          orderMap['id'] = orderId;
+        } else {
+          debugPrint('WARNING: Invalid order ID format: ${orderMap['id']}');
+          throw Exception('Invalid order ID or data type');
+        }
       }
       
       // Validate product IDs in all order items
@@ -246,44 +312,50 @@ class OrderService extends ChangeNotifier {
         }
       }
       
+      bool success;
+      int newOrderId;
+      
       // If we're editing, use updateOrder instead of createOrder
       if (isEdit) {
-        debugPrint('Updating existing order #${orderMap['order_number']} with ID: $orderId');
-        final result = await DatabaseService.instance.updateOrder(orderId!, orderMap, orderItems);
-        if (result) {
-          notifyListeners();
-          return true;
-        }
-        return false;
-      } else {
-        // This is a new order, first check if a duplicate exists with the same order number
-        final existingOrder = await DatabaseService.instance.getOrderByNumber(orderMap['order_number'] as String);
-        if (existingOrder != null) {
-          debugPrint('Warning: Order with number ${orderMap['order_number']} already exists!');
-          // Update the existing order instead
-          final result = await DatabaseService.instance.updateOrder(
-            existingOrder['id'] as int, 
-            orderMap, 
-            orderItems
-          );
-          if (result) {
-            notifyListeners();
-            return true;
-          }
-          return false;
-        }
+        // When updating, respect the order_status in the update map
+        success = await DatabaseService.instance.updateOrder(orderMap, orderItems);
+        newOrderId = orderId!;
         
-        // Create the order through DatabaseService
-        final result = await DatabaseService.instance.createOrder(orderMap, orderItems);
-        if (result != null) {
-          // Refresh stats after creating an order
-          notifyListeners();
-          return true;
+        // Log order update with status info
+        if (success) {
+          final orderStatus = orderMap['order_status'] as String? ?? 'UNKNOWN';
+          final order = Order.fromMap({...orderMap, 'id': newOrderId});
+          await logOrderUpdate(
+            order, 
+            updateDetails: "Updated order details with status: $orderStatus"
+          );
         }
-        return false;
+      } else {
+        final result = await DatabaseService.instance.createOrder(orderMap, orderItems);
+        // Check if result is a map and extract the ID, or handle error
+        if (result != null && result is Map<String, dynamic> && result.containsKey('id')) {
+          newOrderId = result['id'] as int;
+          success = newOrderId > 0;
+          
+          // Log order creation with status info
+          if (success) {
+            final orderStatus = orderMap['order_status'] as String? ?? 'UNKNOWN';
+            final order = Order.fromMap({...orderMap, 'id': newOrderId});
+            await logOrderCreation(order);
+            debugPrint('Created order #${order.orderNumber} with status: $orderStatus');
+          }
+        } else {
+          // Handle error - result is null or doesn't have ID
+          debugPrint('Error: createOrder returned invalid result');
+          success = false;
+          newOrderId = -1;
+        }
       }
+      
+      refreshStats();
+      return success;
     } catch (e) {
-      debugPrint('Error creating/updating order in OrderService: $e');
+      debugPrint('Error in OrderService.createOrder: $e');
       return false;
     }
   }
@@ -292,6 +364,28 @@ class OrderService extends ChangeNotifier {
   Future<bool> createHeldOrder(Map<String, dynamic> orderMap, List<Map<String, dynamic>> orderItems) async {
     // Ensure order status is set to ON_HOLD
     orderMap['order_status'] = STATUS_ON_HOLD;
+    orderMap['status'] = STATUS_ON_HOLD; // Also set status field for backward compatibility
+    
+    // If order number doesn't start with HLD-, make sure it does
+    if (orderMap.containsKey('order_number') && 
+        orderMap['order_number'] is String && 
+        !orderMap['order_number'].toString().startsWith('HLD-')) {
+      
+      // If it starts with ORD-, replace the prefix, otherwise just prepend HLD-
+      if (orderMap['order_number'].toString().startsWith('ORD-')) {
+        orderMap['order_number'] = 'HLD-' + orderMap['order_number'].toString().substring(4);
+      } else {
+        orderMap['order_number'] = 'HLD-' + orderMap['order_number'].toString();
+      }
+      
+      debugPrint('OrderService: Modified order number to ${orderMap['order_number']}');
+    }
+    
+    // Log additional debug information
+    debugPrint('OrderService.createHeldOrder: Processing held order with data:');
+    debugPrint('  - Order ID: ${orderMap['id']}');
+    debugPrint('  - Order Number: ${orderMap['order_number']}');
+    debugPrint('  - Status: ${orderMap['order_status']}');
     
     return await createOrder(orderMap, orderItems);
   }
@@ -480,15 +574,32 @@ class OrderService extends ChangeNotifier {
         double creditAmount = order.totalAmount ?? 0;
         
         // For split payments, calculate the remaining credit amount
-        if (paymentMethod.contains('+')) {
+        if (paymentMethod.contains('+') || paymentMethod.contains(':')) {
           print("|||||||||| ORDER #${order.orderNumber}: SPLIT PAYMENT DETECTED: '$paymentMethod'");
+          
+          // Try to parse the credit amount from the payment method string
+          try {
+            // Format example: "Cash: KSH 900.00, Credit: KSH 6000.00"
+            if (paymentMethod.contains(':')) {
+              final parts = paymentMethod.split(',');
+              for (final part in parts) {
+                if (part.toLowerCase().contains('credit')) {
+                  final creditPart = part.trim();
+                  final amountStr = creditPart.split('KSH').last.trim();
+                  creditAmount = double.parse(amountStr);
+                  print("|||||||||| ORDER #${order.orderNumber}: PARSED CREDIT AMOUNT = $creditAmount");
+                  break;
+                }
+              }
+            }
+          } catch (e) {
+            print("|||||||||| ORDER #${order.orderNumber}: ERROR PARSING CREDIT AMOUNT - $e");
+            // Keep the default (full amount) if parsing fails
+          }
           
           // Split payments with credit have PARTIAL status
           final paymentStatus = 'PARTIAL';
           print("|||||||||| ORDER #${order.orderNumber}: SETTING PAYMENT STATUS TO '$paymentStatus' FOR SPLIT PAYMENT");
-          
-          creditAmount = order.totalAmount ?? 0;
-          print("|||||||||| ORDER #${order.orderNumber}: CREDIT AMOUNT = $creditAmount");
         }
         
         // Create a copy of the order with appropriate payment method and status
@@ -672,6 +783,160 @@ class OrderService extends ChangeNotifier {
       return true;
     } catch (e) {
       debugPrint('Error applying payment to credits: $e');
+      return false;
+    }
+  }
+
+  // Revert a completed sale (cancel receipt)
+  Future<bool> revertSale(Order order, {required String reason}) async {
+    try {
+      debugPrint('ORDER SERVICE: Reverting sale for order ${order.orderNumber}');
+      
+      if (order.id == null) {
+        debugPrint('ORDER SERVICE: Error - Cannot revert order with null ID');
+        return false;
+      }
+      
+      // First, ensure the sale is in a state that can be reverted
+      if (order.orderStatus != 'COMPLETED') {
+        debugPrint('ORDER SERVICE: Error - Can only revert COMPLETED sales');
+        return false;
+      }
+      
+      final db = await DatabaseService.instance.database;
+      
+      // Use a transaction to ensure all operations succeed or fail together
+      return await db.transaction((txn) async {
+        // 1. Check if the order exists and is COMPLETED
+        final orderResult = await txn.query(
+          tableOrders,
+          where: 'id = ? AND order_status = ?',
+          whereArgs: [order.id, 'COMPLETED'],
+        );
+        
+        if (orderResult.isEmpty) {
+          debugPrint('ORDER SERVICE: Error - Order not found or not in COMPLETED state');
+          return false;
+        }
+        
+        // 2. Update order status to CANCELLED
+        await txn.update(
+          tableOrders,
+          {
+            'order_status': 'CANCELLED',
+            'status': 'CANCELLED',
+            'payment_status': 'REVERTED',
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: [order.id],
+        );
+        
+        // 3. Restore product quantities
+        for (final item in order.items) {
+          if (item.productId <= 0) continue;
+          
+          final productDetails = await txn.query(
+            tableProducts,
+            where: 'id = ?',
+            whereArgs: [item.productId],
+          );
+          
+          if (productDetails.isEmpty) {
+            debugPrint('ORDER SERVICE: Warning - Product ${item.productId} not found for reverting');
+            continue;
+          }
+          
+          final currentQuantity = (productDetails.first['quantity'] as num).toDouble();
+          
+          // Calculate quantity to add back
+          double quantityToAdd;
+          if (item.isSubUnit) {
+            final subUnitQuantity = (productDetails.first['sub_unit_quantity'] as num?)?.toDouble() ?? 1.0;
+            if (subUnitQuantity <= 0) {
+              quantityToAdd = item.quantity.toDouble();
+            } else {
+              quantityToAdd = (item.quantity / subUnitQuantity);
+            }
+          } else {
+            quantityToAdd = item.quantity.toDouble();
+          }
+          
+          // Update product quantity
+          await txn.update(
+            tableProducts,
+            {
+              'quantity': currentQuantity + quantityToAdd,
+              'updated_at': DateTime.now().toIso8601String(),
+            },
+            where: 'id = ?',
+            whereArgs: [item.productId],
+          );
+        }
+        
+        // 4. Check if this order has an associated credit record
+          final creditorRecords = await txn.query(
+            DatabaseService.tableCreditors,
+          where: 'order_number = ? OR order_id = ?',
+          whereArgs: [order.orderNumber, order.id],
+          );
+          
+          if (creditorRecords.isNotEmpty) {
+          for (final creditor in creditorRecords) {
+            // Update the credit record status to CANCELED and set balance to zero
+            await txn.update(
+              DatabaseService.tableCreditors,
+              {
+                'status': 'CANCELED',
+                'details': 'Credit canceled - Order reverted: $reason',
+                'balance': 0.0, // Set balance to zero since order is cancelled
+                'updated_at': DateTime.now().toIso8601String(),
+              },
+              where: 'id = ?',
+              whereArgs: [creditor['id']],
+            );
+            
+            // Log the credit cancellation
+            final currentUser = AuthService.instance.currentUser;
+            if (currentUser != null) {
+              await txn.insert(
+                tableActivityLogs,
+                {
+                  'user_id': currentUser.id,
+                  'username': currentUser.username,
+                  'action': 'cancel_credit',
+                  'action_type': 'Cancel Credit',
+                  'details': 'Canceled credit for order #${order.orderNumber} due to order reversion. Reason: $reason',
+                  'timestamp': DateTime.now().toIso8601String(),
+                },
+              );
+            }
+          }
+        }
+        
+        // 5. Log the reversion
+        final currentUser = AuthService.instance.currentUser;
+        if (currentUser != null) {
+          await txn.insert(
+            tableActivityLogs,
+            {
+              'user_id': currentUser.id,
+              'username': currentUser.username,
+              'action': 'revert_order',
+              'action_type': 'Revert Sale',
+              'details': 'Cancelled sale for order #${order.orderNumber}. Reason: $reason',
+              'timestamp': DateTime.now().toIso8601String(),
+            },
+          );
+        }
+        
+        refreshStats();
+        notifyListeners();
+        
+        return true;
+      });
+    } catch (e) {
+      debugPrint('ORDER SERVICE: Error reverting sale: $e');
       return false;
     }
   }

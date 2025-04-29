@@ -11,6 +11,9 @@ import 'dart:async';
 import 'package:my_flutter_app/utils/ui_helpers.dart';
 import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/utils/receipt_number_generator.dart';
+import 'package:my_flutter_app/services/config_service.dart';
+import 'dart:io';
+import 'package:pdf/pdf.dart';
 
 class ReceiptPanel extends StatefulWidget {
   final Order order;
@@ -387,17 +390,6 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                     ),
                   ),
                 ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _printReceipt(),
-                  icon: const Icon(Icons.print),
-                  label: const Text('Print Receipt'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                  ),
-                ),
-              ),
             ],
           ),
           if (widget.order.orderStatus == 'PENDING')
@@ -465,7 +457,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
   }
 
   // New method to directly complete sales from the credit dialog without creating loops
-  void _directlyCompleteSale(String paymentMethod, double remainingCredit) {
+  Future<void> _directlyCompleteSale(String paymentMethod, double remainingCredit) async {
     // Similar to _completeSale but bypasses the credit dialog check
     final validItems = widget.order.items.where((item) => item.productId > 0).toList();
     
@@ -581,6 +573,18 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
           orderDetailsSummary: 'Split payment for order #${updatedOrder.orderNumber}'
         );
         print('ReceiptPanel - Credit record created successfully for order ${updatedOrder.orderNumber}');
+        
+        // Log credit creation in activity log
+        final currentUser = AuthService.instance.currentUser;
+        if (currentUser != null) {
+          await DatabaseService.instance.logActivity(
+            currentUser.id!,
+            currentUser.username,
+            'create_credit',
+            'Credit Creation',
+            'Created credit of KSH ${remainingCredit.toStringAsFixed(2)} for customer ${updatedOrder.customerName} (Order #${updatedOrder.orderNumber})',
+          );
+        }
       } catch (e) {
         print('ReceiptPanel - Error creating credit record: $e');
       }
@@ -593,7 +597,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
     _logSalesReceipt(updatedOrder);
   }
 
-  void _completeSale() {
+  Future<void> _completeSale() async {
     // Check for invalid product IDs first
     final validItems = widget.order.items.where((item) => item.productId > 0).toList();
     
@@ -747,99 +751,134 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
       // Get the printer service
       final printerService = PrinterService.instance;
       
-      // Create the PDF document
-      final pdf = pw.Document();
+      // Get config service for company details
+      final configService = ConfigService.instance;
       
-      // Determine if this is a sale or a quotation
-      final salePrefix = widget.order.orderStatus == 'COMPLETED' ? 'Receipt' : 'Quotation';
+      // Get tax settings from ConfigService
+      final config = ConfigService.instance;
+      final enableVat = config.enableVat;
+      final vatRate = config.vatRate;
+      final showVatOnReceipt = config.showVatOnReceipt;
+
+      // Calculate total amount
+      final totalAmount = widget.order.totalAmount ?? 0.0;
       
-      // Add a page to the PDF
-      pdf.addPage(
+      // Calculate VAT if enabled
+      double vatAmount = 0.0;
+      double netAmount = totalAmount;
+      
+      if (enableVat) {
+        // Use the same VAT formula as in settings screen
+        vatAmount = totalAmount * (vatRate / (100 + vatRate));
+        netAmount = totalAmount - vatAmount;
+      }
+      
+      // Calculate pending balance for credit payments
+      double pendingBalance = 0.0;
+      final paymentMethod = widget.order.paymentMethod ?? 'Cash';
+      
+      // Get customer's total outstanding balance if customer ID exists
+      double totalOutstandingBalance = 0.0;
+      if (widget.order.customerId != null) {
+        totalOutstandingBalance = await DatabaseService.instance.getCustomerTotalOutstandingBalance(widget.order.customerId!);
+      }
+      
+      if (paymentMethod.contains('Credit')) {
+        if (paymentMethod.contains(',')) {
+          // Parse split payment format: "Cash: KSH 900.00, Credit: KSH 6000.00"
+          try {
+            final creditPart = paymentMethod.split(',')
+                .where((part) => part.contains('Credit:'))
+                .first
+                .trim();
+            final amountStr = creditPart.split('KSH').last.trim();
+            pendingBalance = double.parse(amountStr);
+          } catch (e) {
+            print('Error parsing credit amount: $e');
+            pendingBalance = widget.order.paymentStatus == 'CREDIT' ? totalAmount : 0.0;
+          }
+        } else {
+          // Full credit payment
+          pendingBalance = totalAmount;
+        }
+      }
+
+      // Create the document with the receipt content
+      final doc = pw.Document();
+      doc.addPage(
         pw.Page(
-          // Use the printer service to get the appropriate page format
           pageFormat: printerService.getPageFormat(),
-          build: (context) => pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
+          build: (context) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
             children: [
-              // Header Section
-              pw.Center(
-                child: pw.Text(
-                  'MALBROSE HARDWARE AND STORE',
+                // Company logo
+                if (configService.showBusinessLogo && configService.businessLogo != null && configService.businessLogo!.isNotEmpty)
+                  pw.Container(
+                    height: 80,
+                    width: 200,
+                    alignment: pw.Alignment.center,
+                    margin: const pw.EdgeInsets.only(bottom: 10),
+                    child: pw.Image(
+                      pw.MemoryImage(File(configService.businessLogo!).readAsBytesSync()),
+                      fit: pw.BoxFit.contain,
+                ),
+              ),
+                
+                // Company name
+                pw.Text(
+                  configService.businessName,
                   style: pw.TextStyle(
-                    fontSize: 12,
+                    fontSize: 16,
                     fontWeight: pw.FontWeight.bold,
-                  ),
-                  textAlign: pw.TextAlign.center,
                 ),
               ),
-              pw.Center(
-                child: pw.Text(
-                  'Eldoret',
-                  style: pw.TextStyle(
-                    fontSize: 10,
-                  ),
-                ),
-              ),
-              pw.Center(
-                child: pw.Text(
-                  '0720319340, 0721705613',
-                  style: pw.TextStyle(
-                    fontSize: 10,
-                  ),
-                ),
-              ),
+                
+                // Company address and contact info
+                if (configService.businessAddress.isNotEmpty)
+                  pw.Text(configService.businessAddress),
+                
+                if (configService.businessPhone.isNotEmpty)
+                  pw.Text('Tel: ${configService.businessPhone}'),
+                
+                // Company tax information - only show if enabled in settings
+                if (configService.businessEmail.isNotEmpty)
+                  pw.Text('Email: ${configService.businessEmail}'),
+                
               pw.SizedBox(height: 10),
               
-              // Transaction Details
-              pw.Divider(),
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Expanded(
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
+                // Receipt header text if configured
+                if (configService.receiptHeader.isNotEmpty)
                         pw.Text(
-                          'Order #: ${widget.order.orderNumber}',
+                    configService.receiptHeader,
+                    style: const pw.TextStyle(fontSize: 12),
+                        ),
+                
+                pw.SizedBox(height: 8),
+                
+                // Receipt details
+                        pw.Text(
+                  'SALES RECEIPT',
                           style: pw.TextStyle(
                             fontWeight: pw.FontWeight.bold,
-                            fontSize: 10,
                           ),
                         ),
-                        pw.SizedBox(height: 2),
+                
+                pw.Text('No: $_salesReceiptNumber'),
+                
                         pw.Text(
-                          'Receipt #: $_salesReceiptNumber',
-                          style: pw.TextStyle(
-                            fontWeight: pw.FontWeight.bold,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  pw.Expanded(
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.end,
-                      children: [
-                        pw.Text(
-                          'Date: ${DateFormat('yyyy-MM-dd').format(widget.order.orderDate)}',
-                          style: const pw.TextStyle(fontSize: 10),
-                        ),
-                        pw.Text(
-                          'Time: ${DateFormat('HH:mm').format(widget.order.orderDate)}',
-                          style: const pw.TextStyle(fontSize: 10),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              pw.SizedBox(height: 5),
-              pw.Text(
-                'Customer: ${widget.order.customerName ?? "Walk-in"}',
-                style: const pw.TextStyle(fontSize: 10),
-              ),
-              pw.Divider(),
+                  'Date: ${DateFormat(configService.dateTimeFormat.isNotEmpty ? configService.dateTimeFormat : 'yyyy-MM-dd HH:mm').format(DateTime.now())}',
+                ),
+                
+                // Show cashier name if enabled in settings
+                if (configService.showCashierName)
+                  pw.Text('Cashier: ${AuthService.instance.currentUser?.username ?? "Admin"}'),
+                
+                // Customer info if available
+                if (widget.order.customerName != null && widget.order.customerName!.isNotEmpty)
+                  pw.Text('Customer: ${widget.order.customerName}'),
+                
+                pw.SizedBox(height: 10),
               
               // Items Table Header
               pw.Row(
@@ -945,7 +984,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                 );
               }),
               
-              // Total Calculation
+              // Total Calculation with VAT
               pw.Divider(),
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -963,21 +1002,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   pw.Expanded(
                     flex: 1,
                     child: pw.Text(
-                      '',
-                      style: const pw.TextStyle(fontSize: 9),
-                    ),
-                  ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Text(
-                      '',
-                      style: const pw.TextStyle(fontSize: 9),
-                    ),
-                  ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Text(
-                      'KSH ${widget.order.totalAmount.toStringAsFixed(2)}',
+                      'KSH ${totalAmount.toStringAsFixed(2)}',
                       style: pw.TextStyle(
                         fontWeight: pw.FontWeight.bold,
                         fontSize: 10,
@@ -987,6 +1012,52 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   ),
                 ],
               ),
+              
+              // Show VAT breakdown if enabled and configured to show on receipt
+              if (enableVat && showVatOnReceipt) ...[
+                pw.SizedBox(height: 5),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Expanded(
+                      flex: 3,
+                      child: pw.Text(
+                        'VAT (${vatRate.toStringAsFixed(1)}%):',
+                        style: const pw.TextStyle(fontSize: 9),
+                      ),
+                    ),
+                    pw.Expanded(
+                      flex: 1,
+                      child: pw.Text(
+                        'KSH ${vatAmount.toStringAsFixed(2)}',
+                        style: const pw.TextStyle(fontSize: 9),
+                        textAlign: pw.TextAlign.right,
+                      ),
+                    ),
+                  ],
+                ),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Expanded(
+                      flex: 3,
+                      child: pw.Text(
+                        'Net Amount:',
+                        style: const pw.TextStyle(fontSize: 9),
+                      ),
+                    ),
+                    pw.Expanded(
+                      flex: 1,
+                      child: pw.Text(
+                        'KSH ${netAmount.toStringAsFixed(2)}',
+                        style: const pw.TextStyle(fontSize: 9),
+                        textAlign: pw.TextAlign.right,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              
               pw.SizedBox(height: 5),
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -1004,21 +1075,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   pw.Expanded(
                     flex: 1,
                     child: pw.Text(
-                      '',
-                      style: const pw.TextStyle(fontSize: 9),
-                    ),
-                  ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Text(
-                      '',
-                      style: const pw.TextStyle(fontSize: 9),
-                    ),
-                  ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Text(
-                      'KSH ${widget.order.totalAmount.toStringAsFixed(2)}',
+                      'KSH ${totalAmount.toStringAsFixed(2)}',
                       style: pw.TextStyle(
                         fontWeight: pw.FontWeight.bold,
                         fontSize: 10,
@@ -1039,31 +1096,18 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                 ),
               ),
               pw.SizedBox(height: 5),
-              // Use a container for payment details to allow for wrapping long text
-              pw.Container(
-                width: double.infinity,
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text(
-                      'Payment Mode:',
-                      style: pw.TextStyle(
-                        fontSize: 9,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    pw.SizedBox(height: 2),
-                    pw.Text(
-                      // Check if the payment method contains split payment details
-                      widget.order.paymentMethod?.contains(':') == true || 
-                      widget.order.paymentMethod?.contains(',') == true
-                          ? widget.order.paymentMethod!  // Use the full detailed string
-                          : (widget.order.paymentMethod ?? _selectedPaymentMethod),
-                      style: const pw.TextStyle(fontSize: 9),
-                      softWrap: true,
-                    ),
-                  ],
-                ),
+              pw.Row(
+                children: [
+                  pw.Text(
+                    'Payment Mode:',
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                  pw.SizedBox(width: 5),
+                  pw.Text(
+                    widget.order.paymentMethod ?? 'Cash',
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                ],
               ),
               pw.Row(
                 children: [
@@ -1078,6 +1122,74 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   ),
                 ],
               ),
+              
+              // Add who serviced the transaction
+              pw.Row(
+                children: [
+                  pw.Text(
+                    'Serviced by:',
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                  pw.SizedBox(width: 5),
+                  pw.Text(
+                    AuthService.instance.currentUser?.username ?? 'Admin',
+                    style: const pw.TextStyle(fontSize: 9),
+                  ),
+                ],
+              ),
+              
+              // Show pending balance for credit orders
+              if (widget.order.paymentMethod != null && widget.order.paymentMethod!.contains('Credit')) ...[
+                pw.SizedBox(height: 5),
+                pw.Row(
+                  children: [
+                    pw.Text(
+                      'Current Order Balance:',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
+                    ),
+                    pw.SizedBox(width: 5),
+                    pw.Text(
+                      'KSH ${pendingBalance.toStringAsFixed(2)}',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
+                    ),
+                  ],
+                ),
+                
+                // Show total outstanding balance if applicable
+                if (widget.order.customerId != null && (totalOutstandingBalance > 0 || pendingBalance > 0)) ...[
+                  pw.SizedBox(height: 5),
+                  // First show previous outstanding balance if exists
+                  if (totalOutstandingBalance > 0) ...[
+                    pw.Row(
+                      children: [
+                        pw.Text(
+                          'Previous Outstanding Balance:',
+                          style: pw.TextStyle(fontSize: 9),
+                        ),
+                        pw.SizedBox(width: 5),
+                        pw.Text(
+                          'KSH ${totalOutstandingBalance.toStringAsFixed(2)}',
+                          style: pw.TextStyle(fontSize: 9),
+                        ),
+                      ],
+                    ),
+                  ],
+                  // Then show combined total 
+                  pw.Row(
+                    children: [
+                      pw.Text(
+                        'Total Outstanding Balance:',
+                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9, color: const PdfColor.fromInt(0xffff0000)),
+                      ),
+                      pw.SizedBox(width: 5),
+                      pw.Text(
+                        'KSH ${(totalOutstandingBalance + pendingBalance).toStringAsFixed(2)}',
+                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9, color: const PdfColor.fromInt(0xffff0000)),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
               
               // Footer Section
               pw.SizedBox(height: 10),
@@ -1111,14 +1223,15 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
               // Extra space for thermal printer cutting
               pw.SizedBox(height: 20),
             ],
-          ),
+            );
+          }
         ),
       );
 
       // Use the printer service to print the PDF
       await printerService.printPdf(
-        pdf: pdf,
-        documentName: '$salePrefix-${widget.order.orderNumber}',
+        pdf: doc,
+        documentName: 'Receipt-${widget.order.orderNumber}',
         context: context,
       );
     } catch (e) {
@@ -1506,7 +1619,7 @@ class _ReceiptPanelState extends State<ReceiptPanel> {
                   
                   // Bypass the normal _completeSale() flow to avoid the loop
                   // Instead, directly complete the sale with the effective payment method
-                  _directlyCompleteSale(effectivePaymentMethod, remainingCredit);
+                  await _directlyCompleteSale(effectivePaymentMethod, remainingCredit);
                   
                   // Skip the credit record creation since we'll handle it in _directlyCompleteSale
                   // But we still want to log the split payment if applicable

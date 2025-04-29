@@ -10,6 +10,7 @@ import 'package:my_flutter_app/services/auth_service.dart';
 import 'package:my_flutter_app/widgets/side_menu_widget.dart';
 import 'package:my_flutter_app/widgets/receipt_panel.dart';
 import 'package:my_flutter_app/widgets/order_cart_panel.dart';
+import 'package:my_flutter_app/widgets/order_receipt_dialog.dart';
 import 'dart:convert';
 
 class SalesScreen extends StatefulWidget {
@@ -366,6 +367,16 @@ class _SalesScreenState extends State<SalesScreen> {
       await OrderService.instance.refreshStats();
       
       if (mounted) {
+        // Get the updated order with final payment details
+        final updatedOrderData = await DatabaseService.instance.getOrderById(order.id!);
+        if (updatedOrderData != null) {
+          // Create a fresh order object with updated data
+          final updatedOrder = Order.fromMap(updatedOrderData);
+          
+          // Show receipt dialog AFTER completing the sale
+          await _showCompletedReceipt(updatedOrder);
+        }
+        
         setState(() {
           _selectedOrder = null;
         });
@@ -385,6 +396,92 @@ class _SalesScreenState extends State<SalesScreen> {
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+  
+  // Add a new method to show the receipt after completing the sale
+  Future<void> _showCompletedReceipt(Order order) async {
+    try {
+      // Fetch order items with all details
+      final items = await DatabaseService.instance.getOrderItems(order.id!);
+      
+      // Get customer's total outstanding balance if customer ID exists
+      double totalOutstandingBalance = 0.0;
+      if (order.customerId != null) {
+        totalOutstandingBalance = await DatabaseService.instance.getCustomerTotalOutstandingBalance(order.customerId!);
+      }
+      
+      // Parse payment method
+      final paymentMethod = order.paymentMethod ?? 'Cash';
+      
+      // Calculate credit amount for credit or split payments
+      double? creditAmount;
+      double totalAmount = order.totalAmount ?? 0.0;
+      
+      // For full credit payments
+      if (paymentMethod == 'Credit') {
+        creditAmount = totalAmount;
+      }
+      // For split payments with credit component (e.g., "Mobile: KSH 200.00, Credit: KSH 100.00")
+      else if (paymentMethod.contains('Credit:')) {
+        try {
+          final parts = paymentMethod.split(',');
+          for (final part in parts) {
+            if (part.toLowerCase().contains('credit')) {
+              final creditPart = part.trim();
+              final amountStr = creditPart.split('KSH').last.trim();
+              creditAmount = double.parse(amountStr);
+              break;
+            }
+          }
+        } catch (e) {
+          print('Error parsing credit amount: $e');
+        }
+      }
+      
+      // Create OrderItems from the database items
+      final orderItems = items.map((item) => OrderItem.fromMap(item)).toList();
+      
+      // Create an updated order with the items
+      final receiptOrder = order.copyWith(items: orderItems);
+      
+      // Show the receipt dialog using OrderReceiptDialog
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Sale Completed'),
+          content: const Text('The sale has been successfully completed.'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                
+                // Show the printed receipt
+                showDialog(
+                  context: context,
+                  builder: (context) => OrderReceiptDialog(
+                    items: orderItems.map((item) => CartItem.fromOrderItem(item)).toList(),
+                    customerName: receiptOrder.customerName ?? 'Walk-in Customer',
+                    paymentMethod: receiptOrder.paymentMethod ?? 'Cash',
+                    showPrintButton: true,
+                    outstandingBalance: totalOutstandingBalance,
+                    creditAmount: creditAmount,
+                  ),
+                );
+              },
+              child: const Text('View Receipt'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      print('Error showing receipt: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error showing receipt: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 

@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:async/async.dart';
 import 'package:http/http.dart' as http;
 import 'package:my_flutter_app/services/machine_config_service.dart';
+import 'package:my_flutter_app/services/ssl_service.dart';
+import 'package:dio/dio.dart';
 
 /// Service for discovering master devices on the network using efficient broadcast-based methods
 class NetworkDiscoveryService {
@@ -279,209 +281,168 @@ class NetworkDiscoveryService {
     }
   }
   
-  /// Discover master devices on the network
-  /// Returns a list of discovered master devices
-  Future<List<MasterInfo>> discoverMasters({bool useCache = true}) {
-    // Check if we have a recent cache and useCache is true
-    final now = DateTime.now();
-    if (useCache && 
-        _cache.isNotEmpty && 
-        now.difference(_lastFullDiscovery).inSeconds < 30) {
-      return Future.value(_cache.values.toList());
-    }
-    
-    // Check if we're already busy
-    if (_busy || _isDisposed) {
-      return Future.value(_cache.values.toList());
-    }
-    
-    _setBusy(true);
-    
-    // Clear cache for fresh discovery
-    if (!useCache) {
-      _cache.clear();
-    }
-    
-    return _doDiscoverMasters(now).whenComplete(() {
-      _setBusy(false);
-    });
-  }
-  
-  Future<List<MasterInfo>> _doDiscoverMasters(DateTime startTime) async {
-    // Ensure socket is initialized
-    if (_socket == null) {
-      try {
-        await initialize();
-      } catch (e) {
-        debugPrint('Failed to initialize for discovery: $e');
-        return _cache.values.toList();
-      }
-    }
-    
-    // Update statistics
-    _discoveryStatistics['last_discovery_time'] = startTime.toIso8601String();
-    _lastFullDiscovery = startTime;
-    
-    // Create the completer for async result
-    final resultCompleter = Completer<List<MasterInfo>>();
-    
-    // Set timeout for discovery operation
-    Timer? timeoutTimer;
-    timeoutTimer = Timer(DISCOVERY_TIMEOUT, () {
-      if (!resultCompleter.isCompleted) {
-        resultCompleter.complete(_cache.values.toList());
-        debugPrint('Discovery operation timed out');
-      }
-    });
-    
+  /// Discover available master devices on the network
+  Future<List<MasterInfo>> discoverMasters({bool forceFullDiscovery = false}) async {
     try {
-      // Make sure we have a socket
-      final socket = _socket;
-      if (socket == null) {
-        if (!resultCompleter.isCompleted) {
-          resultCompleter.complete([]);
+      if (_busy && !forceFullDiscovery) {
+        // If busy, return cached results if available
+        if (_cache.isNotEmpty) {
+          return _cache.values.toList();
         }
-        timeoutTimer.cancel();
         return [];
       }
       
-      // Get machine ID safely
-      final machineId = await MachineConfigService.instance.machineId;
-      
-      if (_isDisposed || resultCompleter.isCompleted) {
-        timeoutTimer.cancel();
-        return _cache.values.toList();
-      }
-        
+      _busy = true;
       try {
-        // Discovery message
+        // Initialize if needed
+        if (_socket == null) {
+          await initialize();
+        }
+        
+        debugPrint('Discovering masters on network via broadcast...');
+        
+        // Update discovery statistics
+        _discoveryStatistics['broadcasts_sent'] = 
+            (_discoveryStatistics['broadcasts_sent'] as int) + 1;
+        _discoveryStatistics['last_discovery_time'] = 
+            DateTime.now().millisecondsSinceEpoch;
+        
+        // Clear cache before starting a new discovery
+        if (forceFullDiscovery) {
+        _cache.clear();
+        }
+        _lastFullDiscovery = DateTime.now();
+        
+        // Send broadcast message
+        final broadcastAddress = InternetAddress('255.255.255.255');
         final message = jsonEncode({
           'action': DISCOVERY_ACTION,
-          'machine_id': machineId,
           'timestamp': DateTime.now().millisecondsSinceEpoch,
         });
         
-        // Check if socket is still available
-        if (_socket == null || _isDisposed) {
-          if (!resultCompleter.isCompleted) {
-            resultCompleter.complete(_cache.values.toList());
-          }
-          timeoutTimer.cancel();
-          return _cache.values.toList();
-        }
-        
-        // Send broadcast message to all devices on network
-        final broadcastBytes = socket.send(
-          utf8.encode(message),
-          InternetAddress('255.255.255.255'),
-          DISCOVERY_PORT
-        );
-        debugPrint('Sent broadcast message ($broadcastBytes bytes)');
-        
-        // Update statistics
-        _incrementStatistic('broadcasts_sent');
-        
-        // Also try common subnet broadcasts for networks that block global broadcast
-        for (final subnet in ['192.168.1.255', '192.168.0.255', '10.0.0.255']) {
-          // Check if socket is still valid
-          if (_socket == null || _isDisposed) break;
-          
-          final subnetBytes = socket.send(
-            utf8.encode(message),
-            InternetAddress(subnet),
+        final socket = _socket;
+        if (socket != null) {
+          socket.send(
+            utf8.encode(message), 
+            broadcastAddress, 
             DISCOVERY_PORT
           );
-          debugPrint('Sent subnet broadcast to $subnet ($subnetBytes bytes)');
-          
-          // Update statistics
-          _incrementStatistic('broadcasts_sent');
+        } else {
+          throw Exception('Socket not initialized');
         }
         
-        // Schedule completion after timeout
-        Future.delayed(DISCOVERY_TIMEOUT).then((_) {
-          if (!resultCompleter.isCompleted) {
-            resultCompleter.complete(_cache.values.toList());
-          }
-        });
-          
-      } catch (e) {
-        debugPrint('Error sending discovery broadcast: $e');
-        if (!resultCompleter.isCompleted) {
-          resultCompleter.complete(_cache.values.toList());
-        }
+        // Wait for responses
+        await Future.delayed(DISCOVERY_TIMEOUT);
+        
+        return _cache.values.toList();
+      } finally {
+        _busy = false;
       }
     } catch (e) {
-      debugPrint('Error in discovery process: $e');
-      if (!resultCompleter.isCompleted) {
-        resultCompleter.complete(_cache.values.toList());
-      }
-    }
-    
-    // Wait for completion (either by responses or timeout)
-    final result = await resultCompleter.future;
-    timeoutTimer.cancel();
-    return result;
-  }
-  
-  /// Test connection to a master by IP address
-  Future<bool> testMasterConnection(String ip, [int port = 8080]) async {
-    if (_isDisposed) {
-      return false;
-    }
-    
-    try {
-      // Build the URL
-      final uri = Uri.parse('http://$ip:$port/api/status');
-      
-      // Set a timeout to avoid hanging
-      final response = await http.get(uri)
-          .timeout(CONNECTION_TEST_TIMEOUT, onTimeout: () {
-            throw TimeoutException('Connection timed out');
-          });
-      
-      // Update statistics
-      _incrementStatistic('successful_connections');
-      
-      // Check if master is in our cache and notify if connection was successful
-      if (_cache.containsKey(ip) && !_masterDisconnectedEvents.isClosed) {
-        // Don't notify here - this is a successful connection
-      }
-      
-      return response.statusCode == 200;
-    } catch (e) {
-      debugPrint('Error testing connection to master at $ip:$port: $e');
-      
-      // Update statistics
-      _incrementStatistic('failed_connections');
-      
-      // If we have this master in our cache, send a disconnection event
-      if (_cache.containsKey(ip) && !_masterDisconnectedEvents.isClosed) {
-        _masterDisconnectedEvents.add(_cache[ip]!);
-      }
-      
-      return false;
+      debugPrint('Error discovering masters: $e');
+      // Record failure in statistics
+      _discoveryStatistics['failed_connections'] = 
+          (_discoveryStatistics['failed_connections'] as int) + 1;
+      return [];
     }
   }
   
-  /// Test connection with retry logic for more reliability
-  Future<bool> testMasterConnectionWithRetry(String ip, [int port = 8080, int retries = 3]) async {
+  // Test connection to discovered master
+  Future<bool> testMasterConnection(MasterInfo masterInfo) async {
     if (_isDisposed) return false;
     
-    final actualRetries = retries.clamp(1, MAX_RETRIES);
+    String url = '${masterInfo.connectionUrl}/ping';
     
-    for (int i = 0; i < actualRetries; i++) {
-      final result = await testMasterConnection(ip, port);
-      if (result) return true;
+    try {
+      // Use the SSL service to handle self-signed certificates
+      final client = masterInfo.secure 
+          ? SSLService.instance.getDioClient() 
+          : Dio();
       
-      // Wait before retrying with exponential backoff
-      if (i < actualRetries - 1) {
-        await Future.delayed(Duration(milliseconds: 500 * (i + 1)));
+      final startTime = DateTime.now();
+      final response = await client.get(url).timeout(
+        CONNECTION_TEST_TIMEOUT,
+        onTimeout: () {
+          throw TimeoutException('Connection test timed out');
+        },
+      );
+      final endTime = DateTime.now();
+      
+      // Update response time statistics
+      final responseTimeMs = endTime.difference(startTime).inMilliseconds;
+      _updateAverageResponseTime(responseTimeMs);
+      
+      // Check if response is valid
+      if (response.statusCode == 200) {
+        _incrementStatistic('successful_connections');
+        return true;
       }
       
-      // Check if service has been disposed during retry
-      if (_isDisposed) return false;
+      _incrementStatistic('failed_connections');
+      return false;
+    } catch (e) {
+      debugPrint('Error testing connection to master at $url: $e');
+      _incrementStatistic('failed_connections');
+      return false;
     }
-    return false;
+  }
+  
+  // Update average response time statistic
+  void _updateAverageResponseTime(int newTimeMs) {
+    try {
+      final currentAvg = _discoveryStatistics['average_response_time_ms'] as int;
+      final currentCount = _discoveryStatistics['responses_received'] as int;
+      
+      // Calculate new average
+      if (currentCount == 1) {
+        // First response, set directly
+        _discoveryStatistics['average_response_time_ms'] = newTimeMs;
+      } else {
+        // Weighted average to prevent outliers from skewing too much
+        final newAvg = ((currentAvg * (currentCount - 1)) + newTimeMs) / currentCount;
+        _discoveryStatistics['average_response_time_ms'] = newAvg.round();
+      }
+    } catch (e) {
+      debugPrint('Error updating average response time: $e');
+    }
+  }
+  
+  // Helper method to discover masters and retrieve their SSL certificates
+  void _onDiscoverMasterWithCertificate() {
+    onMasterDiscovered.listen((masterInfo) async {
+      // For secure masters, try to retrieve their certificate
+      if (masterInfo.secure) {
+        try {
+          // First check if we can connect without issues
+          if (await testMasterConnection(masterInfo)) {
+            debugPrint('Successfully connected to secure master at ${masterInfo.connectionUrl}');
+            return;
+          }
+          
+          // Try to fetch certificate
+          final certUrl = '${masterInfo.ip}:${masterInfo.port}/cert';
+          debugPrint('Fetching certificate from $certUrl');
+          
+          // Use regular http client since we can't trust the cert yet
+          final response = await http.get(Uri.parse('http://$certUrl'))
+              .timeout(const Duration(seconds: 5));
+          
+          if (response.statusCode == 200) {
+            final certData = response.body;
+            // Add certificate to trusted store
+            await SSLService.instance.addTrustedCertificate(certData);
+            debugPrint('Added certificate from ${masterInfo.ip} to trusted store');
+            
+            // Try connection again with the certificate
+            if (await testMasterConnection(masterInfo)) {
+              debugPrint('Successfully connected to secure master after adding certificate');
+    }
+          }
+        } catch (e) {
+          debugPrint('Error fetching certificate from ${masterInfo.ip}: $e');
+        }
+      }
+    });
   }
   
   /// Start master discovery server to listen for discovery requests
@@ -565,7 +526,7 @@ class NetworkDiscoveryService {
         }
         
         const httpPort = 8080; // This should be the actual port your HTTP server is running on
-        const secureMode = false; // Replace with actual implementation
+        const secureMode = true; // Now using secure mode by default
         
         // Create response with all required fields
         final response = jsonEncode({

@@ -411,4 +411,26 @@ class ConfigService {
       return false;
     }
   }
+
+  // Get boolean value from preferences
+  Future<bool?> getBoolean(String key) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(key);
+    } catch (e) {
+      debugPrint('Error getting boolean value: $e');
+      return null;
+    }
+  }
+
+  // Set boolean value in preferences
+  Future<bool> setBoolean(String key, bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return await prefs.setBool(key, value);
+    } catch (e) {
+      debugPrint('Error setting boolean value: $e');
+      return false;
+    }
+  }
 } 

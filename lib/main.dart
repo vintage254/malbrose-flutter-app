@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -36,6 +37,9 @@ import 'package:my_flutter_app/services/backup_service.dart';
 import 'package:my_flutter_app/screens/license_check_screen.dart';
 import 'package:my_flutter_app/services/connectivity_manager.dart';
 import 'package:my_flutter_app/services/machine_config_service.dart';
+import 'package:my_flutter_app/services/ssl_service.dart';
+import 'package:my_flutter_app/services/audit_service.dart';
+import 'package:my_flutter_app/services/encryption_service.dart';
 
 void main() async {
 
@@ -83,6 +87,12 @@ void main() async {
   bool setupCompleted = await checkSetupCompleted();
   print('Setup completed: $setupCompleted');
   
+  // Initialize SSL Service
+  print('Initializing SSLService...');
+  bool devMode = await ConfigService.instance.getBoolean('dev_mode') ?? false;
+  await SSLService.instance.initialize(developmentMode: devMode);
+  print('SSLService initialized in ${devMode ? "development" : "production"} mode');
+  
   // Initialize connectivity manager if setup is completed
   if (setupCompleted) {
     try {
@@ -98,6 +108,22 @@ void main() async {
     } catch (e) {
       print('Error initializing ConnectivityManager: $e');
     }
+  }
+
+  // Initialize other services
+  try {
+    await DatabaseService.instance.initialize();
+    await EncryptionService.instance.initialize();
+    await SSLService.instance.initialize();
+    await AuditService.instance.initialize();
+    
+    // Log application start
+    await AuditService.instance.logSecurityEvent(
+      action: 'app_start',
+      message: 'Application started',
+    );
+  } catch (e) {
+    debugPrint('Error initializing services: $e');
   }
 
   // Start the app with providers
@@ -117,6 +143,12 @@ void main() async {
 
 // Check if setup is completed
 Future<bool> checkSetupCompleted() async {
+  // DEBUG MODE CHECK REMOVED - No longer forcing setup wizard in debug mode
+  // if (kDebugMode) {
+  //   print('DEBUG MODE: Forcing setup wizard to appear');
+  //   return false;
+  // }
+
   try {
     // Check if database is initialized
     await DatabaseService.instance.initialize();

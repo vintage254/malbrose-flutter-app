@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:my_flutter_app/services/audit_service.dart';
 
 class BackupService {
   static final BackupService instance = BackupService._init();
@@ -851,6 +852,79 @@ class BackupService {
     } catch (e) {
       debugPrint('Error exporting orders as CSV: $e');
       rethrow;
+    }
+  }
+
+  // Export tables as CSV files
+  Future<String> exportTablesAsCSV(List<String> tables) async {
+    try {
+      // Create a directory for the exported files
+      final appDocDir = await getApplicationDocumentsDirectory();
+      final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+      final exportDir = Directory('${appDocDir.path}/exports/csv_export_$timestamp');
+      
+      if (!await exportDir.exists()) {
+        await exportDir.create(recursive: true);
+      }
+      
+      // Get the database
+      final db = await DatabaseService.instance.database;
+      
+      // Export each table
+      for (final table in tables) {
+        // Query all data from the table
+        final data = await db.query(table);
+        
+        if (data.isEmpty) {
+          debugPrint('Table $table is empty, skipping export');
+          continue;
+        }
+        
+        // Create CSV file for this table
+        final file = File('${exportDir.path}/${table}.csv');
+        final sink = file.openWrite();
+        
+        // Write header row
+        final headers = data.first.keys.toList();
+        sink.writeln(headers.map((h) => '"$h"').join(','));
+        
+        // Write data rows
+        for (final row in data) {
+          final values = headers.map((header) {
+            final value = row[header];
+            // Handle different types of values
+            if (value == null) {
+              return '';
+            } else if (value is String) {
+              // Escape quotes in strings
+              return '"${value.replaceAll('"', '""')}"';
+            } else {
+              return value.toString();
+            }
+          }).toList();
+          
+          sink.writeln(values.join(','));
+        }
+        
+        // Close the file
+        await sink.flush();
+        await sink.close();
+        
+        debugPrint('Exported ${data.length} rows from $table to CSV');
+      }
+      
+      // Log the export operation
+      await AuditService.instance.logEvent(
+        eventType: 'export',
+        action: 'export_csv',
+        message: 'Exported ${tables.length} tables as CSV',
+        details: {'tables': tables.join(', ')}
+      );
+      
+      return exportDir.path;
+    } catch (e) {
+      debugPrint('Error exporting tables to CSV: $e');
+      throw Exception('Failed to export tables: $e');
     }
   }
 }

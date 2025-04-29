@@ -286,7 +286,7 @@ class MasterRedundancyService {
   /// Get a list of available master machines on the network
   Future<List<MasterInfo>> _getAvailableMasters() async {
     try {
-      return await NetworkDiscoveryService.instance.discoverMasters(useCache: false);
+      return await NetworkDiscoveryService.instance.discoverMasters();
     } catch (e) {
       debugPrint('Error discovering masters: $e');
       return [];

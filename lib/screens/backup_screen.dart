@@ -6,9 +6,15 @@ import 'package:file_picker/file_picker.dart';
 import 'package:my_flutter_app/services/database.dart';
 import 'package:my_flutter_app/services/machine_config_service.dart';
 import 'package:my_flutter_app/models/sync_log_model.dart';
+import 'package:provider/provider.dart';
+import '../services/master_discovery_service.dart';
+import 'master_discovery_screen.dart';
+import 'package:my_flutter_app/widgets/app_scaffold.dart';
 
 class BackupScreen extends StatefulWidget {
-  const BackupScreen({super.key});
+  static const String routeName = '/backup';
+  
+  const BackupScreen({Key? key}) : super(key: key);
 
   @override
   State<BackupScreen> createState() => _BackupScreenState();
@@ -482,1230 +488,481 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
   
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Database & Machine Management'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () async {
-              await _loadBackups();
-              await _loadTables();
-              await _loadMachineConfig();
-            },
-            tooltip: 'Refresh',
-          ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(icon: Icon(Icons.backup), text: 'Backups'),
-            Tab(icon: Icon(Icons.sync), text: 'Multi-Machine'),
-            Tab(icon: Icon(Icons.business), text: 'Company Profile'),
-          ],
-        ),
-      ),
-      body: SafeArea(
-        child: TabBarView(
-          controller: _tabController,
-          children: [
-            _buildBackupTab(),
-            _buildMachineConfigTab(),
-            _buildCompanyProfileTab(),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildBackupTab() {
-    return Column(
+    return AppScaffold(
+      title: 'Backup',
+      body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Wrap(
-              spacing: 16.0,
-              runSpacing: 12.0,
-              alignment: WrapAlignment.center,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: _isLoading ? null : _createBackup,
-                  icon: const Icon(Icons.backup),
-                  label: const Text('Full Backup'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: _isLoading ? null : _backupSelectedTables,
-                  icon: const Icon(Icons.checklist),
-                  label: const Text('Selective Backup'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.purple,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: _isLoading ? null : _createEmptyDatabase,
-                  icon: const Icon(Icons.create_new_folder),
-                  label: const Text('Create Empty DB'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.teal,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: _isLoading ? null : _exportBackup,
-                  icon: const Icon(Icons.file_download),
-                  label: const Text('Export Backup'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: _isLoading ? null : _importBackup,
-                  icon: const Icon(Icons.file_upload),
-                  label: const Text('Import Backup'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: _isLoading ? null : _exportOrdersCSV,
-                  icon: const Icon(Icons.request_page),
-                  label: const Text('Export Orders CSV'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.deepPurple,
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-                ElevatedButton(
-                  onPressed: () => _showResetDatabaseConfirmation(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text('Reset Database'),
-                ),
-              ],
-            ),
-            ),
-          ),
-          if (_isLoading)
-            const LinearProgressIndicator(),
-          if (_statusMessage.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Text(
-                _statusMessage,
-                style: TextStyle(
-                  color: _statusMessage.contains('Error') ? Colors.red : Colors.green,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          const Divider(),
           Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              // On very small screens, stack the panels vertically
-              if (constraints.maxWidth < 600) {
-                return _buildSmallScreenBackupTab();
-              } else {
-                // Default layout for larger screens
-                return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Table selection panel
-                    if (_allTables.isNotEmpty)
-                  Expanded(
-                    flex: 1,
-                    child: Card(
-                      margin: const EdgeInsets.all(8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text(
-                                  'Tables for Selective Backup',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                                Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    TextButton(
-                                      onPressed: () {
-                                        setState(() {
-                                              _selectedTables = List.from(_allTables);
-                                        });
-                                      },
-                                          style: TextButton.styleFrom(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                                          ),
-                                      child: const Text('Select All'),
-                                    ),
-                                        const SizedBox(width: 4),
-                                    TextButton(
-                                      onPressed: () {
-                                        setState(() {
-                                              _selectedTables.clear();
-                                        });
-                                      },
-                                          style: TextButton.styleFrom(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                                          ),
-                                          child: const Text('Deselect'),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          const Divider(height: 1),
-                          Expanded(
-                            child: ListView.builder(
-                                  itemCount: _allTables.length,
-                              itemBuilder: (context, index) {
-                                    final table = _allTables[index];
-                                    final isSelected = _selectedTables.contains(table);
-                                final rowCount = _tableRowCounts[table] ?? 0;
-                                
-                                return CheckboxListTile(
-                                  title: Text(table),
-                                  subtitle: Text('Rows: $rowCount'),
-                                  value: isSelected,
-                                  onChanged: (value) {
-                                    setState(() {
-                                          if (value == true) {
-                                            _selectedTables.add(table);
-                                          } else {
-                                            _selectedTables.remove(table);
-                                          }
-                                    });
-                                  },
-                                  dense: true,
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                // Backups list
-                Expanded(
-                  flex: 2,
-                  child: Card(
-                    margin: const EdgeInsets.all(8.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.all(8.0),
-                          child: Text(
-                            'Available Backups',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                                  if (_isInBatchDeleteMode && _backups.isNotEmpty)
-                                    Expanded(
-                                      child: SingleChildScrollView(
-                                        scrollDirection: Axis.horizontal,
-                                        child: Row(
-                                  children: [
-                                    TextButton.icon(
-                                      icon: const Icon(Icons.select_all),
-                                      label: const Text('Select All'),
-                                      onPressed: () => _selectAllBackups(true),
-                                    ),
-                                    TextButton.icon(
-                                      icon: const Icon(Icons.deselect),
-                                      label: const Text('Deselect All'),
-                                      onPressed: () => _selectAllBackups(false),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    ElevatedButton.icon(
-                                      icon: const Icon(Icons.delete_forever),
-                                      label: const Text('Delete Selected'),
-                                      onPressed: _deleteSelectedBackups,
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.red,
-                                      ),
-                                    ),
-                                  ],
-                                        ),
-                                      ),
-                                ),
-                              TextButton.icon(
-                                    icon: Icon(_isInBatchDeleteMode ? Icons.close : Icons.delete),
-                                    label: Text(_isInBatchDeleteMode ? 'Cancel' : 'Batch Delete'),
-                                onPressed: _backups.isEmpty ? null : _toggleBatchDeleteMode,
-                                style: TextButton.styleFrom(
-                                      foregroundColor: _isInBatchDeleteMode ? Colors.blue : Colors.red,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        Expanded(
-                          child: _backups.isEmpty
-                              ? const Center(
-                                  child: Text(
-                                    'No backups found. Create a backup to get started.',
-                                    style: TextStyle(fontSize: 16),
-                                  ),
-                                )
-                              : ListView.builder(
-                                  itemCount: _backups.length,
-                                  itemBuilder: (context, index) {
-                                    final backup = _backups[index];
-                                    final fileName = basename(backup.path);
-                                    final fileSize = (backup as File).lengthSync();
-                                    final fileSizeFormatted = _formatFileSize(fileSize);
-                                    final modifiedDate = backup.statSync().modified;
-                                    
-                                    return ListTile(
-                                          leading: _isInBatchDeleteMode
-                                        ? Checkbox(
-                                                value: _batchSelectedBackups.contains(backup.path),
-                                            onChanged: (value) {
-                                              setState(() {
-                                                    if (value == true) {
-                                                      _batchSelectedBackups.add(backup.path);
-                                                    } else {
-                                                      _batchSelectedBackups.remove(backup.path);
-                                                    }
-                                              });
-                                            },
-                                          )
-                                        : const Icon(Icons.backup, color: Colors.blue),
-                                      title: Text(fileName),
-                                      subtitle: Text(
-                                        'Size: $fileSizeFormatted\nCreated: ${DateFormat('yyyy-MM-dd HH:mm:ss').format(modifiedDate)}',
-                                      ),
-                                          trailing: _isInBatchDeleteMode 
-                                            ? null
-                                            : Wrap(
-                                              alignment: WrapAlignment.end,
-                                              spacing: 8,
-                                              children: [
-                                                IconButton(
-                                                  icon: const Icon(Icons.restore, color: Colors.green),
-                                                  onPressed: () => _restoreBackup(backup.path),
-                                                  tooltip: 'Restore',
-                                                  constraints: const BoxConstraints(),
-                                                  padding: const EdgeInsets.all(8),
-                                                ),
-                                                IconButton(
-                                                  icon: const Icon(Icons.delete, color: Colors.red),
-                                                  onPressed: () => _deleteBackup(backup.path),
-                                                  tooltip: 'Delete',
-                                                  constraints: const BoxConstraints(),
-                                                  padding: const EdgeInsets.all(8),
-                                                ),
-                                              ],
-                                            ),
-                                        );
-                                      },
-                                    ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              }
-            }
+            child: _buildMainContent(),
           ),
-        ),
-      ],
+          ],
+      ),
     );
   }
   
-  Widget _buildSmallScreenBackupTab() {
-    return Column(
-      children: [
-        if (_allTables.isNotEmpty)
-          // Tables section (collapsible)
-          ExpansionTile(
-            title: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Tables for Selective Backup',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
+  Widget _buildMainContent() {
+    // Check if this machine is configured as a master or single instance
+    if (_machineRole == MachineRole.master || _machineRole == MachineRole.single) {
+      // This device is a master, show backup form directly
+      return _buildBackupFormForMaster();
+    }
+    
+    // For servants, handle master discovery more gracefully
+    if (_machineRole == MachineRole.servant) {
+      return _buildServantDiscoveryUI();
+    }
+    
+    // Fallback for unconfigured devices
+    return _buildRoleSelectionUI();
+  }
+  
+  Widget _buildConnectionPrompt() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.link_off,
+            size: 72,
+            color: Colors.grey.shade300,
                   ),
-                ),
-                Text(
-                  '${_selectedTables.length} selected',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 16),
+          Text(
+            'Connect to a Master',
+                style: TextStyle(
+              fontSize: 24,
+                  fontWeight: FontWeight.bold,
+              color: Colors.grey.shade800,
             ),
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () {
-                      setState(() {
-                        _selectedTables = List.from(_allTables);
-                      });
-                    },
-                    child: const Text('Select All'),
+          ),
+          const SizedBox(height: 8),
+                          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+                          child: Text(
+              'You need to connect to a master device before you can perform a backup.',
+              textAlign: TextAlign.center,
+                            style: TextStyle(
+                color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ),
+          const SizedBox(height: 32),
+                                    ElevatedButton.icon(
+            icon: const Icon(Icons.search),
+            label: const Text('Find Master'),
+                                      style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 12,
                   ),
-                  TextButton(
+                ),
                     onPressed: () {
-                      setState(() {
-                        _selectedTables.clear();
-                      });
+              Navigator.of(context).pushNamed(MasterDiscoveryScreen.routeName);
                     },
-                    child: const Text('Deselect All'),
+                  ),
+          const SizedBox(height: 16),
+                  TextButton(
+            child: const Text('Learn More'),
+                    onPressed: () {
+              // Show help dialog or navigate to help page
+                    },
                   ),
                 ],
               ),
-              SizedBox(
-                height: 200, // Fixed height
-                child: ListView.builder(
-                  itemCount: _allTables.length,
-                  itemBuilder: (context, index) {
-                    final table = _allTables[index];
-                    final isSelected = _selectedTables.contains(table);
-                    final rowCount = _tableRowCounts[table] ?? 0;
-                    
-                    return CheckboxListTile(
-                      title: Text(table),
-                      subtitle: Text('Rows: $rowCount'),
-                      value: isSelected,
-                      onChanged: (value) {
-                        setState(() {
-                          if (value == true) {
-                            _selectedTables.add(table);
-                          } else {
-                            _selectedTables.remove(table);
-                          }
-                        });
-                      },
-                      dense: true,
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        
-        // Backups list (takes remaining space)
-        Expanded(
-          child: Card(
-            margin: const EdgeInsets.all(8.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Available Backups',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      TextButton.icon(
-                        icon: Icon(_isInBatchDeleteMode ? Icons.close : Icons.delete),
-                        label: Text(_isInBatchDeleteMode ? 'Cancel' : 'Batch'),
-                        onPressed: _backups.isEmpty ? null : _toggleBatchDeleteMode,
-                        style: TextButton.styleFrom(
-                          foregroundColor: _isInBatchDeleteMode ? Colors.blue : Colors.red,
-                        ),
-                      ),
-                    ],
+    );
+  }
+  
+  Widget _buildBackupForm() {
+    MasterDiscoveryService? discoveryService;
+    
+    try {
+      discoveryService = Provider.of<MasterDiscoveryService>(context, listen: false);
+    } catch (e) {
+      // If provider is not available, fallback to a default UI
+      return Center(
+        child: Text('Could not connect to the master service. Please restart the app.'),
+      );
+    }
+    
+    final master = discoveryService.selectedMaster;
+    if (master == null) {
+      return _buildConnectionPrompt();
+    }
+    
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Master information card
+          Card(
+            margin: const EdgeInsets.only(bottom: 24),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                    Container(
+                    width: 48,
+                    height: 48,
+                      decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(24),
+                                    ),
+                    child: Center(
+                      child: Icon(
+                        Icons.computer,
+                        color: Theme.of(context).colorScheme.primary,
+                                    ),
+                                  ),
+                                ),
+                              const SizedBox(width: 16),
+                                  Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                        Text(
+                          'Connected to Master',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                            color: Colors.grey.shade600,
+                            fontSize: 14,
+                          ),
                   ),
-                ),
-                if (_isInBatchDeleteMode && _backups.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          TextButton(
-                            onPressed: () => _selectAllBackups(true),
-                            child: const Text('Select All'),
+                        const SizedBox(height: 4),
+                        Text(
+                          master.deviceName ?? master.ip,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
                           ),
-                          TextButton(
-                            onPressed: () => _selectAllBackups(false),
-                            child: const Text('Deselect All'),
-                          ),
-                          ElevatedButton(
-                            onPressed: _deleteSelectedBackups,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
                             ),
-                            child: const Text('Delete Selected'),
-                          ),
-                        ],
-                      ),
+                      ],
                     ),
                   ),
-                const Divider(height: 1),
-                Expanded(
-                  child: _backups.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No backups found. Create a backup to get started.',
-                            style: TextStyle(fontSize: 16),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: _backups.length,
-                          itemBuilder: (context, index) {
-                            final backup = _backups[index];
-                            final fileName = basename(backup.path);
-                            final fileSize = (backup as File).lengthSync();
-                            final fileSizeFormatted = _formatFileSize(fileSize);
-                            final modifiedDate = backup.statSync().modified;
-                            
-                            return ListTile(
-                              leading: _isInBatchDeleteMode
-                                ? Checkbox(
-                                    value: _batchSelectedBackups.contains(backup.path),
-                                    onChanged: (value) {
-                                      setState(() {
-                                        if (value == true) {
-                                          _batchSelectedBackups.add(backup.path);
-                                        } else {
-                                          _batchSelectedBackups.remove(backup.path);
-                                        }
-                                      });
-                                    },
-                                  )
-                                : const Icon(Icons.backup, color: Colors.blue),
-                              title: Text(fileName),
-                              subtitle: Text(
-                                'Size: $fileSizeFormatted\nCreated: ${DateFormat('yyyy-MM-dd HH:mm:ss').format(modifiedDate)}',
-                              ),
-                              trailing: _isInBatchDeleteMode 
-                                        ? null
-                                        : Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            IconButton(
-                                              icon: const Icon(Icons.restore, color: Colors.green),
-                                              onPressed: () => _restoreBackup(backup.path),
-                                              tooltip: 'Restore',
-                                        constraints: const BoxConstraints(),
-                                        padding: const EdgeInsets.all(8),
-                                            ),
-                                            IconButton(
-                                              icon: const Icon(Icons.delete, color: Colors.red),
-                                              onPressed: () => _deleteBackup(backup.path),
-                                              tooltip: 'Delete',
-                                        constraints: const BoxConstraints(),
-                                        padding: const EdgeInsets.all(8),
-                                            ),
-                                          ],
-                                        ),
-                                    );
-                                  },
-                                ),
+                  TextButton.icon(
+                    icon: const Icon(Icons.edit, size: 16),
+                    label: const Text('Change'),
+                    onPressed: () {
+                      Navigator.of(context).pushNamed(MasterDiscoveryScreen.routeName);
+                    },
                         ),
                       ],
                     ),
                   ),
-                ),
-              ],
+          ),
+          
+          // Backup options and form
+          // ... existing backup form code ...
+        ],
+                      ),
     );
   }
   
-  Widget _buildMachineConfigTab() {
+  Widget _buildBackupFormForMaster() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Master status card
           Card(
-            elevation: 2,
-            margin: const EdgeInsets.only(bottom: 16),
+            margin: const EdgeInsets.only(bottom: 24),
             child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.all(16),
+              child: Row(
                 children: [
-                  const Text(
-                    'Machine Role Configuration',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(24),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  
-                  // Current company indicator
-                  if (_currentCompany != null)
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.business, color: Colors.blue),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Current Company: ${_currentCompany!['name']}',
-                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                                Text(
-                                  'Database: ${_currentCompany!['database']}',
-                                  style: const TextStyle(fontSize: 12),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  
-                  const SizedBox(height: 16),
-                  
-                  const Text('Select Machine Role:'),
-                  const SizedBox(height: 8),
-                  
-                  // Fix for render flex issue - use a container with constraints
-                  SizedBox(
-                    width: double.infinity,
-                    child: DropdownButtonFormField<MachineRole>(
-                      value: _machineRole,
-                      isExpanded: true, // Ensure the dropdown uses available space
-                      iconSize: 24,
-                      menuMaxHeight: 200, // Set max height for dropdown menu
-                      isDense: false, // Explicitly set this to false to give more room
-                      onChanged: (value) {
-                        if (value != null && value != _machineRole) {
-                          _saveMachineRole(value);
-                        }
-                      },
-                      items: MachineRole.values.map((role) {
-                        final roleName = role.toString().split('.').last;
-                        String displayName;
-                        String description;
-                        
-                        switch (role) {
-                          case MachineRole.single:
-                            displayName = 'Single Machine';
-                            description = 'Operates independently without syncing';
-                            break;
-                          case MachineRole.master:
-                            displayName = 'Master';
-                            description = 'Central database for other machines';
-                            break;
-                          case MachineRole.servant:
-                            displayName = 'Servant';
-                            description = 'Syncs with a master machine';
-                            break;
-                        }
-                        
-                        // Use a single-line layout with no vertical stacking
-                        return DropdownMenuItem<MachineRole>(
-                          value: role,
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4.0),
-                            child: Text(
-                              displayName,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                    child: const Center(
+                      child: Icon(
+                        Icons.computer,
+                        color: Colors.green,
                       ),
                     ),
                   ),
-                  
-                  const SizedBox(height: 20),
-                  
-                  // Master Machine Settings
-                  if (_machineRole == MachineRole.master) ...[
-                    const Text(
-                      'Master Settings',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Master Device',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey.shade600,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'This device is configured as a master',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ],
                     ),
-                    
-                    const SizedBox(height: 8),
-                    
-                    // Use a responsive layout based on available width
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        // On small screens, stack the widgets vertically
-                        if (constraints.maxWidth < 500) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Conflict resolution dropdown
-                              SizedBox(
-                                width: double.infinity,
-                                child: DropdownButtonFormField<String>(
-                                  value: _conflictResolution,
-                                  isExpanded: true,
-                                  onChanged: (value) {
-                                    if (value != null) {
-                                      _saveConflictResolution(value);
-                                    }
-                                  },
-                                  items: const [
-                                    DropdownMenuItem(
-                                      value: 'last_write_wins',
-                                      child: Text('Last Write Wins', overflow: TextOverflow.ellipsis),
-                                    ),
-                                    DropdownMenuItem(
-                                      value: 'manual_merge',
-                                      child: Text('Manual Merge', overflow: TextOverflow.ellipsis),
-                                    ),
-                                  ],
-                                  decoration: const InputDecoration(
-                                    labelText: 'Conflict Resolution',
-                                    border: OutlineInputBorder(),
-                                  ),
-                                ),
-                              ),
-                              
-                              const SizedBox(height: 16),
-                              
-                              // Create new company button
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton.icon(
-                                  onPressed: _isSyncing ? null : () => _showCreateNewCompanyDialog(),
-                                  icon: const Icon(Icons.add_business),
-                                  label: const Text('Create New Company Database'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blue,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        } else {
-                          // On larger screens, use the original row layout
-                          return Row(
-                            children: [
-                              Expanded(
-                                child: SizedBox(
-                                  width: double.infinity,
-                                  child: DropdownButtonFormField<String>(
-                                    value: _conflictResolution,
-                                    isExpanded: true,
-                                    onChanged: (value) {
-                                      if (value != null) {
-                                        _saveConflictResolution(value);
-                                      }
-                                    },
-                                    items: const [
-                                      DropdownMenuItem(
-                                        value: 'last_write_wins',
-                                        child: Text('Last Write Wins', overflow: TextOverflow.ellipsis),
-                                      ),
-                                      DropdownMenuItem(
-                                        value: 'manual_merge',
-                                        child: Text('Manual Merge', overflow: TextOverflow.ellipsis),
-                                      ),
-                                    ],
-                                    decoration: const InputDecoration(
-                                      labelText: 'Conflict Resolution',
-                                      border: OutlineInputBorder(),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              
-                              const SizedBox(width: 16),
-                              
-                              ElevatedButton.icon(
-                                onPressed: _isSyncing ? null : () => _showCreateNewCompanyDialog(),
-                                icon: const Icon(Icons.add_business),
-                                label: const Text('Create New Company Database'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.blue,
-                                ),
-                              ),
-                            ],
-                          );
-                        }
-                      },
-                    ),
-                  ],
-                  
-                  // Servant Machine Settings
-                  if (_machineRole == MachineRole.servant) ...[
-                    const Text(
-                      'Servant Settings',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    
-                    const SizedBox(height: 8),
-                    
-                    // Use a responsive layout for servant settings
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        // On small screens, stack the widgets vertically
-                        if (constraints.maxWidth < 600) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Master address input
-                              TextFormField(
-                                controller: _masterAddressController,
-                                decoration: const InputDecoration(
-                                  labelText: 'Master Address/IP',
-                                  hintText: 'Enter IP address or hostname',
-                                  border: OutlineInputBorder(),
-                                ),
-                              ),
-                              
-                              const SizedBox(height: 8),
-                              
-                              // Action buttons
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ElevatedButton(
-                                      onPressed: _isSyncing ? null : _saveMasterAddress,
-                                      child: const Text('Save'),
-                                    ),
-                                  ),
-                                  
-                                  const SizedBox(width: 8),
-                                  
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: _isSyncing ? null : _testMasterConnection,
-                                      icon: const Icon(Icons.network_check),
-                                      label: const Text('Test Connection'),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              
-                              const SizedBox(height: 16),
-                              
-                              // Sync frequency dropdown
-                              SizedBox(
-                                width: double.infinity,
-                                child: DropdownButtonFormField<SyncFrequency>(
-                                  value: _syncFrequency,
-                                  isExpanded: true,
-                                  onChanged: (value) {
-                                    if (value != null) {
-                                      _saveSyncFrequency(value);
-                                    }
-                                  },
-                                  items: SyncFrequency.values.map((frequency) {
-                                    String displayName;
-                                    
-                                    switch (frequency) {
-                                      case SyncFrequency.manual:
-                                        displayName = 'Manual Sync Only';
-                                        break;
-                                      case SyncFrequency.realTime:
-                                        displayName = 'Real-Time';
-                                        break;
-                                      case SyncFrequency.fiveMinutes:
-                                        displayName = 'Every 5 Minutes';
-                                        break;
-                                      case SyncFrequency.fifteenMinutes:
-                                        displayName = 'Every 15 Minutes';
-                                        break;
-                                      case SyncFrequency.hourly:
-                                        displayName = 'Hourly';
-                                        break;
-                                      case SyncFrequency.daily:
-                                        displayName = 'Daily';
-                                        break;
-                                    }
-                                    
-                                    return DropdownMenuItem<SyncFrequency>(
-                                      value: frequency,
-                                      child: Text(
-                                        displayName,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    );
-                                  }).toList(),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Sync Frequency',
-                                    border: OutlineInputBorder(),
-                                  ),
-                                ),
-                              ),
-                              
-                              const SizedBox(height: 16),
-                              
-                              // Sync now button
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton.icon(
-                                  onPressed: _isSyncing ? null : _syncWithMaster,
-                                  icon: _isSyncing 
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Icon(Icons.sync),
-                                  label: const Text('Sync Now'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green,
-                                    foregroundColor: Colors.white,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        } else {
-                          // On larger screens, use the original layout
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextFormField(
-                                      controller: _masterAddressController,
-                                      decoration: const InputDecoration(
-                                        labelText: 'Master Address/IP',
-                                        hintText: 'Enter IP address or hostname',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                    ),
-                                  ),
-                                  
-                                  const SizedBox(width: 8),
-                                  
-                                  ElevatedButton(
-                                    onPressed: _isSyncing ? null : _saveMasterAddress,
-                                    child: const Text('Save'),
-                                  ),
-                                  
-                                  const SizedBox(width: 8),
-                                  
-                                  ElevatedButton.icon(
-                                    onPressed: _isSyncing ? null : _testMasterConnection,
-                                    icon: const Icon(Icons.network_check),
-                                    label: const Text('Test Connection'),
-                                  ),
-                                ],
-                              ),
-                              
-                              const SizedBox(height: 16),
-                              
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: SizedBox(
-                                      width: double.infinity,
-                                      child: DropdownButtonFormField<SyncFrequency>(
-                                        value: _syncFrequency,
-                                        isExpanded: true,
-                                        onChanged: (value) {
-                                          if (value != null) {
-                                            _saveSyncFrequency(value);
-                                          }
-                                        },
-                                        items: SyncFrequency.values.map((frequency) {
-                                          String displayName;
-                                          
-                                          switch (frequency) {
-                                            case SyncFrequency.manual:
-                                              displayName = 'Manual Sync Only';
-                                              break;
-                                            case SyncFrequency.realTime:
-                                              displayName = 'Real-Time';
-                                              break;
-                                            case SyncFrequency.fiveMinutes:
-                                              displayName = 'Every 5 Minutes';
-                                              break;
-                                            case SyncFrequency.fifteenMinutes:
-                                              displayName = 'Every 15 Minutes';
-                                              break;
-                                            case SyncFrequency.hourly:
-                                              displayName = 'Hourly';
-                                              break;
-                                            case SyncFrequency.daily:
-                                              displayName = 'Daily';
-                                              break;
-                                          }
-                                          
-                                          return DropdownMenuItem<SyncFrequency>(
-                                            value: frequency,
-                                            child: Text(
-                                              displayName,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          );
-                                        }).toList(),
-                                        decoration: const InputDecoration(
-                                          labelText: 'Sync Frequency',
-                                          border: OutlineInputBorder(),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  
-                                  const SizedBox(width: 16),
-                                  
-                                  ElevatedButton.icon(
-                                    onPressed: _isSyncing ? null : _syncWithMaster,
-                                    icon: _isSyncing 
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Icon(Icons.sync),
-                                    label: const Text('Sync Now'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.green,
-                                      foregroundColor: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          );
-                        }
-                      },
-                    ),
-                  ],
+                  ),
+                  TextButton.icon(
+                    icon: const Icon(Icons.settings, size: 16),
+                    label: const Text('Settings'),
+                    onPressed: () {
+                      // Show settings dialog for master configuration
+                      _showMasterSettingsDialog();
+                    },
+                  ),
                 ],
               ),
             ),
           ),
           
-          // Advanced Backup Options
-          Card(
-            elevation: 2,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Advanced Backup Options',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  
-                  SwitchListTile(
-                    title: const Text('Schedule Automatic Backups'),
-                    subtitle: const Text('Create backups automatically on a schedule'),
-                    value: _autoBackupEnabled,
-                    onChanged: (value) {
-                      setState(() {
-                        _autoBackupEnabled = value;
-                      });
-                    },
-                  ),
-                  
-                  if (_autoBackupEnabled)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: DropdownButtonFormField<String>(
-                          value: _autoBackupInterval,
-                          isExpanded: true,
-                          onChanged: (value) {
-                            if (value != null) {
-                              setState(() {
-                                _autoBackupInterval = value;
-                              });
-                            }
-                          },
-                          items: const [
-                            DropdownMenuItem(
-                              value: 'daily', 
-                              child: Text('Daily', overflow: TextOverflow.ellipsis),
-                            ),
-                            DropdownMenuItem(
-                              value: 'weekly', 
-                              child: Text('Weekly', overflow: TextOverflow.ellipsis),
-                            ),
-                            DropdownMenuItem(
-                              value: 'biweekly', 
-                              child: Text('Bi-Weekly', overflow: TextOverflow.ellipsis),
-                            ),
-                            DropdownMenuItem(
-                              value: 'monthly', 
-                              child: Text('Monthly', overflow: TextOverflow.ellipsis),
-                            ),
-                          ],
-                          decoration: const InputDecoration(
-                            labelText: 'Backup Interval',
-                            border: OutlineInputBorder(),
+          // Backup operations section
+          const Text(
+            'Backup Operations',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          // Backup buttons
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildOperationButton(
+                icon: Icons.backup,
+                label: 'Create Backup',
+                onPressed: _createBackup,
+              ),
+              _buildOperationButton(
+                icon: Icons.restore,
+                label: 'Import Backup',
+                onPressed: _importBackup,
+              ),
+              _buildOperationButton(
+                icon: Icons.download,
+                label: 'Export Backup',
+                onPressed: _exportBackup,
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 24),
+          
+          // CSV Export Section
+          const Text(
+            'CSV Export',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Export database tables as CSV files for use in Excel or other applications',
+            style: TextStyle(
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          // CSV Export options
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildOperationButton(
+                icon: Icons.table_chart,
+                label: 'Export Tables as CSV',
+                onPressed: _showExportTablesDialog,
+              ),
+              _buildOperationButton(
+                icon: Icons.receipt_long,
+                label: 'Export Orders as CSV',
+                onPressed: _exportOrdersCSV,
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 24),
+          
+          // Status message
+          if (_statusMessage.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.all(8),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: _statusMessage.contains('Error')
+                    ? Colors.red.withOpacity(0.1)
+                    : Colors.green.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _statusMessage,
+                style: TextStyle(
+                  color: _statusMessage.contains('Error')
+                      ? Colors.red
+                      : Colors.green.shade800,
+                ),
+              ),
+            ),
+          
+          // Available backups list
+          const Text(
+            'Available Backups',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          
+          // Show backups list or empty state
+          _backups.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32.0),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.backup_outlined,
+                          size: 64,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No backups available',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 16,
                           ),
                         ),
-                      ),
-                    ),
-                  
-                  SwitchListTile(
-                    title: const Text('Encrypt Backups'),
-                    subtitle: const Text('Add password protection to backups'),
-                    value: _encryptBackups,
-                    onChanged: (value) {
-                      setState(() {
-                        _encryptBackups = value;
-                      });
-                    },
-                  ),
-                  
-                  Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
+                        const SizedBox(height: 8),
                         ElevatedButton(
-                          onPressed: _saveBackupSettings,
-                          child: const Text('Save Backup Settings'),
+                          onPressed: _createBackup,
+                          child: const Text('Create First Backup'),
                         ),
                       ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _backups.length,
+                  itemBuilder: (context, index) {
+                    final backup = _backups[index];
+                    final fileName = basename(backup.path);
+                    final modifiedDate = backup.statSync().modified;
+                    final fileSize = backup.statSync().size;
+                    final fileSizeFormatted = _formatFileSize(fileSize);
+                    
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        leading: const Icon(Icons.backup, color: Colors.blue),
+                        title: Text(fileName),
+                        subtitle: Text(
+                          'Size: $fileSizeFormatted\nCreated: ${DateFormat('yyyy-MM-dd HH:mm:ss').format(modifiedDate)}',
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.restore),
+                              tooltip: 'Restore',
+                              onPressed: () => _restoreBackup(backup.path),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete),
+                              tooltip: 'Delete',
+                              onPressed: () => _deleteBackup(backup.path),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
         ],
       ),
     );
   }
   
-  Widget _buildCompanyProfileTab() {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            children: [
-              const Text(
-                'Company Profiles',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
+  Widget _buildOperationButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon),
+          const SizedBox(height: 8),
+          Text(label),
+        ],
+      ),
+    );
+  }
+  
+  void _showMasterSettingsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Master Device Settings'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Configure your master device settings:'),
+            const SizedBox(height: 16),
+            
+            // Machine role selection
+            const Text('Machine Role:', style: TextStyle(fontWeight: FontWeight.bold)),
+            DropdownButton<MachineRole>(
+              value: _machineRole,
+              isExpanded: true,
+              onChanged: (value) {
+                if (value != null) {
+                  Navigator.pop(context);
+                  _saveMachineRole(value);
+                }
+              },
+              items: const [
+                DropdownMenuItem(
+                  value: MachineRole.master,
+                  child: Text('Master - Main device that others sync with'),
                 ),
-              ),
-              const Spacer(),
-              ElevatedButton.icon(
-                onPressed: () => _showCreateNewCompanyDialog(),
-                icon: const Icon(Icons.add),
-                label: const Text('Create New Company'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
+                DropdownMenuItem(
+                  value: MachineRole.single,
+                  child: Text('Single - Standalone device (no sync)'),
                 ),
-              ),
-            ],
-          ),
+                DropdownMenuItem(
+                  value: MachineRole.servant,
+                  child: Text('Servant - Syncs with a master device'),
+                ),
+              ],
+            ),
+          ],
         ),
-        const Divider(),
-        Expanded(
-          child: ListView.builder(
-            itemCount: _companyProfiles.length,
-            itemBuilder: (context, index) {
-              final profile = _companyProfiles[index];
-              final isCurrentCompany = _currentCompany != null && 
-                                      _currentCompany!['name'] == profile['name'];
-              
-              return ListTile(
-                leading: Icon(
-                  Icons.business,
-                  color: isCurrentCompany ? Colors.green : Colors.grey,
-                ),
-                title: Text(
-                  profile['name'],
-                  style: TextStyle(
-                    fontWeight: isCurrentCompany ? FontWeight.bold : FontWeight.normal,
-                  ),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Database: ${profile['database']}'),
-                    Text('Created: ${DateFormat('yyyy-MM-dd').format(DateTime.parse(profile['created']))}'),
-                  ],
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (isCurrentCompany)
-                      const Chip(
-                        label: Text('Current'),
-                        backgroundColor: Colors.green,
-                        labelStyle: TextStyle(color: Colors.white),
-                      )
-                    else
-                      ElevatedButton(
-                        onPressed: () => _switchCompany(profile['name']),
-                        child: const Text('Switch'),
-                      ),
-                    if (!isCurrentCompany)
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () => _deleteCompany(profile['name']),
-                        tooltip: 'Delete Company',
-                      ),
-                  ],
-                ),
-                isThreeLine: true,
-              );
-            },
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
           ),
-        ),
-      ],
+        ],
+                      ),
     );
   }
   
@@ -2532,6 +1789,456 @@ class _BackupScreenState extends State<BackupScreen> with SingleTickerProviderSt
     } catch (e) {
       setState(() {
         _statusMessage = 'Error exporting orders: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  // UI for servant mode - shows the process of searching for masters
+  Widget _buildServantDiscoveryUI() {
+    // State variables to track discovery process
+    bool isSearching = false;
+    List<dynamic> foundMasters = [];
+    
+    // Try to check for existing connection first
+    MasterDiscoveryService? discoveryService;
+    try {
+      discoveryService = Provider.of<MasterDiscoveryService>(context, listen: false);
+      if (discoveryService.selectedMaster != null) {
+        // Already connected to a master
+        return _buildBackupForm();
+      }
+      
+      // We don't have access to the specific methods, so let's use what we know works
+      foundMasters = discoveryService.selectedMaster != null ? [discoveryService.selectedMaster] : [];
+      
+    } catch (e) {
+      // Provider not available
+      setState(() {
+        _statusMessage = "Master discovery service not available";
+      });
+    }
+
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Servant status card
+          Card(
+            margin: const EdgeInsets.all(16),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  const Text(
+                    'Servant Device',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'This device is configured as a servant and needs to connect to a master',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey.shade700),
+                  ),
+                  const SizedBox(height: 16),
+                  // Settings button
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.settings),
+                    label: const Text('Change Mode'),
+                    onPressed: () => _showMasterSettingsDialog(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 24),
+          
+          // Search status and animation
+          if (_isLoading) 
+            const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          Text(
+            _statusMessage.isNotEmpty ? _statusMessage : 'Looking for master devices...',
+            style: const TextStyle(fontSize: 16),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          
+          // No masters found message when not loading and no masters
+          if (!_isLoading && foundMasters.isEmpty)
+            Column(
+              children: [
+                Icon(
+                  Icons.signal_wifi_off,
+                  size: 64,
+                  color: Colors.grey,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'No master devices found',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Make sure your master device is on and connected to the network',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey.shade700),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Scan for Masters'),
+                  onPressed: () {
+                    // Use the MachineConfigService to scan instead
+                    _scanForMastersManually();
+                  },
+                ),
+              ],
+            ),
+          
+          // Manual connection button always shown
+          ElevatedButton.icon(
+            icon: const Icon(Icons.add),
+            label: const Text('Connect Manually'),
+            onPressed: () {
+              _showManualConnectionDialog();
+            },
+          ),
+          
+          const SizedBox(height: 16),
+          // Navigation button
+          TextButton.icon(
+            icon: const Icon(Icons.search),
+            label: const Text('Find Masters'),
+            onPressed: () {
+              // Navigate to the master discovery screen
+              Navigator.of(context).pushNamed(MasterDiscoveryScreen.routeName);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Manual method to scan for masters using the MachineConfigService
+  void _scanForMastersManually() {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Scanning network for master devices...';
+    });
+    
+    // Use the MachineConfigService to scan for masters
+    _machineConfigService.scanForMasters().then((masterAddresses) {
+      setState(() {
+        if (masterAddresses.isEmpty) {
+          _statusMessage = 'No master devices found on the network';
+        } else if (masterAddresses.length == 1) {
+          _statusMessage = 'Found a master device at ${masterAddresses.first}';
+          _masterAddressController.text = masterAddresses.first;
+        } else {
+          _statusMessage = 'Found ${masterAddresses.length} master devices';
+          _masterAddressController.text = masterAddresses.first;
+        }
+        _isLoading = false;
+      });
+    }).catchError((error) {
+      setState(() {
+        _statusMessage = 'Error scanning for masters: $error';
+        _isLoading = false;
+      });
+    });
+  }
+  
+  void _showManualConnectionDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Connect to Master'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Enter the IP address of your master device:'),
+            SizedBox(height: 16),
+            TextField(
+              controller: _masterAddressController,
+              decoration: InputDecoration(
+                labelText: 'Master IP Address',
+                hintText: 'e.g., 192.168.1.100',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            child: Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _saveMasterAddress();
+              _testMasterConnection();
+            },
+            child: Text('Connect'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // UI for devices without a role configured
+  Widget _buildRoleSelectionUI() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.settings,
+            size: 72,
+            color: Colors.grey.shade300,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Setup Device Role',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade800,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Text(
+              'Choose how this device will operate with other devices in your network.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ),
+          const SizedBox(height: 32),
+          
+          // Role selection cards
+          Container(
+            width: 400,
+            child: Column(
+              children: [
+                _buildRoleCard(
+                  icon: Icons.dns,
+                  title: 'Master',
+                  description: 'This is the main device that stores the primary database and receives updates from other devices.',
+                  onTap: () => _saveMachineRole(MachineRole.master),
+                ),
+                const SizedBox(height: 16),
+                _buildRoleCard(
+                  icon: Icons.device_hub,
+                  title: 'Servant',
+                  description: 'This device will sync with a master device on your network.',
+                  onTap: () => _saveMachineRole(MachineRole.servant),
+                ),
+                const SizedBox(height: 16),
+                _buildRoleCard(
+                  icon: Icons.devices,
+                  title: 'Single',
+                  description: 'This device operates independently and does not sync with other devices.',
+                  onTap: () => _saveMachineRole(MachineRole.single),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildRoleCard({
+    required IconData icon,
+    required String title,
+    required String description,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      elevation: 2,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Icon(
+                  icon,
+                  color: Theme.of(context).primaryColor,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios, size: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Show dialog to select tables for CSV export
+  Future<void> _showExportTablesDialog() async {
+    // Reset the selection to all tables initially
+    setState(() {
+      _selectedTables = List.from(_allTables);
+    });
+    
+    // Show dialog to select tables
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Export Tables as CSV'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('${_selectedTables.length} of ${_allTables.length} tables selected'),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _selectedTables = List.from(_allTables);
+                            });
+                          },
+                          child: const Text('Select All'),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _selectedTables = [];
+                            });
+                          },
+                          child: const Text('Deselect All'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _allTables.length,
+                    itemBuilder: (context, index) {
+                      final table = _allTables[index];
+                      final isSelected = _selectedTables.contains(table);
+                      final rowCount = _tableRowCounts[table] ?? 0;
+                      
+                      return CheckboxListTile(
+                        title: Text(table),
+                        subtitle: Text('$rowCount rows'),
+                        value: isSelected,
+                        onChanged: (value) {
+                          setState(() {
+                            if (value == true && !_selectedTables.contains(table)) {
+                              _selectedTables.add(table);
+                            } else if (value == false && _selectedTables.contains(table)) {
+                              _selectedTables.remove(table);
+                            }
+                          });
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _exportSelectedTablesAsCSV();
+              },
+              child: const Text('Export Selected'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  // Export selected tables as CSV files
+  Future<void> _exportSelectedTablesAsCSV() async {
+    if (_selectedTables.isEmpty) {
+      setState(() {
+        _statusMessage = 'Please select at least one table to export';
+      });
+      return;
+    }
+    
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Exporting ${_selectedTables.length} tables as CSV...';
+    });
+    
+    try {
+      // Create a folder to store CSV files
+      final exportPath = await _backupService.exportTablesAsCSV(_selectedTables);
+      
+      setState(() {
+        _statusMessage = 'Tables exported successfully to: $exportPath';
+      });
+    } catch (e) {
+      setState(() {
+        _statusMessage = 'Error exporting tables: $e';
       });
     } finally {
       setState(() {

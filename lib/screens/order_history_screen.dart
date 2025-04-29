@@ -8,6 +8,7 @@ import 'package:data_table_2/data_table_2.dart';
 import 'package:my_flutter_app/services/printer_service.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:my_flutter_app/services/auth_service.dart';
 
 class OrderHistoryScreen extends StatefulWidget {
   const OrderHistoryScreen({super.key});
@@ -278,7 +279,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                                     orderData['status'] as String? ?? 'UNKNOWN';
                       final isCompleted = status == 'COMPLETED';
                       final isPending = status == 'PENDING';
-                      final isReverted = status == 'REVERTED';
+                      final isCancelled = status == 'CANCELLED';
                       
                       return DataRow2(
                         onTap: () {
@@ -312,7 +313,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                                       _printCompletedReceipt(order);
                                     } else if (isPending) {
                                       _printPendingReceipt(order);
-                                    } else if (isReverted) {
+                                    } else if (isCancelled) {
                                       _printRevertedReceipt(order);
                                     }
                                   },
@@ -478,7 +479,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                             _printCompletedReceipt(_selectedOrder!);
                           } else if (_selectedOrder!.orderStatus == 'PENDING') {
                             _printPendingReceipt(_selectedOrder!);
-                          } else if (_selectedOrder!.orderStatus == 'REVERTED') {
+                          } else if (_selectedOrder!.orderStatus == 'CANCELLED') {
                             _printRevertedReceipt(_selectedOrder!);
                           }
                         },
@@ -555,6 +556,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
     // Handle null status
     final statusText = status?.toUpperCase() ?? 'UNKNOWN';
     Color color;
+    String displayText = status ?? 'Unknown';
     
     switch (statusText) {
       case 'COMPLETED':
@@ -564,8 +566,12 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
         color = Colors.orange;
         break;
       case 'CANCELLED':
+        color = Colors.red;
+        displayText = 'CANCELLED';
+        break;
       case 'REVERTED':
         color = Colors.red;
+        displayText = 'CANCELLED';  // Display as CANCELLED for consistency
         break;
       case 'ON_HOLD':
         color = Colors.blue;
@@ -575,7 +581,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
     }
 
     return Chip(
-      label: Text(status ?? 'Unknown'),
+      label: Text(displayText),
       backgroundColor: color.withOpacity(0.2),
       labelStyle: TextStyle(color: color),
       padding: const EdgeInsets.all(4),
@@ -611,11 +617,67 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
       // Fetch order items
       final items = await DatabaseService.instance.getOrderItems(order.id!);
       
+      // Get customer's total outstanding balance if customer ID exists
+      double totalOutstandingBalance = 0.0;
+      if (order.customerId != null) {
+        totalOutstandingBalance = await DatabaseService.instance.getCustomerTotalOutstandingBalance(order.customerId!);
+      }
+      
       // Create PDF document
       final pdf = pw.Document();
       
       // Get printer service
       final printerService = PrinterService.instance;
+      
+      // Get VAT settings from ConfigService if available
+      bool enableVat = false;
+      double vatRate = 0.0;
+      bool showVatOnReceipt = false;
+      try {
+        final configService = await DatabaseService.instance.getConfiguration();
+        enableVat = configService?['enable_vat'] == 1;
+        vatRate = double.tryParse(configService?['vat_rate']?.toString() ?? '0') ?? 0.0;
+        showVatOnReceipt = configService?['show_vat_on_receipt'] == 1;
+      } catch (e) {
+        debugPrint('Error getting VAT settings: $e');
+      }
+      
+      // Parse payment method
+      final paymentMethod = order.paymentMethod ?? 'Cash';
+      
+      // Calculate credit amount for credit or split payments
+      double? creditAmount;
+      double totalAmount = order.totalAmount ?? 0.0;
+      
+      // For full credit payments
+      if (paymentMethod == 'Credit') {
+        creditAmount = totalAmount;
+      }
+      // For split payments with credit component (e.g., "Mobile: KSH 200.00, Credit: KSH 100.00")
+      else if (paymentMethod.contains('Credit:')) {
+        try {
+          final parts = paymentMethod.split(',');
+          for (final part in parts) {
+            if (part.toLowerCase().contains('credit')) {
+              final creditPart = part.trim();
+              final amountStr = creditPart.split('KSH').last.trim();
+              creditAmount = double.parse(amountStr);
+              break;
+            }
+          }
+        } catch (e) {
+          debugPrint('Error parsing credit amount: $e');
+        }
+      }
+      
+      // Calculate VAT if enabled
+      double? vatAmount;
+      double? netAmount;
+      if (enableVat && showVatOnReceipt) {
+        // VAT calculation: VAT = gross * (rate / (100 + rate))
+        vatAmount = totalAmount * (vatRate / (100 + vatRate));
+        netAmount = totalAmount - vatAmount;
+      }
       
       // Add receipt page
       pdf.addPage(
@@ -772,16 +834,33 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               ),
               pw.Divider(),
               
-              // Totals
+              // Totals with VAT if enabled
+              if (enableVat && showVatOnReceipt) ...[
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('Subtotal:'),
+                    pw.Text('KSH ${NumberFormat('#,##0.00').format(netAmount)}'),
+                  ],
+                ),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('VAT (${vatRate.toStringAsFixed(1)}%):'),
+                    pw.Text('KSH ${NumberFormat('#,##0.00').format(vatAmount)}'),
+                  ],
+                ),
+              ],
+              
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text(
-                    'Total Amount:',
+                    'Total Amount Due:',
                     style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   ),
                   pw.Text(
-                    'KSH ${NumberFormat('#,##0.00').format(order.totalAmount)}',
+                    'KSH ${NumberFormat('#,##0.00').format(totalAmount)}',
                     style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   ),
                 ],
@@ -789,18 +868,88 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               
               // Payment info
               pw.SizedBox(height: 10),
+              pw.Text(
+                'PAYMENT DETAILS:',
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 5),
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text('Payment Method:'),
-                  pw.Text(order.paymentMethod ?? 'Cash'),
+                  pw.Text(paymentMethod),
                 ],
               ),
+              
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text('Payment Status:'),
                   pw.Text(order.paymentStatus),
+                ],
+              ),
+              
+              // Show pending balance for credit payments
+              if (creditAmount != null && creditAmount > 0) ...[
+                pw.SizedBox(height: 5),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      'Current Order Balance:',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                    ),
+                    pw.Text(
+                      'KSH ${NumberFormat('#,##0.00').format(creditAmount)}',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ],
+              
+              // Show total outstanding balance if available
+              if (order.customerId != null && totalOutstandingBalance > 0) ...[
+                pw.SizedBox(height: 5),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      'Total Outstanding Balance:',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.red,
+                      ),
+                    ),
+                    pw.Text(
+                      'KSH ${NumberFormat('#,##0.00').format(totalOutstandingBalance)}',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.red,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              
+              // Add user who completed the sale if available
+              pw.SizedBox(height: 5),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Paid By:'),
+                  pw.Text(order.customerName ?? 'Walk-in Customer'),
+                ],
+              ),
+              
+              // Also show who serviced the transaction
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Serviced by:'),
+                  pw.Text(AuthService.instance.currentUser?.fullName ?? 
+                          AuthService.instance.currentUser?.username ?? 'System Administrator'),
                 ],
               ),
               
@@ -861,11 +1010,45 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
       // Fetch order items
       final items = await DatabaseService.instance.getOrderItems(order.id!);
       
+      // Get customer's total outstanding balance if customer ID exists
+      double totalOutstandingBalance = 0.0;
+      if (order.customerId != null) {
+        totalOutstandingBalance = await DatabaseService.instance.getCustomerTotalOutstandingBalance(order.customerId!);
+      }
+      
       // Create PDF document
       final pdf = pw.Document();
       
       // Get printer service
       final printerService = PrinterService.instance;
+      
+      // Get VAT settings from ConfigService if available
+      bool enableVat = false;
+      double vatRate = 0.0;
+      bool showVatOnReceipt = false;
+      try {
+        final configService = await DatabaseService.instance.getConfiguration();
+        enableVat = configService?['enable_vat'] == 1;
+        vatRate = double.tryParse(configService?['vat_rate']?.toString() ?? '0') ?? 0.0;
+        showVatOnReceipt = configService?['show_vat_on_receipt'] == 1;
+      } catch (e) {
+        debugPrint('Error getting VAT settings: $e');
+      }
+      
+      // Parse payment method
+      final paymentMethod = order.paymentMethod ?? 'Reverted';
+      
+      // Calculate total amount
+      double totalAmount = order.totalAmount ?? 0.0;
+      
+      // Calculate VAT if enabled
+      double? vatAmount;
+      double? netAmount;
+      if (enableVat && showVatOnReceipt) {
+        // VAT calculation: VAT = gross * (rate / (100 + rate))
+        vatAmount = totalAmount * (vatRate / (100 + vatRate));
+        netAmount = totalAmount - vatAmount;
+      }
       
       // Add receipt page
       pdf.addPage(
@@ -877,7 +1060,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               // Header
               pw.Center(
                 child: pw.Text(
-                  'REVERTED RECEIPT',
+                  'ORDER RECEIPT',
                   style: pw.TextStyle(
                     fontSize: 18,
                     fontWeight: pw.FontWeight.bold,
@@ -903,21 +1086,21 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  pw.Text('Receipt No:'),
+                  pw.Text('Order No:'),
                   pw.Text(order.orderNumber),
                 ],
               ),
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  pw.Text('Original Date:'),
+                  pw.Text('Date:'),
                   pw.Text(DateFormat('dd/MM/yyyy').format(order.createdAt)),
                 ],
               ),
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  pw.Text('Original Time:'),
+                  pw.Text('Time:'),
                   pw.Text(DateFormat('HH:mm:ss').format(order.createdAt)),
                 ],
               ),
@@ -932,7 +1115,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text('Status:'),
-                  pw.Text('REVERTED', style: pw.TextStyle(color: PdfColors.red)),
+                  pw.Text('CANCELLED', style: pw.TextStyle(color: PdfColors.red)),
                 ],
               ),
               pw.Divider(),
@@ -1022,20 +1205,61 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               ),
               pw.Divider(),
               
-              // Totals
+              // Totals with VAT if enabled
+              if (enableVat && showVatOnReceipt) ...[
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('Subtotal:'),
+                    pw.Text('KSH ${NumberFormat('#,##0.00').format(netAmount)}'),
+                  ],
+                ),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('VAT (${vatRate.toStringAsFixed(1)}%):'),
+                    pw.Text('KSH ${NumberFormat('#,##0.00').format(vatAmount)}'),
+                  ],
+                ),
+              ],
+              
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text(
-                    'Total Amount:',
+                    'Total Amount Due:',
                     style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   ),
                   pw.Text(
-                    'KSH ${NumberFormat('#,##0.00').format(order.totalAmount)}',
+                    'KSH ${NumberFormat('#,##0.00').format(totalAmount)}',
                     style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   ),
                 ],
               ),
+              
+              // Show total outstanding balance if available
+              if (order.customerId != null && totalOutstandingBalance > 0) ...[
+                pw.SizedBox(height: 5),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      'Total Outstanding Balance:',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.red,
+                      ),
+                    ),
+                    pw.Text(
+                      'KSH ${NumberFormat('#,##0.00').format(totalOutstandingBalance)}',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.red,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               
               // Notice
               pw.SizedBox(height: 15),
@@ -1046,16 +1270,33 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                   color: PdfColors.red50,
                 ),
                 child: pw.Text(
-                  'This receipt has been reverted. The products have been returned to inventory and the sales records have been updated.',
+                  'This order has been cancelled. No payment has been processed.',
                   style: pw.TextStyle(
-                    color: PdfColors.red,
                     fontStyle: pw.FontStyle.italic,
                   ),
                 ),
               ),
               
+              // Created by
+              pw.SizedBox(height: 10),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Cancelled By:'),
+                  pw.Text(AuthService.instance.currentUser?.fullName ?? 
+                          AuthService.instance.currentUser?.username ?? 'System Administrator'),
+                ],
+              ),
+              
               // Footer
               pw.SizedBox(height: 20),
+              pw.Center(
+                child: pw.Text(
+                  'Thank you for your business!',
+                  style: pw.TextStyle(fontStyle: pw.FontStyle.italic),
+                ),
+              ),
+              pw.SizedBox(height: 5),
               pw.Center(
                 child: pw.Text(
                   'Powered by Malbrose POS System',
@@ -1074,7 +1315,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
       // Print the document
       await printerService.printPdf(
         pdf: pdf,
-        documentName: 'Reverted Receipt - ${order.orderNumber}',
+        documentName: 'Cancelled Order - ${order.orderNumber}',
         context: context,
       );
       
@@ -1104,11 +1345,45 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
       // Fetch order items
       final items = await DatabaseService.instance.getOrderItems(order.id!);
       
+      // Get customer's total outstanding balance if customer ID exists
+      double totalOutstandingBalance = 0.0;
+      if (order.customerId != null) {
+        totalOutstandingBalance = await DatabaseService.instance.getCustomerTotalOutstandingBalance(order.customerId!);
+      }
+      
       // Create PDF document
       final pdf = pw.Document();
       
       // Get printer service
       final printerService = PrinterService.instance;
+      
+      // Get VAT settings from ConfigService if available
+      bool enableVat = false;
+      double vatRate = 0.0;
+      bool showVatOnReceipt = false;
+      try {
+        final configService = await DatabaseService.instance.getConfiguration();
+        enableVat = configService?['enable_vat'] == 1;
+        vatRate = double.tryParse(configService?['vat_rate']?.toString() ?? '0') ?? 0.0;
+        showVatOnReceipt = configService?['show_vat_on_receipt'] == 1;
+      } catch (e) {
+        debugPrint('Error getting VAT settings: $e');
+      }
+      
+      // Parse payment method
+      final paymentMethod = order.paymentMethod ?? 'Pending';
+      
+      // Calculate total amount
+      double totalAmount = order.totalAmount ?? 0.0;
+      
+      // Calculate VAT if enabled
+      double? vatAmount;
+      double? netAmount;
+      if (enableVat && showVatOnReceipt) {
+        // VAT calculation: VAT = gross * (rate / (100 + rate))
+        vatAmount = totalAmount * (vatRate / (100 + vatRate));
+        netAmount = totalAmount - vatAmount;
+      }
       
       // Add receipt page
       pdf.addPage(
@@ -1265,20 +1540,61 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
               ),
               pw.Divider(),
               
-              // Totals
+              // Totals with VAT if enabled
+              if (enableVat && showVatOnReceipt) ...[
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('Subtotal:'),
+                    pw.Text('KSH ${NumberFormat('#,##0.00').format(netAmount)}'),
+                  ],
+                ),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('VAT (${vatRate.toStringAsFixed(1)}%):'),
+                    pw.Text('KSH ${NumberFormat('#,##0.00').format(vatAmount)}'),
+                  ],
+                ),
+              ],
+              
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   pw.Text(
-                    'Total Amount:',
+                    'Total Amount Due:',
                     style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   ),
                   pw.Text(
-                    'KSH ${NumberFormat('#,##0.00').format(order.totalAmount)}',
+                    'KSH ${NumberFormat('#,##0.00').format(totalAmount)}',
                     style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                   ),
                 ],
               ),
+              
+              // Show total outstanding balance if available
+              if (order.customerId != null && totalOutstandingBalance > 0) ...[
+                pw.SizedBox(height: 5),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      'Total Outstanding Balance:',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.red,
+                      ),
+                    ),
+                    pw.Text(
+                      'KSH ${NumberFormat('#,##0.00').format(totalOutstandingBalance)}',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.red,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               
               // Notice
               pw.SizedBox(height: 15),
@@ -1294,6 +1610,17 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                     fontStyle: pw.FontStyle.italic,
                   ),
                 ),
+              ),
+              
+              // Created by
+              pw.SizedBox(height: 10),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Created By:'),
+                  pw.Text(AuthService.instance.currentUser?.fullName ?? 
+                          AuthService.instance.currentUser?.username ?? 'System Administrator'),
+                ],
               ),
               
               // Footer

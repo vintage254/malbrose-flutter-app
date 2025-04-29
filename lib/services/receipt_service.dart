@@ -30,11 +30,43 @@ class ReceiptService {
       
       // Get customer information
       final customerName = order['customer_name'] ?? 'customer general';
+      final customerId = order['customer_id'] as int?;
       
       // Get payment information
       final paymentMethod = order['payment_method'] ?? 'CASH';
       final totalAmount = (order['total_amount'] as num?)?.toDouble() ?? 0.0;
       final discountAmount = (order['discount_amount'] as num?)?.toDouble() ?? 0.0;
+      
+      // Calculate pending balance for current order (for credit payments)
+      double? pendingOrderBalance;
+      if (paymentMethod.toLowerCase().contains('credit')) {
+        // For full credit payments
+        if (paymentMethod == 'Credit') {
+          pendingOrderBalance = totalAmount;
+        }
+        // For split payments with credit component (e.g., "Mobile: KSH 200.00, Credit: KSH 100.00")
+        else if (paymentMethod.contains('Credit:')) {
+          try {
+            final parts = paymentMethod.split(',');
+            for (final part in parts) {
+              if (part.toLowerCase().contains('credit')) {
+                final creditPart = part.trim();
+                final amountStr = creditPart.split('KSH').last.trim();
+                pendingOrderBalance = double.parse(amountStr);
+                break;
+              }
+            }
+          } catch (e) {
+            debugPrint('Error parsing credit amount: $e');
+          }
+        }
+      }
+      
+      // Get customer's total outstanding balance
+      double totalOutstandingBalance = 0.0;
+      if (customerId != null) {
+        totalOutstandingBalance = await DatabaseService.instance.getCustomerTotalOutstandingBalance(customerId);
+      }
       
       // Calculate VAT if enabled
       double vatAmount = 0.0;
@@ -294,6 +326,55 @@ class ReceiptService {
                     ),
                   ],
                 ),
+                
+                // Current order pending balance (if applicable)
+                if (pendingOrderBalance != null && pendingOrderBalance > 0)
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        'Current Order Balance:',
+                        style: pw.TextStyle(
+                          fontSize: 8,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.red,
+                        ),
+                      ),
+                      pw.Text(
+                        pendingOrderBalance.toStringAsFixed(2),
+                        style: pw.TextStyle(
+                          fontSize: 8,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.red,
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                // Customer's total outstanding balance (if applicable)
+                if (customerId != null && totalOutstandingBalance > 0)
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        'Total Outstanding Balance:',
+                        style: pw.TextStyle(
+                          fontSize: 8,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.red,
+                        ),
+                      ),
+                      pw.Text(
+                        totalOutstandingBalance.toStringAsFixed(2),
+                        style: pw.TextStyle(
+                          fontSize: 8,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.red,
+                        ),
+                      ),
+                    ],
+                  ),
+                
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
@@ -436,6 +517,13 @@ class ReceiptService {
       
       // Get customer information
       final customerName = order['customer_name'] ?? 'customer general';
+      final customerId = order['customer_id'] as int?;
+      
+      // Get customer's total outstanding balance
+      double totalOutstandingBalance = 0.0;
+      if (customerId != null) {
+        totalOutstandingBalance = await DatabaseService.instance.getCustomerTotalOutstandingBalance(customerId);
+      }
       
       // Order status
       final orderStatus = orderType == "Pending" ? "Open" : orderType;
@@ -663,6 +751,30 @@ class ReceiptService {
                     ),
                   ],
                 ),
+                
+                // Customer's total outstanding balance (if applicable)
+                if (customerId != null && totalOutstandingBalance > 0)
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        'Total Outstanding Balance:',
+                        style: pw.TextStyle(
+                          fontSize: 9,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.red,
+                        ),
+                      ),
+                      pw.Text(
+                        totalOutstandingBalance.toStringAsFixed(2),
+                        style: pw.TextStyle(
+                          fontSize: 9,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.red,
+                        ),
+                      ),
+                    ],
+                  ),
                 
                 // Thank you message
                 pw.SizedBox(height: 10),
