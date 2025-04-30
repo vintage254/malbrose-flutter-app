@@ -1,6 +1,6 @@
 # Malbrose POS System
 
-A comprehensive Point of Sale (POS) system for hardware stores and retail businesses, built with Flutter.
+A comprehensive Point of Sale (POS) system for retail businesses, built with Flutter.
 
 ## Features
 
