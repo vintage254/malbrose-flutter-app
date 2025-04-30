@@ -1,0 +1,52 @@
+GETTING STARTED WITH MALBROSE POS
+================================
+
+Congratulations on successfully installing Malbrose POS System! This guide will help you set up your system for first use.
+
+INITIAL SETUP CHECKLIST
+----------------------
+Follow these steps in order to configure your system:
+
+1. BUSINESS CONFIGURATION
+   □ Launch Malbrose POS using the desktop shortcut
+   □ Navigate to Settings > Business Information
+   □ Enter your business name, address, contact information, and tax ID
+   □ Upload your business logo (recommended size: 200x60 pixels)
+   □ Configure your receipt header and footer text
+
+2. PRINTER SETUP
+   □ Go to Settings > Printer Settings
+   □ Select your receipt printer model from the dropdown
+   □ Configure paper size and print settings
+   □ Test print a sample receipt
+
+3. USER MANAGEMENT
+   □ Go to Settings > User Management
+   □ Change the default admin password for security
+   □ Create additional user accounts for your staff with appropriate permissions
+
+4. PRODUCT SETUP
+   □ Navigate to Product Management
+   □ Add product categories that make sense for your business
+   □ Add your initial inventory items with prices, descriptions, and stock levels
+   □ Configure tax rates if applicable
+
+5. BACKUP CONFIGURATION
+   □ Go to Settings > Backup & Restore
+   □ Configure automatic backup settings
+   □ Create your first manual backup
+
+DAILY OPERATIONS QUICK GUIDE
+---------------------------
+• Creating Orders: Click "Create Orders" to start a new transaction
+• Pending Orders: Use "Held Orders" to save transactions for later completion
+• Completing Sales: Process payments through the "Complete Sales" screen
+• End of Day: Generate daily sales reports from the Dashboard
+
+HELP AND SUPPORT
+--------------
+• Access the full user manual from Help > User Manual
+• Visit our website at https://derrickportfolio.vercel.app for video tutorials
+• Contact technical support at malbrosepos@gmail.com
+
+Thank you for choosing Malbrose POS. We are committed to helping your business succeed! 

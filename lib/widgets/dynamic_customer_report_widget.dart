@@ -328,11 +328,11 @@ class DynamicCustomerReportWidget extends StatelessWidget {
                                 fontSize: 16,
                                 color: Colors.red,
                               ),
-                            ),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
+                  ),
                 ],
               ),
             ),
@@ -688,7 +688,7 @@ class DynamicCustomerReportWidget extends StatelessWidget {
               for (final order in completedOrders) ...[
                 pw.SizedBox(height: 8),
                 _buildOrderItemsDetail(order, itemsByOrder),
-                pw.SizedBox(height: 16),
+              pw.SizedBox(height: 16),
               ],
             ],
             
@@ -731,7 +731,7 @@ class DynamicCustomerReportWidget extends StatelessWidget {
               for (final order in pendingOrders) ...[
                 pw.SizedBox(height: 8),
                 _buildOrderItemsDetail(order, itemsByOrder),
-                pw.SizedBox(height: 16),
+              pw.SizedBox(height: 16),
               ],
             ],
             

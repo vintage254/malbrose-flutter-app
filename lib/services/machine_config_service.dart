@@ -389,23 +389,15 @@ class MachineConfigService {
     return newProfile;
   }
   
-  // Delete a company profile by name
-  Future<bool> deleteCompanyProfile(String companyName) async {
-    final profiles = await companyProfiles;
+  // Delete a company profile
+  Future<bool> deleteCompany(String companyCode) async {
+    final profiles = await getCompanyProfiles();
+    final companyIndex = profiles.indexWhere((company) => company['code'] == companyCode);
     
-    // Check if company exists
-    final companyIndex = profiles.indexWhere((profile) => profile['name'] == companyName);
-    if (companyIndex == -1) {
-      throw Exception('Company profile not found');
+    if (companyIndex < 0) {
+      return false;
     }
     
-    // Check if this is the current company
-    final current = await currentCompany;
-    if (current != null && current['name'] == companyName) {
-      throw Exception('Cannot delete the currently active company');
-    }
-    
-    // Get the database path
     final companyToDelete = profiles[companyIndex];
     final dbName = companyToDelete['database'] as String;
     
@@ -415,8 +407,11 @@ class MachineConfigService {
     
     // Try to delete the database file
     try {
-      final dbDir = await getDatabasesPath();
-      final dbPath = path.join(dbDir, dbName);
+      // Get database service instance to use its path helper
+      final dbService = DatabaseService.instance;
+      final appDataDir = await dbService.getAppDataDirectory();
+      final dbDir = Directory(path.join(appDataDir.path, 'database'));
+      final dbPath = path.join(dbDir.path, dbName);
       final dbFile = File(dbPath);
       
       if (await dbFile.exists()) {
@@ -429,6 +424,21 @@ class MachineConfigService {
       // We still return true because the profile was removed even if file deletion failed
       return true;
     }
+  }
+  
+  // Add method with name expected by backup_screen.dart
+  Future<bool> deleteCompanyProfile(String companyName) async {
+    final profiles = await getCompanyProfiles();
+    final companyIndex = profiles.indexWhere((company) => company['name'] == companyName);
+    
+    if (companyIndex < 0) {
+      return false;
+    }
+    
+    final companyToDelete = profiles[companyIndex];
+    final companyCode = companyToDelete['code'] as String? ?? companyName;
+    
+    return await deleteCompany(companyCode);
   }
   
   // Scan the network for master devices

@@ -22,6 +22,7 @@ import 'package:my_flutter_app/services/encryption_service.dart';
 import 'package:flutter/services.dart';
 import 'package:my_flutter_app/services/config_service.dart';
 import 'package:path/path.dart' as path;
+import 'dart:io' show Directory, Platform;
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._privateConstructor();
@@ -2047,44 +2048,77 @@ class DatabaseService {
     }
     
     try {
-      final databasePath = await getDatabasesPath();
-      final dbPath = p.join(databasePath, dbName);
+      // Use platform-specific app data directory instead of getDatabasesPath()
+      final appDataDir = await getAppDataDirectory();
+      final dbDir = Directory(p.join(appDataDir.path, 'database'));
       
       // Ensure the directory exists
-      final dbDir = Directory(p.dirname(dbPath));
       if (!await dbDir.exists()) {
         await dbDir.create(recursive: true);
       }
       
-      // Open database with proper configuration
-      return await databaseFactoryFfi.openDatabase(
+      final dbPath = p.join(dbDir.path, dbName);
+      print('Using database path: $dbPath');
+      
+      return await openDatabase(
         dbPath,
-        options: OpenDatabaseOptions(
-          version: dbVersion,
-          onCreate: _createTables,
-          // We'll avoid automatically running migrations on each start since we have
-          // a comprehensive schema creation in _createTables
-          onUpgrade: null, // Remove onUpgrade to avoid unnecessary schema changes
-          onOpen: (db) async {
-            // Ensure all tables exist when opening
-            await _ensureTablesExist(db);
-            
-            // Enable foreign keys
-            await db.execute('PRAGMA foreign_keys = ON');
-            
-            // Set journal mode to WAL for better performance
-            await db.execute('PRAGMA journal_mode = WAL');
-            
-            // Set synchronous to NORMAL for better performance while maintaining safety
-            await db.execute('PRAGMA synchronous = NORMAL');
-            
-            print('Database opened with pragmas set');
-          }
-        )
+        version: 2,
+        onCreate: _createTables,
+        onUpgrade: _onUpgrade,
       );
     } catch (e) {
       print('Error initializing database: $e');
       rethrow;
+    }
+  }
+  
+  // Get platform-specific app data directory
+  Future<Directory> getAppDataDirectory() async {
+    if (Platform.isWindows) {
+      // Use proper method to get %LOCALAPPDATA% on Windows
+      try {
+        // Direct method using environment variables
+        final localAppDataPath = Platform.environment['LOCALAPPDATA'];
+        if (localAppDataPath != null && localAppDataPath.isNotEmpty) {
+          final dir = Directory(p.join(localAppDataPath, 'Malbrose POS'));
+          // Ensure the directory exists
+          if (!await dir.exists()) {
+            await dir.create(recursive: true);
+          }
+          print('Using Windows LocalAppData path: ${dir.path}');
+          return dir;
+        }
+        
+        // Fall back to path_provider if environment variable fails
+        final appSupportDir = await getApplicationSupportDirectory();
+        final dir = Directory(p.join(appSupportDir.path, 'Malbrose POS'));
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        print('Using application support directory: ${dir.path}');
+        return dir;
+      } catch (e) {
+        print('Error creating app data directory: $e');
+        // Last resort - try to use a subdirectory of the executable location
+        final exePath = Platform.resolvedExecutable;
+        final exeDir = p.dirname(exePath);
+        final dir = Directory(p.join(exeDir, 'data'));
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        print('Using fallback directory: ${dir.path}');
+        return dir;
+      }
+    } else if (Platform.isMacOS) {
+      final appSupportDir = await getApplicationSupportDirectory();
+      return Directory(p.join(appSupportDir.path, 'Malbrose POS'));
+    } else if (Platform.isLinux) {
+      final appSupportDir = await getApplicationSupportDirectory();
+      return Directory(p.join(appSupportDir.path, 'malbrose-pos'));
+    } else {
+      // For mobile platforms, use getDatabasesPath
+      final dbPath = await getDatabasesPath();
+      return Directory(dbPath);
     }
   }
 
@@ -2096,9 +2130,11 @@ class DatabaseService {
     
     print('Manually recreating creditors table to remove UNIQUE constraint');
     
-    // Get database path but don't use the getter that might trigger initialization logic
-    final dbPath = await getDatabasesPath();
-    final dbFile = p.join(dbPath, dbName);
+    // Get database path using our new method
+    final appDataDir = await getAppDataDirectory();
+    final dbDir = Directory(p.join(appDataDir.path, 'database'));
+    final dbFile = p.join(dbDir.path, dbName);
+    
     print('Database path: $dbFile');
     
     try {
@@ -5742,6 +5778,21 @@ class DatabaseService {
       
       onProgress?.call(errorResult);
       return errorResult;
+    }
+  }
+
+  // Force recreate creditors table to remove UNIQUE constraint
+  Future<void> dropAndCreateCreditorsTable() async {
+    try {
+      // Use our new path helper
+      final appDataDir = await getAppDataDirectory();
+      final dbDir = Directory(p.join(appDataDir.path, 'database'));
+      final dbPath = p.join(dbDir.path, dbName);
+      
+      // ... existing code ...
+    } catch (e) {
+      print('Error dropping and creating creditors table: $e');
+      rethrow;
     }
   }
 }

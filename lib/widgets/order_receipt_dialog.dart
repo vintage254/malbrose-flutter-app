@@ -229,7 +229,7 @@ class _OrderReceiptDialogState extends State<OrderReceiptDialog> {
                 // Business name
                 pw.Text(
                   config.businessName,
-                  style: pw.TextStyle(
+                    style: pw.TextStyle(
                     fontSize: 16,
                     fontWeight: pw.FontWeight.bold,
                   ),

@@ -1060,7 +1060,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
       if (orderId <= 0) {
         throw Exception('Cannot update order: Missing valid order ID');
       }
-      
+
       // Get the existing order number
       String orderNumber = widget.order?.orderNumber ?? '';
       if (orderNumber.isEmpty) {
@@ -1206,7 +1206,7 @@ class _OrderCartPanelState extends State<OrderCartPanel> {
       if (orderId <= 0) {
         throw Exception('Cannot convert order: Missing valid order ID');
       }
-
+      
       // Generate a new order number by replacing HLD- with ORD-
       String orderNumber = widget.order?.orderNumber ?? '';
       if (orderNumber.isEmpty) {

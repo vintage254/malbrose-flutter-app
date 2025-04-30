@@ -1,0 +1,26 @@
+MALBROSE POS SOFTWARE LICENSE AGREEMENT
+
+1. LICENSE GRANT
+Subject to the terms of this Agreement, Malbrose grants you a limited, non-exclusive, non-transferable license to use the Malbrose POS Software ("Software") on devices owned or controlled by you for your business operations.
+
+2. RESTRICTIONS
+You may not: (a) modify, reverse engineer, decompile or disassemble the Software; (b) rent, lease, loan, sell, sublicense, distribute or otherwise transfer rights to the Software; (c) remove any proprietary notices or labels on the Software.
+
+3. OWNERSHIP
+The Software is protected by copyright laws and international treaty provisions. Malbrose retains all intellectual property rights in the Software.
+
+4. WARRANTY DISCLAIMER
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+5. LIMITATION OF LIABILITY
+IN NO EVENT SHALL MALBROSE BE LIABLE FOR ANY SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL DAMAGES WHATSOEVER ARISING OUT OF THE USE OF OR INABILITY TO USE THE SOFTWARE.
+
+6. TERMINATION
+This License is effective until terminated. Your rights under this License will terminate automatically without notice if you fail to comply with any term of this License.
+
+7. GENERAL
+This Agreement constitutes the entire agreement between the parties concerning the subject matter hereof.
+
+By installing or using the Software, you agree to be bound by the terms of this Agreement.
+
+Copyright © 2025 Malbrose. All rights reserved. 

@@ -1092,12 +1092,12 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
                 ),
                 const SizedBox(height: defaultPadding / 2),
                 const Text(
-                  'Email: support@example.com',
+                  'Email: malbrosepos@gmail.com',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Phone: +254 7xxxxxxxx',
+                  'Phone: +254 748322954',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ],
