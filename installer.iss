@@ -1,12 +1,12 @@
 #define MyAppName "Malbrose POS"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.1"
 #define MyAppPublisher "Mabrose inc."
 #define MyAppURL "https://derrickportfolio.vercel.app/"
 #define MyAppExeName "Malbrose_POS.exe"
 #define MyAppAssocName MyAppName + " File"
 #define MyAppAssocExt ".myp"
 #define MyAppAssocKey StringChange(MyAppAssocName, " ", "") + MyAppAssocExt
-#define MyAppDataDir "{localappdata}\Malbrose POS"
+#define MyAppDataDir "{commonappdata}\Malbrose POS"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -39,8 +39,7 @@ InfoAfterFile=C:\Users\batman\malbrose-flutter-app\getting_started.txt
 PrivilegesRequired=admin
 OutputDir=C:\Users\batman\malbrose-flutter-app\installers
 OutputBaseFilename=Malbrose POS
-; Try with relative path instead
-SetupIconFile=..\assets\images\malbrose.ico
+SetupIconFile=C:\Users\batman\malbrose-flutter-app\assets\malbrose.ico
 SolidCompression=yes
 WizardStyle=modern
 
@@ -62,6 +61,10 @@ Source: "C:\Users\batman\malbrose-flutter-app\build\windows\x64\runner\Release\p
 Source: "C:\Users\batman\malbrose-flutter-app\build\windows\x64\runner\Release\share_plus_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\batman\malbrose-flutter-app\build\windows\x64\runner\Release\url_launcher_windows_plugin.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\batman\malbrose-flutter-app\build\windows\x64\runner\Release\data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Add VC++ Redistributables
+Source: "C:\Users\batman\malbrose-flutter-app\VC_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+Source: "C:\Users\batman\malbrose-flutter-app\VC_redist.x86.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+Source: "C:\Users\batman\malbrose-flutter-app\copy_dlls.bat"; DestDir: "{tmp}"; Flags: deleteafterinstall
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 ; Create data directories with proper permissions
@@ -75,17 +78,22 @@ Root: HKA; Subkey: "Software\Classes\{#MyAppAssocExt}\OpenWithProgids"; ValueTyp
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssocName}"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
-; Use HKCU (current user) instead of HKLM to avoid permission issues
-Root: HKCU; Subkey: "Software\Malbrose\POS"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Malbrose\POS"; ValueType: string; ValueName: "DataPath"; ValueData: "{#MyAppDataDir}"; Flags: uninsdeletekey
+; Use HKLM for machine-wide settings accessible to all users
+Root: HKLM; Subkey: "Software\Malbrose\POS"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Malbrose\POS"; ValueType: string; ValueName: "DataPath"; ValueData: "{#MyAppDataDir}"; Flags: uninsdeletekey
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; Make sure the data directories have proper permissions
+; Make sure the data directories have proper permissions for all users
 Filename: "{cmd}"; Parameters: "/c icacls ""{#MyAppDataDir}"" /grant Everyone:(OI)(CI)F /T"; Flags: runhidden
 Filename: "{cmd}"; Parameters: "/c icacls ""{#MyAppDataDir}\database"" /grant Everyone:(OI)(CI)F /T"; Flags: runhidden
+; Install VC++ Redistributables if needed
+Filename: "{tmp}\VC_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Visual C++ 2015-2022 Redistributable (x64)..."; Flags: runhidden
+Filename: "{tmp}\VC_redist.x86.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Visual C++ 2015-2022 Redistributable (x86)..."; Flags: runhidden; Check: not Is64BitInstallMode
+; Run the copy_dlls batch file if needed
+Filename: "{tmp}\copy_dlls.bat"; WorkingDir: "{app}"; Flags: runhidden; StatusMsg: "Configuring application files..."
 ; Launch the application
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent 

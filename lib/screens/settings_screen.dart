@@ -61,7 +61,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 6, vsync: this);
     _loadUsers();
     _loadSettings();
     _checkLicense();
@@ -440,16 +440,18 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
-        backgroundColor: Colors.blue,
+        backgroundColor: Colors.blue.shade700,
         foregroundColor: Colors.white,
         bottom: TabBar(
           controller: _tabController,
+          isScrollable: true,
           tabs: const [
             Tab(text: 'Business Info'),
             Tab(text: 'Users'),
             Tab(text: 'Tax Settings'),
             Tab(text: 'Receipt Settings'),
             Tab(text: 'Security'),
+            Tab(text: 'License'),
           ],
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
@@ -465,6 +467,7 @@ class _SettingsScreenState extends State<SettingsScreen> with SingleTickerProvid
           _buildTaxSettingsTab(),
           _buildReceiptSettingsTab(),
           _buildSecurityTab(),
+          _buildLicenseTab(),
         ],
       ),
     );

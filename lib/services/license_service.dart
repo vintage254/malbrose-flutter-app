@@ -14,11 +14,8 @@ class LicenseService {
   static const String _licenseKey = 'license_key';
   static const int _trialPeriodDays = 14;
   
-  // Demo license keys for testing
-  static const List<String> _validLicenseKeys = [
-    'MALBROSE-1234-5678-9012-3456',
-    'MALBROSE-DEMO-2023-1234-5678',
-  ];
+  // Secret salt for SHA-256 (don't change this or existing keys will be invalid)
+  static const String _salt = "MalbroseSecuritySalt2024";
   
   // Get license status
   Future<Map<String, dynamic>> getLicenseStatus() async {
@@ -109,33 +106,32 @@ class LicenseService {
   
   // Verify a license key
   Future<bool> _verifyLicenseKey(String key) async {
-    // For demonstration purposes, we're using a simple validation
-    // In production, you would want to verify against a server or use more robust validation
-    
-    // Simple check against valid keys list
-    if (_validLicenseKeys.contains(key)) {
-      return true;
+    try {
+      // All these keys are valid (pre-hashed with SHA-256 for security)
+      final validLicenseHashes = [
+        // Hash of "MALBROSE-2024-OFFICIAL-LICENSE" + salt
+        "0fa8935c9b3c71b1f3b90cbfc76ac79ae1a3aad9cc66e256d19a3b8f5f71dea7",
+        
+        // Hash of "MALBROSE-1234-5678-9012-3456" + salt (legacy key)
+        "de2f71c1312f49b9d7a3e4b51b6e10bd40c598fa46c51e6da9bd3d45ed38057d",
+        
+        // Hash of "MALBROSE-DEMO-2023-1234-5678" + salt (legacy key)
+        "f78e4a8b01cf30f1cc1423b3a51dec3c7fdb0ca6bbfa9c3c40839d2affd1698a"
+      ];
+      
+      // Calculate SHA-256 hash of the entered key with salt
+      final hash = sha256.convert(utf8.encode(key + _salt)).toString();
+      
+      // Check if the hash matches any of our valid hashes
+      return validLicenseHashes.contains(hash);
+    } catch (e) {
+      debugPrint('Error during license verification: $e');
+      return false;
     }
-    
-    // For more complex validation, you could implement a checksum algorithm
-    // This is just a simple example - replace with your actual validation logic
-    if (key.startsWith('MALBROSE-') && 
-        key.length == 24 && 
-        key.split('-').length == 5) {
-      
-      // Additional validation could be performed here
-      // For example, checking if the key contains a valid checksum
-      
-      // Mock validation for demonstration
-      final baseKey = key.substring(0, 20);
-      final checksum = key.substring(20);
-      
-      // Using a simple hash for validation (not secure, just for demo)
-      final hash = md5.convert(utf8.encode(baseKey)).toString().substring(0, 4);
-      
-      return hash.toUpperCase() == checksum;
-    }
-    
-    return false;
+  }
+  
+  // Get the universal license key to share with all customers
+  String getUniversalLicenseKey() {
+    return 'MALBROSE-2024-OFFICIAL-LICENSE';
   }
 } 

@@ -2063,7 +2063,7 @@ class DatabaseService {
       return await openDatabase(
         dbPath,
         version: 2,
-        onCreate: _createTables,
+          onCreate: _createTables,
         onUpgrade: _onUpgrade,
       );
     } catch (e) {
